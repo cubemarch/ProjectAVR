@@ -1,0 +1,16 @@
+{
+  "name": "projectavr",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "A PlayCanvas-powered web video library for flat, 180°, 360°, mono, SBS, and top-bottom playback.",
+  "scripts": {
+    "dev": "node scripts/serve.mjs",
+    "test": "node --test tests/*.test.js",
+    "validate": "node scripts/validate.mjs",
+    "check": "npm run test && npm run validate"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
