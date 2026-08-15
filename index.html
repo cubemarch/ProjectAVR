@@ -1,0 +1,244 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="theme-color" content="#050505" />
+    <meta
+      name="description"
+      content="ProjectAVR is a PlayCanvas-powered library for flat, 180°, 360°, mono, SBS, and top-bottom video."
+    />
+    <title>ProjectAVR — Cinema without edges</title>
+    <link rel="manifest" href="./manifest.webmanifest" />
+    <link rel="icon" href="./assets/icon.svg" type="image/svg+xml" />
+    <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <a class="skip-link" href="#catalog">Skip to catalog</a>
+
+    <header class="topbar" data-topbar>
+      <a class="brand" href="#home" aria-label="ProjectAVR home">
+        <span class="brand-mark" aria-hidden="true">A</span>
+        <span>Project<span>AVR</span></span>
+      </a>
+
+      <nav class="primary-nav" aria-label="Primary navigation">
+        <a class="is-active" href="#home">Home</a>
+        <a href="#immersive">Immersive</a>
+        <a href="#flat">Flat</a>
+        <a href="#library">My library</a>
+      </nav>
+
+      <div class="header-actions">
+        <label class="search-box">
+          <span class="sr-only">Search the catalog</span>
+          <svg aria-hidden="true" viewBox="0 0 24 24"><path d="m21 21-4.35-4.35m2.35-5.65a8 8 0 1 1-16 0 8 8 0 0 1 16 0Z" /></svg>
+          <input id="searchInput" type="search" placeholder="Titles, formats, moods" autocomplete="off" />
+        </label>
+        <button class="icon-button" id="capabilitiesButton" type="button" aria-label="Playback capabilities">
+          <span class="status-dot" aria-hidden="true"></span>
+          <span class="desktop-only">Device</span>
+        </button>
+        <button class="button button-primary button-compact" id="addSourceButton" type="button">
+          <span aria-hidden="true">＋</span> Add source
+        </button>
+      </div>
+    </header>
+
+    <main id="home">
+      <section class="hero" aria-labelledby="heroTitle">
+        <div class="hero-aurora" aria-hidden="true"></div>
+        <div class="hero-orbit hero-orbit-one" aria-hidden="true"></div>
+        <div class="hero-orbit hero-orbit-two" aria-hidden="true"></div>
+        <div class="hero-content">
+          <p class="eyebrow"><span></span> Headset-ready streaming</p>
+          <h1 id="heroTitle">Cinema without <em>edges.</em></h1>
+          <p class="hero-copy">
+            One polished library for everyday video and immersive 180° or 360° stories. Watch in the browser,
+            enter WebXR, or hand the original stream to your favorite VR player.
+          </p>
+          <div class="hero-actions">
+            <button class="button button-primary" id="heroPlayButton" type="button">
+              <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M7 4.8v14.4L19 12 7 4.8Z" /></svg>
+              Play showcase
+            </button>
+            <button class="button button-glass" id="heroAddButton" type="button">
+              <svg aria-hidden="true" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" /></svg>
+              Add your media
+            </button>
+          </div>
+          <div class="hero-meta" aria-label="Supported modes">
+            <span>4K ready</span><i></i><span>180° / 360°</span><i></i><span>Mono / SBS / TB</span>
+          </div>
+        </div>
+
+        <aside class="hero-card" aria-label="Featured format">
+          <div class="hero-card-grid" aria-hidden="true"></div>
+          <div class="headset-glyph" aria-hidden="true">
+            <span class="lens lens-left"></span><span class="lens lens-right"></span>
+          </div>
+          <div class="hero-card-footer">
+            <div><small>Featured format</small><strong>360° MONO</strong></div>
+            <span class="live-pill">WEBXR</span>
+          </div>
+        </aside>
+      </section>
+
+      <section class="format-strip" aria-label="Playback features">
+        <article><span class="feature-icon">◉</span><div><strong>WebXR native</strong><small>Quest and compatible headsets</small></div></article>
+        <article><span class="feature-icon">↔</span><div><strong>Stereo layouts</strong><small>Side-by-side and top-bottom</small></div></article>
+        <article><span class="feature-icon">⌁</span><div><strong>Direct streams</strong><small>MP4, WebM, HLS, and DASH</small></div></article>
+        <article><span class="feature-icon">↗</span><div><strong>External handoff</strong><small>URL, M3U, and metadata export</small></div></article>
+      </section>
+
+      <section class="catalog" id="catalog">
+        <p class="sr-only" id="catalogStatus" role="status" aria-live="polite"></p>
+        <div id="catalogRows"></div>
+        <div class="empty-state" id="emptyState" hidden>
+          <span aria-hidden="true">⌕</span>
+          <h2>No titles found</h2>
+          <p>Try a different search or add a direct media source.</p>
+          <button class="button button-primary" type="button" data-open-source>Add source</button>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <a class="brand brand-small" href="#home"><span class="brand-mark">A</span><span>Project<span>AVR</span></span></a>
+      <p>Built with PlayCanvas. Bring media you own or are authorized to stream.</p>
+      <a href="https://github.com/playcanvas/engine" target="_blank" rel="noreferrer">PlayCanvas engine ↗</a>
+    </footer>
+
+    <dialog class="modal source-modal" id="sourceDialog" aria-labelledby="sourceTitle">
+      <form id="sourceForm" method="dialog">
+        <header class="modal-header">
+          <div><p class="eyebrow">Library</p><h2 id="sourceTitle">Add a media source</h2></div>
+          <button class="close-button" type="button" data-close-dialog aria-label="Close">×</button>
+        </header>
+
+        <div class="source-tabs" aria-label="Source type">
+          <button class="is-active" type="button" aria-pressed="true" data-source-tab="url">Direct URL</button>
+          <button type="button" aria-pressed="false" data-source-tab="file">Local file</button>
+        </div>
+
+        <div class="form-grid">
+          <label class="field field-wide"><span>Title</span><input id="sourceName" name="name" required maxlength="80" placeholder="My immersive film" /></label>
+          <label class="field field-wide" data-url-field><span>Media URL</span><input id="sourceUrl" name="url" type="url" inputmode="url" placeholder="https://media.example.com/video.mp4" /></label>
+          <label class="field field-wide" data-file-field hidden><span>Video file</span><input id="sourceFile" name="file" type="file" accept="video/*,.mp4,.m4v,.webm,.mkv" /></label>
+          <label class="field"><span>Projection</span>
+            <select id="sourceProjection" name="projection">
+              <option value="flat">Flat / regular</option>
+              <option value="360">360° equirectangular</option>
+              <option value="180">180° equirectangular</option>
+            </select>
+          </label>
+          <label class="field"><span>Stereo layout</span>
+            <select id="sourceLayout" name="layout">
+              <option value="mono">Mono</option>
+              <option value="sbs">Side-by-side</option>
+              <option value="tb">Top-bottom / over-under</option>
+              <option value="sbs-reverse">Side-by-side, reversed</option>
+              <option value="tb-reverse">Top-bottom, reversed</option>
+            </select>
+          </label>
+          <label class="field"><span>Stream type</span>
+            <select id="sourceType" name="streamType">
+              <option value="auto">Auto detect</option>
+              <option value="file">MP4 / WebM file</option>
+              <option value="hls">HLS (.m3u8)</option>
+              <option value="dash">MPEG-DASH (.mpd)</option>
+            </select>
+          </label>
+          <label class="field"><span>Subtitle URL <small>(optional)</small></span><input id="subtitleUrl" name="subtitleUrl" type="url" placeholder="https://…/captions.vtt" /></label>
+        </div>
+
+        <div class="form-note"><span aria-hidden="true">i</span><p>Immersive remote video and subtitle origins must allow cross-origin access. Local files stay on this device. URLs with embedded credentials or common signed-token parameters are kept for this session only.</p></div>
+        <p class="form-error" id="sourceError" role="alert" hidden></p>
+
+        <footer class="modal-actions">
+          <button class="button button-quiet" type="button" data-close-dialog>Cancel</button>
+          <button class="button button-primary" type="submit">Add &amp; play</button>
+        </footer>
+      </form>
+    </dialog>
+
+    <dialog class="modal player-modal" id="playerDialog" aria-labelledby="playerTitle">
+      <div class="player-shell">
+        <header class="player-topline">
+          <div class="player-heading">
+            <button class="close-button close-button-back" type="button" data-close-player aria-label="Close player">←</button>
+            <div><small id="playerFormat">VIDEO</small><h2 id="playerTitle">Title</h2></div>
+          </div>
+          <div class="player-top-actions">
+            <button class="button button-glass button-compact favorite-button" id="favoriteButton" type="button" aria-pressed="false">
+              <span aria-hidden="true">＋</span> My list
+            </button>
+            <button class="button button-glass button-compact" id="externalButton" type="button">Open externally</button>
+            <button class="button button-primary button-compact" id="enterVrButton" type="button">
+              <span aria-hidden="true">◉</span> Enter VR
+            </button>
+          </div>
+        </header>
+
+        <div class="stage" id="playerStage">
+          <video id="mediaVideo" playsinline preload="metadata"></video>
+          <canvas id="xrCanvas" tabindex="0" aria-label="Immersive video view. Use arrow keys to look around and plus or minus to zoom."></canvas>
+          <div class="stage-gradient" aria-hidden="true"></div>
+          <div class="loading-state" id="loadingState"><span></span><p>Preparing stream…</p></div>
+          <div class="player-error" id="playerError" role="alert" hidden></div>
+          <div class="drag-hint" id="dragHint" hidden>Drag to look around</div>
+        </div>
+
+        <div class="transport" aria-label="Playback controls">
+          <button class="transport-button" id="playPauseButton" type="button" aria-label="Play">▶</button>
+          <span class="timecode" id="currentTime">0:00</span>
+          <input class="timeline" id="timeline" type="range" min="0" max="1000" value="0" aria-label="Seek" />
+          <span class="timecode" id="duration">0:00</span>
+          <button class="transport-button" id="muteButton" type="button" aria-label="Mute">◕</button>
+          <input class="volume" id="volume" type="range" min="0" max="1" step="0.05" value="1" aria-label="Volume" />
+          <button class="transport-button" id="resetViewButton" type="button" aria-label="Reset immersive view" hidden>↺</button>
+          <button class="transport-button" id="fullscreenButton" type="button" aria-label="Fullscreen">⛶</button>
+        </div>
+
+        <footer class="player-footer">
+          <div class="player-description"><span class="match">DIRECT SOURCE</span><span id="playerDetails"></span></div>
+          <div class="player-footer-actions">
+            <button class="button button-glass button-compact remove-source-button" id="removeSourceButton" type="button" hidden>Remove source</button>
+            <div class="mode-pills" id="modePills"></div>
+          </div>
+        </footer>
+      </div>
+    </dialog>
+
+    <dialog class="modal external-modal" id="externalDialog" aria-labelledby="externalTitle">
+      <header class="modal-header">
+        <div><p class="eyebrow">Player handoff</p><h2 id="externalTitle">Open in a VR player</h2></div>
+        <button class="close-button" type="button" data-close-dialog aria-label="Close">×</button>
+      </header>
+      <p class="external-intro">ProjectAVR keeps your source untouched. Copy or export what your player accepts, then follow the player-specific file, network, or hosted-catalog workflow below.</p>
+      <div class="handoff-url"><code id="handoffUrl"></code><button id="copyUrlButton" type="button">Copy</button></div>
+      <div class="handoff-actions">
+        <button class="button button-primary" id="shareButton" type="button">Share URL</button>
+        <button class="button button-glass" id="downloadPlaylistButton" type="button">Download .m3u</button>
+        <button class="button button-glass" id="downloadMetadataButton" type="button">Download metadata</button>
+      </div>
+      <div class="filename-hint"><small>Suggested interoperable filename</small><code id="filenameHint"></code></div>
+      <div class="player-grid" id="externalPlayers"></div>
+      <div class="form-note warning-note"><span aria-hidden="true">!</span><p>Player capabilities vary by platform and version. Direct HTTP(S) access, a supported codec, byte-range requests, and the correct projection/layout selection are still required.</p></div>
+    </dialog>
+
+    <dialog class="modal capability-modal" id="capabilityDialog" aria-labelledby="capabilityTitle">
+      <header class="modal-header">
+        <div><p class="eyebrow">This device</p><h2 id="capabilityTitle">Playback capabilities</h2></div>
+        <button class="close-button" type="button" data-close-dialog aria-label="Close">×</button>
+      </header>
+      <div class="capability-list" id="capabilityList"></div>
+      <p class="capability-footnote">WebXR requires HTTPS (or localhost), a compatible headset/browser, and a user gesture.</p>
+    </dialog>
+
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+    <script type="module" src="./src/app.js"></script>
+  </body>
+</html>

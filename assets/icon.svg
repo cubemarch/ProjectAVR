@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title">
+  <title id="title">ProjectAVR</title>
+  <rect width="512" height="512" rx="112" fill="#070707"/>
+  <path d="M82 344 199 104h114l117 240h-92l-21-51H194l-21 51H82Zm142-124h63l-31-78-32 78Z" fill="#ff334f"/>
+  <path d="M172 365h168" stroke="#fff" stroke-width="30" stroke-linecap="round"/>
+</svg>
