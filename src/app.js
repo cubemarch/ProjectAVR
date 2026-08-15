@@ -13,9 +13,18 @@ import {
   safeMediaUrl,
   searchMatches
 } from './media-utils.js';
+import {
+  clearItemState,
+  normalizeLibraryState,
+  progressRatio,
+  recordProgress,
+  resumeTime,
+  toggleFavorite
+} from './library-state.js';
 import { StreamAdapter } from './stream-adapter.js';
 
 const STORAGE_KEY = 'projectavr.library.v1';
+const PLAYBACK_STORAGE_KEY = 'projectavr.playback.v1';
 const ART_CLASSES = ['art-coral', 'art-ocean', 'art-violet', 'art-gold', 'art-mint', 'art-night'];
 
 const refs = {
@@ -49,6 +58,8 @@ const refs = {
   loadingState: document.querySelector('#loadingState'),
   playerError: document.querySelector('#playerError'),
   dragHint: document.querySelector('#dragHint'),
+  favoriteButton: document.querySelector('#favoriteButton'),
+  removeSourceButton: document.querySelector('#removeSourceButton'),
   externalButton: document.querySelector('#externalButton'),
   enterVrButton: document.querySelector('#enterVrButton'),
   playPauseButton: document.querySelector('#playPauseButton'),
@@ -74,8 +85,11 @@ const refs = {
 
 let userLibrary = loadUserLibrary();
 let transientLibrary = [];
+let libraryState = loadLibraryState();
 let sourceMode = 'url';
 let currentItem = null;
+let playerReady = false;
+let lastProgressWrite = 0;
 let toastTimer = 0;
 let playerLoadGeneration = 0;
 let capabilityProbeActive = false;
@@ -108,7 +122,33 @@ function allItems() {
     ...BUILT_IN_CATALOG.map((item, index) => normalizeMediaItem(item, index)),
     ...userLibrary,
     ...transientLibrary
-  ];
+  ].map((item) => ({
+    ...item,
+    favorite: !item.template && libraryState.favorites.includes(item.id),
+    watchProgress: item.template ? 0 : progressRatio(libraryState, item.id)
+  }));
+}
+
+function loadLibraryState() {
+  try {
+    return normalizeLibraryState(JSON.parse(localStorage.getItem(PLAYBACK_STORAGE_KEY) || '{}'));
+  } catch {
+    return normalizeLibraryState({});
+  }
+}
+
+function persistLibraryState() {
+  const sessionOnlyIds = new Set(transientLibrary.map((item) => item.id));
+  const persisted = normalizeLibraryState(libraryState);
+  persisted.favorites = persisted.favorites.filter((id) => !sessionOnlyIds.has(id));
+  for (const id of sessionOnlyIds) delete persisted.progress[id];
+  localStorage.setItem(PLAYBACK_STORAGE_KEY, JSON.stringify(persisted));
+}
+
+function isUserSource(item) {
+  if (!item) return false;
+  return userLibrary.some((entry) => entry.id === item.id)
+    || transientLibrary.some((entry) => entry.id === item.id);
 }
 
 function loadUserLibrary() {
@@ -133,13 +173,29 @@ function persistLibrary() {
 }
 
 function renderCatalog() {
+  const previousScroll = new Map(
+    [...refs.catalogRows.querySelectorAll('.catalog-row')].map((section) => [
+      section.id,
+      section.querySelector('.card-track')?.scrollLeft || 0
+    ])
+  );
+  const focusedCard = document.activeElement?.matches?.('[data-media-id]')
+    ? { id: document.activeElement.dataset.mediaId, row: document.activeElement.closest('.catalog-row')?.id }
+    : null;
   const query = refs.searchInput.value;
   const items = allItems().filter((item) => searchMatches(item, query));
   const fragment = document.createDocumentFragment();
   let visibleCards = 0;
 
   for (const row of CATALOG_ROWS) {
-    const rowItems = items.filter(row.filter);
+    let rowItems = items.filter(row.filter);
+    if (row.id === 'continue') {
+      rowItems = rowItems.sort((a, b) => (
+        (libraryState.progress[b.id]?.updatedAt || 0) - (libraryState.progress[a.id]?.updatedAt || 0)
+      ));
+    } else if (row.id === 'my-list') {
+      rowItems = rowItems.sort((a, b) => libraryState.favorites.indexOf(b.id) - libraryState.favorites.indexOf(a.id));
+    }
     if (!rowItems.length && row.id !== 'library') continue;
 
     const section = document.createElement('section');
@@ -175,6 +231,17 @@ function renderCatalog() {
   }
 
   refs.catalogRows.replaceChildren(fragment);
+  for (const [rowId, scrollLeft] of previousScroll) {
+    const track = document.getElementById(rowId)?.querySelector('.card-track');
+    if (track) track.scrollLeft = scrollLeft;
+  }
+  if (focusedCard && !refs.playerDialog.open) {
+    const preferredRow = focusedCard.row ? document.getElementById(focusedCard.row) : null;
+    const candidates = [...(preferredRow || refs.catalogRows).querySelectorAll('[data-media-id]')];
+    const target = candidates.find((card) => card.dataset.mediaId === focusedCard.id)
+      || [...refs.catalogRows.querySelectorAll('[data-media-id]')].find((card) => card.dataset.mediaId === focusedCard.id);
+    target?.focus();
+  }
   refs.catalogStatus.textContent = `${items.length} ${items.length === 1 ? 'title' : 'titles'} available`;
   refs.emptyState.hidden = Boolean(visibleCards) || !query.trim();
 }
@@ -183,7 +250,9 @@ function createMediaCard(item, index) {
   const card = document.createElement('button');
   card.type = 'button';
   card.className = 'media-card';
-  card.setAttribute('aria-label', `${item.template ? 'Configure' : 'Play'} ${item.title}`);
+  card.dataset.mediaId = item.id;
+  const cardAction = item.template ? 'Configure' : item.watchProgress > 0 ? 'Resume' : 'Play';
+  card.setAttribute('aria-label', `${cardAction} ${item.title}`);
 
   const art = document.createElement('span');
   art.className = `card-art ${item.art}`;
@@ -191,6 +260,13 @@ function createMediaCard(item, index) {
   number.className = 'card-number';
   number.textContent = String(index + 1).padStart(2, '0');
   art.append(number);
+  if (item.favorite) {
+    const favorite = document.createElement('span');
+    favorite.className = 'card-favorite';
+    favorite.setAttribute('aria-hidden', 'true');
+    favorite.textContent = '✓ MY LIST';
+    art.append(favorite);
+  }
 
   const overlay = document.createElement('span');
   overlay.className = 'card-overlay';
@@ -222,6 +298,16 @@ function createMediaCard(item, index) {
   bottom.append(copy, play);
   overlay.append(badges, bottom);
   card.append(art, overlay);
+  if (item.watchProgress > 0) {
+    const progress = document.createElement('span');
+    progress.className = 'card-progress';
+    progress.setAttribute('aria-hidden', 'true');
+    const fill = document.createElement('span');
+    fill.className = 'card-progress-fill';
+    fill.style.width = `${Math.round(item.watchProgress * 100)}%`;
+    progress.append(fill);
+    card.append(progress);
+  }
 
   card.addEventListener('click', () => item.template ? openSourceDialog(item) : openPlayer(item));
   return card;
@@ -332,6 +418,8 @@ async function openPlayer(item) {
     loadGeneration === playerLoadGeneration && currentItem === item && refs.playerDialog.open
   );
   currentItem = item;
+  playerReady = false;
+  lastProgressWrite = Date.now();
   immersiveRenderer?.clearMedia?.();
   clearPlayerError();
   refs.loadingState.hidden = false;
@@ -346,6 +434,7 @@ async function openPlayer(item) {
   refs.enterVrButton.disabled = true;
   refs.externalButton.disabled = false;
   renderModePills(item);
+  updateLibraryControls(item);
 
   try {
     await streamAdapter.load(item);
@@ -365,6 +454,12 @@ async function openPlayer(item) {
         : 'Open over HTTPS in a WebXR-compatible headset browser';
     }
     if (!isCurrentLoad()) return;
+    const resumeAt = resumeTime(libraryState, item.id, refs.mediaVideo.duration);
+    if (resumeAt > 0) {
+      refs.mediaVideo.currentTime = resumeAt;
+      showToast(`Resuming at ${formatTime(resumeAt)}`);
+    }
+    playerReady = true;
     refs.loadingState.hidden = true;
     await refs.mediaVideo.play().catch(() => {});
     if (!isCurrentLoad()) return;
@@ -388,14 +483,75 @@ function renderModePills(item) {
     });
 }
 
-async function closePlayer() {
+function updateLibraryControls(item = currentItem) {
+  const favorite = Boolean(item && libraryState.favorites.includes(item.id));
+  refs.favoriteButton.hidden = !item;
+  refs.favoriteButton.setAttribute('aria-pressed', String(favorite));
+  refs.favoriteButton.textContent = favorite ? '✓ In my list' : '＋ My list';
+  refs.favoriteButton.setAttribute('aria-label', favorite ? `Remove ${item?.title || 'title'} from My list` : `Add ${item?.title || 'title'} to My list`);
+  refs.removeSourceButton.hidden = !isUserSource(item);
+}
+
+function saveWatchProgress(force = false) {
+  if (!playerReady || !currentItem) return false;
+  const now = Date.now();
+  if (!force && now - lastProgressWrite < 5_000) return false;
+  lastProgressWrite = now;
+
+  const previous = libraryState.progress[currentItem.id];
+  const next = recordProgress(
+    libraryState,
+    currentItem.id,
+    refs.mediaVideo.currentTime,
+    refs.mediaVideo.duration,
+    now
+  );
+  const changed = JSON.stringify(previous) !== JSON.stringify(next.progress[currentItem.id]);
+  if (changed) {
+    libraryState = next;
+    persistLibraryState();
+  }
+  return changed;
+}
+
+function toggleCurrentFavorite() {
+  if (!currentItem) return;
+  libraryState = toggleFavorite(libraryState, currentItem.id);
+  persistLibraryState();
+  updateLibraryControls();
+  renderCatalog();
+  showToast(libraryState.favorites.includes(currentItem.id) ? 'Added to My list' : 'Removed from My list');
+}
+
+async function removeCurrentSource() {
+  const item = currentItem;
+  if (!isUserSource(item)) return;
+  if (!window.confirm(`Remove “${item.title}” from this browser?`)) return;
+
+  await closePlayer({ saveProgress: false });
+  userLibrary = userLibrary.filter((entry) => entry.id !== item.id);
+  transientLibrary = transientLibrary.filter((entry) => entry.id !== item.id);
+  if (item.url.startsWith('blob:')) URL.revokeObjectURL(item.url);
+  libraryState = clearItemState(libraryState, item.id);
+  persistLibrary();
+  persistLibraryState();
+  renderCatalog();
+  refs.addSourceButton.focus();
+  showToast('Source removed');
+}
+
+async function closePlayer(options = {}) {
+  const saveProgress = options.saveProgress !== false;
   playerLoadGeneration += 1;
+  if (saveProgress) saveWatchProgress(true);
+  playerReady = false;
+  refs.mediaVideo.pause();
   await immersiveRenderer?.exitVr?.().catch(() => {});
   immersiveRenderer?.clearMedia?.();
-  refs.mediaVideo.pause();
   streamAdapter.reset();
   if (refs.playerDialog.open) refs.playerDialog.close();
   currentItem = null;
+  renderCatalog();
 }
 
 function showPlayerError(message) {
@@ -596,20 +752,38 @@ function installEvents() {
   document.querySelectorAll('[data-source-tab]').forEach((tab) => tab.addEventListener('click', () => switchSourceMode(tab.dataset.sourceTab)));
   document.querySelectorAll('[data-open-source]').forEach((button) => button.addEventListener('click', () => openSourceDialog()));
   document.querySelectorAll('[data-close-dialog]').forEach((button) => button.addEventListener('click', () => button.closest('dialog').close()));
-  document.querySelectorAll('[data-close-player]').forEach((button) => button.addEventListener('click', closePlayer));
+  document.querySelectorAll('[data-close-player]').forEach((button) => button.addEventListener('click', () => closePlayer()));
 
   for (const dialog of [refs.sourceDialog, refs.externalDialog, refs.capabilityDialog]) {
     dialog.addEventListener('click', (event) => { if (event.target === dialog) dialog.close(); });
   }
   refs.playerDialog.addEventListener('cancel', (event) => { event.preventDefault(); closePlayer(); });
 
-  refs.mediaVideo.addEventListener('timeupdate', updateTransport);
+  refs.mediaVideo.addEventListener('timeupdate', () => {
+    updateTransport();
+    saveWatchProgress();
+  });
   refs.mediaVideo.addEventListener('durationchange', updateTransport);
   refs.mediaVideo.addEventListener('play', updateTransport);
-  refs.mediaVideo.addEventListener('pause', updateTransport);
+  refs.mediaVideo.addEventListener('pause', () => {
+    updateTransport();
+    if (saveWatchProgress(true)) renderCatalog();
+  });
+  refs.mediaVideo.addEventListener('ended', () => {
+    if (!currentItem) return;
+    libraryState = recordProgress(
+      libraryState,
+      currentItem.id,
+      refs.mediaVideo.duration,
+      refs.mediaVideo.duration
+    );
+    persistLibraryState();
+    renderCatalog();
+  });
   refs.mediaVideo.addEventListener('playing', () => { refs.loadingState.hidden = true; });
   refs.mediaVideo.addEventListener('waiting', () => { refs.loadingState.hidden = false; });
   refs.mediaVideo.addEventListener('error', () => {
+    if (saveWatchProgress(true)) renderCatalog();
     if (refs.mediaVideo.error) showPlayerError('The browser rejected this media source or codec.');
   });
 
@@ -621,6 +795,9 @@ function installEvents() {
     if (Number.isFinite(refs.mediaVideo.duration)) {
       refs.mediaVideo.currentTime = Number(refs.timeline.value) / 1000 * refs.mediaVideo.duration;
     }
+  });
+  refs.timeline.addEventListener('change', () => {
+    if (saveWatchProgress(true)) renderCatalog();
   });
   refs.muteButton.addEventListener('click', () => {
     refs.mediaVideo.muted = !refs.mediaVideo.muted;
@@ -638,6 +815,8 @@ function installEvents() {
       .then((renderer) => renderer.enterVr())
       .catch((error) => showPlayerError(error.message));
   });
+  refs.favoriteButton.addEventListener('click', toggleCurrentFavorite);
+  refs.removeSourceButton.addEventListener('click', removeCurrentSource);
   refs.externalButton.addEventListener('click', openExternalDialog);
 
   refs.copyUrlButton.addEventListener('click', copyCurrentUrl);
@@ -665,6 +844,10 @@ function installEvents() {
     if (currentItem) {
       downloadJson(buildPortableMetadata(currentItem), `${slug(currentItem.title)}.projectavr.json`);
     }
+  });
+  window.addEventListener('pagehide', () => saveWatchProgress(true));
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') saveWatchProgress(true);
   });
 }
 

@@ -171,6 +171,9 @@
             <div><small id="playerFormat">VIDEO</small><h2 id="playerTitle">Title</h2></div>
           </div>
           <div class="player-top-actions">
+            <button class="button button-glass button-compact favorite-button" id="favoriteButton" type="button" aria-pressed="false">
+              <span aria-hidden="true">＋</span> My list
+            </button>
             <button class="button button-glass button-compact" id="externalButton" type="button">Open externally</button>
             <button class="button button-primary button-compact" id="enterVrButton" type="button">
               <span aria-hidden="true">◉</span> Enter VR
@@ -200,7 +203,10 @@
 
         <footer class="player-footer">
           <div class="player-description"><span class="match">DIRECT SOURCE</span><span id="playerDetails"></span></div>
-          <div class="mode-pills" id="modePills"></div>
+          <div class="player-footer-actions">
+            <button class="button button-glass button-compact remove-source-button" id="removeSourceButton" type="button" hidden>Remove source</button>
+            <div class="mode-pills" id="modePills"></div>
+          </div>
         </footer>
       </div>
     </dialog>

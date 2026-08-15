@@ -1,5 +1,5 @@
 const CACHE_PREFIX = 'projectavr-shell-';
-const CACHE_NAME = `${CACHE_PREFIX}v2`;
+const CACHE_NAME = `${CACHE_PREFIX}v3`;
 const APP_SHELL = [
   './',
   './index.html',
@@ -8,6 +8,7 @@ const APP_SHELL = [
   './assets/icon.svg',
   './src/app.js',
   './src/catalog.js',
+  './src/library-state.js',
   './src/media-utils.js',
   './src/stream-adapter.js',
   './src/vr-player.js'

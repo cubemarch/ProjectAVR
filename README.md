@@ -14,6 +14,8 @@ The app is intentionally static and zero-install at runtime. PlayCanvas `2.21.4`
 - Mouse, touch, wheel, headset pose, and basic XR controller input
 - WebXR VR entry on compatible HTTPS headset browsers
 - Direct URL, local-file, subtitle URL, and browser-local catalog sources
+- “My list” favorites, continue-watching rows, and automatic resume progress
+- Confirmed removal of user-added sources without affecting built-in examples
 - Direct URL copying, M3U export, portable metadata export, DeoVR JSON export, and PLAY’A detail export
 - Installable PWA metadata, an explicit local-shell cache, and a responsive/accessibility-conscious UI
 - Dependency-free Node tests and source validation
@@ -81,6 +83,7 @@ flowchart TD
 ```
 
 - `src/app.js` owns the catalog, dialogs, player controls, local storage, and exports.
+- `src/library-state.js` validates and updates favorite IDs and numeric watch progress without storing media URLs.
 - `src/stream-adapter.js` selects direct, HLS, or DASH playback and cleans up player instances.
 - `src/vr-player.js` creates the PlayCanvas app, uploads video frames, projects them, chooses the eye-specific UV region, and starts WebXR.
 - `src/media-utils.js` is the normalized model and adapter layer. Its behavior is covered by Node tests.
@@ -94,6 +97,7 @@ flowchart TD
 - Stereo sampling uses PlayCanvas’s per-view `view_index`. Test each target headset before production rollout; PlayCanvas does not ship a first-party stereo-video example.
 - A static site cannot provide SMB, DLNA, WebDAV, or the dynamic PLAY’A catalog API. Those require a separate server or LAN companion.
 - Local-file object URLs exist only for the current page session and cannot be handed to another device.
+- Favorites and resume state for local files or credential-bearing URLs remain session-only.
 - The cached local shell and flat-player UI can boot without jsDelivr. First-time immersive playback, HLS fallback, and DASH fallback still need their pinned third-party modules; self-host them if those modes must work deterministically offline.
 
 ## Deployment
@@ -117,7 +121,7 @@ The media origin needs its own CORS, Range, MIME, and authentication configurati
 
 ## Responsible use
 
-Only add media you own or are authorized to stream. ProjectAVR stores ordinary direct-URL metadata in local storage on the current browser; URLs with embedded credentials or common signed-token parameters are session-only. Local media files stay on the device and are not uploaded.
+Only add media you own or are authorized to stream. ProjectAVR stores ordinary direct-URL metadata plus favorite IDs and numeric watch progress in local storage on the current browser; URLs with embedded credentials or common signed-token parameters are session-only. Local media files stay on the device and are not uploaded.
 
 ## License
 

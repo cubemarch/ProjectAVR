@@ -97,6 +97,18 @@ export const BUILT_IN_CATALOG = [
 
 export const CATALOG_ROWS = [
   {
+    id: 'continue',
+    title: 'Continue watching',
+    subtitle: 'Pick up where you left off',
+    filter: (item) => item.watchProgress > 0
+  },
+  {
+    id: 'my-list',
+    title: 'My list',
+    subtitle: 'Favorites saved on this device',
+    filter: (item) => item.favorite
+  },
+  {
     id: 'featured',
     title: 'Featured now',
     subtitle: 'Start here, then connect your own media',
