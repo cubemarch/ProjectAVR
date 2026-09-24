@@ -1,0 +1,435 @@
+import * as pc from 'playcanvas';
+
+import './styles/netflix.css';
+
+import { createEngine, createCameraRig, MagicWindowControls } from './app/engine.js';
+import { loadCatalog } from './catalog/catalog.js';
+import { isImmersive, PROJECTION } from './catalog/media-format.js';
+import { VideoSource } from './player/video-source.js';
+import { ImmersivePlayer } from './player/immersive-player.js';
+import { BrowseUI } from './ui/browse.js';
+import { PlayerUI } from './ui/player-ui.js';
+import { VrUI } from './ui/vr-ui.js';
+import { CompatPanel } from './ui/compat-panel.js';
+import { api } from './api/client.js';
+import { authModal } from './ui/auth-modal.js';
+import { CreatorPortal } from './ui/creator/portal.js';
+import { ProfilePage } from './ui/profile.js';
+
+/**
+ * Application shell.
+ *
+ * Three presentation modes share one video element and one catalog:
+ *
+ *   browse    - the DOM library
+ *   flat      - a plain <video>, used when the title is 2D rectilinear and we
+ *               are not in a headset (native controls, PiP, casting all work)
+ *   rendered  - the PlayCanvas surface, used for any immersive projection and
+ *               for everything once an XR session starts
+ *
+ * Switching between flat and rendered never reloads the media, so a viewer can
+ * drop into VR mid-scene and come back out without losing their place.
+ */
+
+const MODE = { BROWSE: 'browse', FLAT: 'flat', RENDERED: 'rendered' };
+
+async function boot() {
+    const canvas = document.getElementById('render-canvas');
+    const browseMount = document.getElementById('browse-root');
+    const playerShell = document.getElementById('player-shell');
+
+    const app = createEngine(canvas);
+    const { root: cameraRoot, camera } = createCameraRig(app);
+    const magicWindow = new MagicWindowControls(app, camera);
+
+    const caps = { xrSupported: false };
+
+    // Restoring the session runs alongside the catalog fetch rather than
+    // blocking it: the library renders for signed-out visitors just the same,
+    // and personalisation is layered on when it arrives.
+    const [catalog] = await Promise.all([loadCatalog(), detectXr(app, caps), api.restore().catch(() => null)]);
+
+    const video = new VideoSource(app);
+    playerShell.appendChild(video.element);
+
+    const immersivePlayer = new ImmersivePlayer(app, video, cameraRoot, camera);
+    immersivePlayer.setActive(false);
+
+    const browse = new BrowseUI(browseMount, catalog, caps);
+    const playerUI = new PlayerUI(playerShell, video, caps);
+    const vrUI = new VrUI(app, video, camera);
+    const compat = new CompatPanel(catalog);
+    const portal = new CreatorPortal(document.getElementById('portal-root'));
+    const profile = new ProfilePage(document.getElementById('profile-root'));
+
+    browse.renderAccount(api.user);
+    await syncViewerState();
+
+    const state = {
+        mode: MODE.BROWSE,
+        item: null,
+        format: null
+    };
+
+    /* ------------------------------------------------------- transitions -- */
+
+    function setMode(mode) {
+        state.mode = mode;
+
+        document.body.classList.toggle('is-playing', mode !== MODE.BROWSE);
+        document.body.classList.toggle('is-immersive', mode === MODE.RENDERED);
+
+        browse.setVisible(mode === MODE.BROWSE);
+        if (mode === MODE.BROWSE) browse.startCreatorPolling();
+        else browse.stopCreatorPolling();
+        immersivePlayer.setActive(mode === MODE.RENDERED);
+        magicWindow.setEnabled(mode === MODE.RENDERED && !app.xr.active);
+    }
+
+    /**
+     * Start a title.
+     *
+     * @param {object} item
+     * @param {{enterVr?: boolean}} [opts]
+     */
+    async function playItem(item, opts = {}) {
+        state.item = item;
+        state.format = { ...item.format };
+
+        await video.load(item);
+
+        // Resume where the viewer left off, but not within the last 15 seconds -
+        // that just replays the credits.
+        const resume = browse.getProgress(item.id);
+        if (resume > 5 && video.duration - resume > 15) {
+            video.seekTo(resume);
+        }
+
+        applyFormat(state.format);
+        playerUI.setItem(item, state.format);
+        vrUI.setItem(item, state.format);
+
+        setMode(isImmersive(state.format) ? MODE.RENDERED : MODE.FLAT);
+
+        magicWindow.reset();
+        await video.play();
+
+        if (opts.enterVr) enterVr();
+    }
+
+    /** Rebuild the playback surface for a (possibly overridden) format. */
+    function applyFormat(format) {
+        state.format = format;
+        immersivePlayer.setItem(state.item, format);
+
+        const needsRenderer = isImmersive(format) || app.xr.active;
+        if (state.mode !== MODE.BROWSE) {
+            setMode(needsRenderer ? MODE.RENDERED : MODE.FLAT);
+        }
+    }
+
+    function enterVr() {
+        if (!caps.xrSupported) {
+            toast('No WebXR headset detected on this device.');
+            return;
+        }
+
+        // Immersive sessions always use the rendered surface, even for flat
+        // titles - a flat title becomes a cinema screen rather than a DOM video.
+        setMode(MODE.RENDERED);
+        immersivePlayer.setItem(state.item, state.format);
+
+        app.xr.start(camera.camera, pc.XRTYPE_VR, pc.XRSPACE_LOCALFLOOR, {
+            optionalFeatures: ['local-floor', 'bounded-floor', 'hand-tracking'],
+            callback: (err) => {
+                if (err) {
+                    toast(`Could not enter VR: ${err.message}`);
+                    setMode(isImmersive(state.format) ? MODE.RENDERED : MODE.FLAT);
+                    return;
+                }
+
+                playerUI.setImmersive(true);
+                magicWindow.setEnabled(false);
+                immersivePlayer.recenter();
+            }
+        });
+    }
+
+    function exitPlayback() {
+        if (app.xr.active) {
+            app.xr.end();
+        }
+
+        if (state.item) {
+            browse.saveProgress(state.item.id, video.currentTime);
+        }
+
+        // One view event per session, with however much was actually watched.
+        if (state.item && video.currentTime > 5) {
+            api.recordView(state.item.id, video.currentTime);
+        }
+
+        video.pause();
+        setMode(MODE.BROWSE);
+        playerUI.setImmersive(false);
+    }
+
+    /* ------------------------------------------------------------ wiring -- */
+
+    browse.on('play', (item) => playItem(item));
+    browse.on('enterVr', (item) => playItem(item, { enterVr: true }));
+    browse.on('showCompat', () => compat.open());
+
+    /**
+     * Clicking a creator's picture.
+     *
+     * A creator who is on air goes straight to the monitor page for that
+     * broadcast - a separate document, because the live path carries its own
+     * decoders and has nothing to do with the catalogue. One who is set up but
+     * not yet broadcasting has nothing to watch, so their page is the sensible
+     * destination instead of an empty player.
+     */
+    browse.on('watchCreator', (creator) => {
+        if (creator.status === 'live' && creator.live?.sessionId) {
+            location.href = `/live/${encodeURIComponent(creator.live.sessionId)}`;
+            return;
+        }
+
+        toast(`${creator.name} is set up but not on air yet.`);
+    });
+
+    // Only while the browse view is actually on screen. Polling behind a player
+    // is a request every fifteen seconds for a list nobody can see.
+    browse.startCreatorPolling();
+
+    /* ------------------------------------------------------------ account -- */
+
+    /**
+     * Pull server-side progress and My List over the local copies.
+     *
+     * Signed out, the app keeps using localStorage - which is why the library
+     * stays fully usable without an account. Signing in promotes that state to
+     * something that follows you onto a headset.
+     */
+    async function syncViewerState() {
+        if (!api.signedIn) return;
+
+        const state = await api.viewerState();
+
+        for (const [titleId, entry] of Object.entries(state.progress ?? {})) {
+            browse.progress[titleId] = entry.position;
+        }
+        for (const id of state.myList ?? []) browse.myList.add(id);
+    }
+
+    browse.on('signIn', async () => {
+        const user = await authModal.open('login');
+        if (!user) return;
+
+        browse.renderAccount(user);
+        await syncViewerState();
+        browse._applyFilter('all');
+        toast(`Signed in as ${user.displayName}`);
+    });
+
+    browse.on('signUp', async () => {
+        const user = await authModal.open('register');
+        if (!user) return;
+
+        browse.renderAccount(user);
+        await syncViewerState();
+        browse._applyFilter('all');
+        toast(`Welcome, ${user.displayName}`);
+    });
+
+    browse.on('signOut', async () => {
+        await api.logout();
+        browse.renderAccount(null);
+        toast('Signed out');
+    });
+
+    // The publisher agreement and the one-time ID check, then Studio. The
+    // dialog owns both, because they are the same two steps a creator signup
+    // runs - only the account already exists.
+    browse.on('becomeCreator', async () => {
+        const user = await authModal.openBecomeCreator();
+        if (!api.isCreator) return;
+
+        browse.renderAccount(user ?? api.user);
+        toast('Creator account enabled. Opening Studio…');
+        history.pushState({ portal: true }, '', '/creator');
+        portal.open();
+    });
+
+    browse.on('openProfile', async () => {
+        if (!api.signedIn) {
+            const user = await authModal.open('login', 'Sign in to see your profile.');
+            if (!user) return;
+            browse.renderAccount(user);
+        }
+
+        history.pushState({ profile: true }, '', '/profile');
+        await profile.open();
+    });
+
+    window.addEventListener('avr:exit-profile', () => {
+        profile.close();
+        history.pushState({}, '', '/');
+        browse.refreshCreators();
+    });
+
+    browse.on('openStudio', () => openStudio());
+
+    async function openStudio() {
+        if (!api.signedIn) {
+            const user = await authModal.open('login', 'Sign in to open Creator Studio.');
+            if (!user) return;
+            browse.renderAccount(user);
+        }
+
+        if (!api.isCreator) {
+            toast('This account is not a creator account yet.');
+            return;
+        }
+
+        history.pushState({ portal: true }, '', '/creator');
+        portal.open();
+    }
+
+    window.addEventListener('avr:exit-portal', () => {
+        history.pushState({}, '', '/');
+        // A newly published title should show up immediately on return.
+        loadCatalog()
+            .then((fresh) => {
+                catalog.items = fresh.items;
+                catalog.rows = fresh.rows;
+                browse.catalog = fresh;
+                browse._applyFilter('all');
+            })
+            .catch(() => {});
+    });
+
+    window.addEventListener('popstate', () => {
+        if (location.pathname === '/creator') openStudio();
+        else portal.close();
+
+        if (location.pathname === '/profile') profile.open();
+        else profile.close();
+    });
+
+    api.addEventListener('session', (e) => browse.renderAccount(e.detail));
+
+    playerUI.on('back', exitPlayback);
+    playerUI.on('enterVr', enterVr);
+    playerUI.on('recenter', () => immersivePlayer.recenter());
+    playerUI.on('formatChange', (format) => {
+        applyFormat(format);
+        vrUI.setItem(state.item, format);
+    });
+
+    vrUI.on('exitVr', () => app.xr.end());
+    vrUI.on('back', exitPlayback);
+    vrUI.on('recenter', () => immersivePlayer.recenter());
+    vrUI.on('formatChange', (format) => {
+        applyFormat(format);
+        playerUI.setItem(state.item, format);
+    });
+
+    app.xr.on('end', () => {
+        playerUI.setImmersive(false);
+        // Flat titles go back to the DOM player; immersive ones stay on the
+        // rendered surface as a magic window.
+        setMode(isImmersive(state.format) ? MODE.RENDERED : MODE.FLAT);
+        magicWindow.setEnabled(isImmersive(state.format));
+    });
+
+    video.on('ended', () => {
+        if (!state.item) return;
+        browse.saveProgress(state.item.id, 0);
+        api.recordView(state.item.id, video.duration);
+    });
+
+    video.on('error', (message) => toast(`Playback error - ${message}`));
+
+    // Save resume position periodically and on unload rather than every tick.
+    setInterval(() => {
+        if (state.mode !== MODE.BROWSE && state.item && !video.paused) {
+            browse.saveProgress(state.item.id, video.currentTime);
+        }
+    }, 5000);
+
+    window.addEventListener('pagehide', () => {
+        if (state.item) browse.saveProgress(state.item.id, video.currentTime);
+    });
+
+    /* ------------------------------------------------------------- frame -- */
+
+    app.on('update', (dt) => {
+        if (state.mode === MODE.RENDERED || app.xr.active) {
+            video.updateTexture();
+            immersivePlayer.update(dt);
+            magicWindow.update(dt);
+            vrUI.update(dt);
+        }
+    });
+
+    app.start();
+
+    if (location.pathname === '/creator') openStudio();
+    if (location.pathname === '/profile') profile.open();
+
+    // Deep link: /?play=<id> jumps straight into a title, which is how the
+    // compatibility panel's QR codes get you into the right video.
+    const params = new URLSearchParams(location.search);
+    const deepLink = params.get('play');
+    if (deepLink) {
+        const item = catalog.items.find((i) => i.id === deepLink);
+        if (item) {
+            // Autoplay policy still applies, so this needs one gesture.
+            toast(`Tap anywhere to start "${item.title}"`);
+            window.addEventListener(
+                'pointerdown',
+                () => playItem(item, { enterVr: params.get('vr') === '1' }),
+                { once: true }
+            );
+        }
+    }
+}
+
+/**
+ * Probe for an immersive-vr capable device.
+ *
+ * @param {pc.Application} app
+ * @param {{xrSupported: boolean}} caps
+ */
+async function detectXr(app, caps) {
+    if (!app.xr.supported) return;
+
+    caps.xrSupported = app.xr.isAvailable(pc.XRTYPE_VR);
+
+    // Availability can resolve after boot when a headset is connected later.
+    app.xr.on('available:immersive-vr', (available) => {
+        caps.xrSupported = available;
+    });
+}
+
+let toastTimer = null;
+function toast(message) {
+    let el = document.querySelector('.toast');
+    if (!el) {
+        el = document.createElement('div');
+        el.className = 'toast';
+        document.body.appendChild(el);
+    }
+
+    el.textContent = message;
+    el.classList.add('show');
+
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => el.classList.remove('show'), 4200);
+}
+
+boot().catch((err) => {
+    console.error(err);
+    document.body.innerHTML = `<div class="empty-state"><h2>Failed to start</h2><p>${err.message}</p></div>`;
+});

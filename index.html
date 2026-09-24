@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+        <meta name="theme-color" content="#0b0b0f" />
+        <title>ProjectAVR</title>
+        <meta
+            name="description"
+            content="Flat and immersive 180/360 video library with WebXR playback and native VR player exports."
+        />
+        <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%237c5cff'/%3E%3Ctext x='16' y='23' font-family='Helvetica,Arial' font-size='19' font-weight='bold' fill='%23fff' text-anchor='middle'%3EA%3C/text%3E%3C/svg%3E" />
+    </head>
+    <body>
+        <!-- Browse experience (DOM). -->
+        <div id="browse-root"></div>
+
+        <!-- Flat playback surface. The <video> element is appended here at boot
+             and is shared with the WebXR renderer. -->
+        <div class="player-shell" id="player-shell"></div>
+
+        <!-- Creator Studio. Hidden until a creator opens it. -->
+        <div id="portal-root" hidden></div>
+
+        <!-- Profile and credits, for viewers and creators alike. -->
+        <div id="profile-root" hidden></div>
+
+        <!-- Immersive playback surface (PlayCanvas). -->
+        <canvas id="render-canvas"></canvas>
+
+        <script type="module" src="/src/main.js"></script>
+    </body>
+</html>

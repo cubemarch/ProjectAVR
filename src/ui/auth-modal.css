@@ -1,0 +1,335 @@
+/**
+ * The sign-in dialog, on its own.
+ *
+ * This lives apart from `netflix.css` because the dialog is mounted from every
+ * page - the home page, the live monitor - and the monitor does not load the
+ * home page's stylesheet. Everything here is scoped under `.auth-backdrop` and
+ * self-contained down to the button and the backdrop, so the dialog looks the
+ * same wherever it opens.
+ *
+ * Colours are read from the host page's palette where it has one and fall back
+ * to the monitor's otherwise, so the dialog belongs to the page it opens over
+ * rather than arriving in a second theme.
+ */
+
+.auth-backdrop {
+    --auth-raised: var(--bg-raised, #16161d);
+    --auth-surface: var(--surface, #1e1e28);
+    --auth-text: var(--text, #f4f4f6);
+    --auth-dim: var(--text-dim, #a2a2b0);
+    --auth-faint: var(--text-faint, #6f6f80);
+    --auth-accent: var(--accent, #7c5cff);
+    --auth-link: var(--vr, #00d8e0);
+
+    position: fixed;
+    inset: 0;
+    z-index: 200;
+    display: none;
+    overflow-y: auto;
+    padding: 60px 20px;
+    background: rgba(0, 0, 0, 0.76);
+    color: var(--auth-text);
+    font-family: inherit;
+}
+
+.auth-backdrop.open {
+    display: block;
+}
+
+.auth-backdrop .auth-modal {
+    position: relative;
+    max-width: 430px;
+    margin: 0 auto;
+    padding: 38px 38px 30px;
+    background: var(--auth-raised);
+    border-radius: 8px;
+    box-shadow: 0 20px 70px rgba(0, 0, 0, 0.8);
+    animation: auth-modal-in 0.28s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+}
+
+@keyframes auth-modal-in {
+    from {
+        opacity: 0;
+        transform: translateY(18px) scale(0.98);
+    }
+}
+
+.auth-backdrop .modal-close {
+    position: absolute;
+    top: 14px;
+    right: 14px;
+    display: grid;
+    place-items: center;
+    width: 32px;
+    height: 32px;
+    border: 0;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.08);
+    color: var(--auth-text);
+    cursor: pointer;
+}
+
+.auth-backdrop .modal-close:hover {
+    background: rgba(255, 255, 255, 0.16);
+}
+
+/* ------------------------------------------------------------------ head -- */
+
+.auth-backdrop .auth-head {
+    margin-bottom: 22px;
+}
+
+.auth-backdrop .brand {
+    display: flex;
+    align-items: baseline;
+    gap: 2px;
+    margin-bottom: 14px;
+    font-weight: 800;
+    font-size: 22px;
+    letter-spacing: -0.04em;
+    color: var(--auth-accent);
+    user-select: none;
+}
+
+.auth-backdrop .brand span {
+    color: var(--auth-text);
+}
+
+.auth-backdrop .auth-head h2 {
+    margin: 0;
+    font-size: 26px;
+    letter-spacing: -0.025em;
+}
+
+.auth-backdrop .auth-reason {
+    margin: 8px 0 0;
+    color: var(--auth-dim);
+    font-size: 14px;
+    line-height: 1.6;
+}
+
+.auth-backdrop .auth-note {
+    margin: 0;
+    padding: 11px 13px;
+    border-radius: 6px;
+    background: rgba(255, 255, 255, 0.04);
+    color: var(--auth-faint);
+    font-size: 12.5px;
+    line-height: 1.6;
+}
+
+/* ------------------------------------------------------------------ form -- */
+
+.auth-backdrop .auth-form {
+    display: grid;
+    gap: 14px;
+}
+
+.auth-backdrop .auth-form label {
+    display: grid;
+    gap: 6px;
+    font-size: 13px;
+    color: var(--auth-dim);
+}
+
+.auth-backdrop .auth-form label em {
+    font-style: normal;
+    color: var(--auth-faint);
+}
+
+/* `display: grid` above outranks the user-agent rule for [hidden]. */
+.auth-backdrop [hidden] {
+    display: none !important;
+}
+
+.auth-backdrop .auth-form input,
+.auth-backdrop .auth-form textarea {
+    width: 100%;
+    padding: 11px 13px;
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    border-radius: 5px;
+    background: var(--auth-surface);
+    color: var(--auth-text);
+    font-size: 14.5px;
+    font-family: inherit;
+    resize: vertical;
+}
+
+.auth-backdrop .auth-form input:focus,
+.auth-backdrop .auth-form textarea:focus {
+    outline: none;
+    border-color: var(--auth-accent);
+}
+
+.auth-backdrop .auth-form label.checkbox {
+    grid-template-columns: auto 1fr;
+    align-items: start;
+    gap: 10px;
+    line-height: 1.5;
+}
+
+.auth-backdrop .auth-form label.checkbox input {
+    width: auto;
+    margin-top: 2px;
+    accent-color: var(--auth-accent);
+}
+
+/* --------------------------------------------------------- role selector -- */
+
+/* Two cards rather than a checkbox: what a creator account is differs enough
+   from what a user account is that the choice deserves to look like one. */
+.auth-backdrop .role-toggle {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+}
+
+.auth-backdrop .role-toggle label {
+    gap: 2px;
+    padding: 12px 13px;
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    border-radius: 6px;
+    background: var(--auth-surface);
+    cursor: pointer;
+}
+
+.auth-backdrop .role-toggle label.on {
+    border-color: var(--auth-accent);
+    background: color-mix(in srgb, var(--auth-accent) 16%, transparent);
+}
+
+.auth-backdrop .role-toggle input {
+    position: absolute;
+    opacity: 0;
+    pointer-events: none;
+}
+
+.auth-backdrop .role-name {
+    font-size: 14.5px;
+    font-weight: 600;
+    color: var(--auth-text);
+}
+
+.auth-backdrop .role-note {
+    font-size: 12px;
+    color: var(--auth-faint);
+}
+
+/* ------------------------------------------------------------ agreements -- */
+
+.auth-backdrop .agreement {
+    margin-top: -6px;
+    padding: 0 0 0 28px;
+    font-size: 12.5px;
+    color: var(--auth-faint);
+}
+
+.auth-backdrop .agreement summary {
+    cursor: pointer;
+    color: var(--auth-link);
+    text-decoration: underline;
+}
+
+.auth-backdrop .agreement ul {
+    max-height: 190px;
+    overflow-y: auto;
+    margin: 10px 0 0;
+    padding: 12px 16px 12px 30px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 6px;
+    background: rgba(0, 0, 0, 0.25);
+    line-height: 1.6;
+}
+
+.auth-backdrop .agreement li + li {
+    margin-top: 8px;
+}
+
+.auth-backdrop .consent-text {
+    max-height: 220px;
+    overflow-y: auto;
+    margin: 14px 0;
+    padding: 14px 16px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 6px;
+    background: rgba(0, 0, 0, 0.25);
+    color: var(--auth-dim);
+    font-size: 13px;
+    line-height: 1.65;
+    white-space: pre-line;
+}
+
+/* --------------------------------------------------------------- buttons -- */
+
+.auth-backdrop .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    padding: 11px 18px;
+    border: 0;
+    border-radius: 5px;
+    background: rgba(255, 255, 255, 0.12);
+    color: var(--auth-text);
+    font-family: inherit;
+    font-size: 14.5px;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.auth-backdrop .btn:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.2);
+}
+
+.auth-backdrop .btn-primary {
+    background: var(--auth-accent);
+    color: #fff;
+}
+
+.auth-backdrop .btn-primary:hover:not(:disabled) {
+    filter: brightness(1.12);
+}
+
+.auth-backdrop .btn:disabled {
+    opacity: 0.55;
+    cursor: default;
+}
+
+.auth-backdrop .auth-submit {
+    margin-top: 6px;
+}
+
+.auth-backdrop .field-error {
+    padding: 10px 13px;
+    border: 1px solid rgba(255, 92, 138, 0.4);
+    border-radius: 5px;
+    background: rgba(255, 92, 138, 0.14);
+    color: #ffb3c7;
+    font-size: 13.5px;
+}
+
+.auth-backdrop .auth-alt {
+    margin-top: 20px;
+    color: var(--auth-faint);
+    font-size: 13.5px;
+    text-align: center;
+}
+
+.auth-backdrop .auth-alt button {
+    border: 0;
+    background: none;
+    color: var(--auth-link);
+    font: inherit;
+    text-decoration: underline;
+    cursor: pointer;
+}
+
+@media (max-width: 480px) {
+    .auth-backdrop {
+        padding: 24px 12px;
+    }
+
+    .auth-backdrop .auth-modal {
+        padding: 28px 22px 24px;
+    }
+}

@@ -1,0 +1,24 @@
+# Keep the build context small and the image free of host state.
+#
+# node_modules matters most: the build stage runs `npm ci` itself, and copying a
+# macOS tree in would both slow the upload and risk shipping darwin-arm64
+# binaries into a Linux image.
+
+node_modules
+dist
+data
+ios
+test
+
+.git
+.gitignore
+.DS_Store
+*.log
+
+.dlna-uuid
+public/media/*
+!public/media/.gitkeep
+
+Dockerfile
+.dockerignore
+*.code-workspace

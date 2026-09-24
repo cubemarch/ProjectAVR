@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Support — AVR Capture</title>
+<style>
+    :root { color-scheme: light dark; }
+    body {
+        margin: 0 auto;
+        padding: 3rem 1.25rem 6rem;
+        max-width: 42rem;
+        font: 16px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    }
+    h1 { font-size: 1.75rem; margin-bottom: 0.25rem; }
+    h2 { font-size: 1.1rem; margin-top: 2.5rem; }
+    .updated { color: #6b7280; margin-top: 0; }
+    dt { font-weight: 600; margin-top: 1.25rem; }
+    dd { margin: 0.25rem 0 0; }
+    code { font-size: 0.9em; }
+    .contact { padding: 1rem 1.25rem; border: 1px solid #8884; border-radius: 0.5rem; margin: 1.5rem 0; }
+    .unconfigured {
+        padding: 1rem 1.25rem;
+        border: 2px solid #dc2626;
+        border-radius: 0.5rem;
+        margin: 1.5rem 0;
+        color: #dc2626;
+        font-weight: 600;
+    }
+    footer { margin-top: 4rem; color: #6b7280; font-size: 0.9rem; }
+</style>
+</head>
+<body>
+
+<h1>AVR Capture — Support</h1>
+<p class="updated">Last updated 21 September 2026</p>
+
+<p>
+    AVR Capture turns an iPhone into a live video contribution encoder. It
+    records with one or both rear cameras and sends the result to a server
+    address you provide.
+</p>
+
+{{CONTACT}}
+
+<h2>Getting started</h2>
+
+<ol>
+    <li>Open <strong>Settings</strong> and add a destination — the address and
+        port of the server that will receive the broadcast.</li>
+    <li>Enter the stream key for that destination. It is kept in the iOS
+        Keychain and is never shown again.</li>
+    <li>Tap <strong>Test connection</strong> to confirm something is listening.
+        This does not send the key, because a key may be valid for a single
+        broadcast and spending one on a test is not a test.</li>
+    <li>Confirm the broadcasting terms, then go live.</li>
+</ol>
+
+<p>
+    A server can also issue a destination link, which fills in the address, port
+    and key in one step. The app always shows you what a link contains and asks
+    you to confirm before it saves anything.
+</p>
+
+<h2>Common problems</h2>
+
+<dl>
+    <dt>"Nothing is listening on that port"</dt>
+    <dd>
+        The address was reached but nothing answered. Check the server is
+        running and that the port matches.
+    </dd>
+
+    <dt>"Could not reach that address"</dt>
+    <dd>
+        Usually the phone and the server are on different networks. A private
+        address — anything starting <code>192.168.</code>, <code>10.</code> or
+        <code>172.16–31.</code> — is only reachable over Wi-Fi, and the app will
+        not try to reach one over cellular.
+    </dd>
+
+    <dt>"Local network access is denied"</dt>
+    <dd>
+        iOS requires explicit permission before any app may connect to an
+        address on the same Wi-Fi. Turn it on in
+        <strong>Settings › Privacy &amp; Security › Local Network</strong>.
+    </dd>
+
+    <dt>"The server did not accept this destination's key"</dt>
+    <dd>
+        Some servers issue a key that is valid for one broadcast and expires in
+        minutes. If yours does, request a new destination link and import it.
+        The app stops rather than retrying, because a key that has been refused
+        once will be refused again.
+    </dd>
+
+    <dt>"The server's certificate is not the one this destination expects"</dt>
+    <dd>
+        The destination was set up to accept one specific certificate and the
+        server presented a different one. If the server was reinstalled or its
+        certificate regenerated, import a new destination link. If nothing on
+        the server changed, do not go on air — something is answering in its
+        place.
+    </dd>
+
+    <dt>Only one camera is used</dt>
+    <dd>
+        Stereo capture needs two rear cameras running at once, which not every
+        iPhone supports, and iOS will stop a two-camera session when the device
+        gets hot. <strong>Diagnostics</strong> reports what this device can do
+        and what it is currently doing.
+    </dd>
+
+    <dt>The broadcast has no sound</dt>
+    <dd>
+        Check the <strong>Sound</strong> switch in <strong>Settings</strong>; it
+        is on unless someone turned it off. iOS asks for the microphone the
+        first time you go live with it on, and if that was declined, Settings
+        shows a row that takes you straight to the iOS permission.
+        <strong>Diagnostics</strong> reports whether sound was
+        requested, whether a microphone is connected, and how many audio buffers
+        have been encoded — if the third is zero while the second says yes,
+        something else on the device has taken the input. Note that a receiving
+        page may also start muted: browsers do not allow sound to begin without
+        a click, so check the receiver's own control before changing anything
+        on the phone.
+    </dd>
+
+    <dt>The picture stutters or the app reports dropped frames</dt>
+    <dd>
+        The link cannot carry the bitrate. The app drops frames rather than
+        queue them, because a stream that skips is still live and a stream that
+        lags is a slow recording. Lower the bitrate in Settings or move closer
+        to the access point.
+    </dd>
+</dl>
+
+<h2>Reporting a problem</h2>
+
+<p>
+    <strong>Diagnostics</strong> in the app produces a report describing the
+    device, the capture session and the connection. It contains no stream keys
+    and no full server addresses. Attaching it makes almost any report faster to
+    answer.
+</p>
+
+<h2>Privacy</h2>
+
+<p>
+    The app collects nothing and contains no analytics or third-party code. See
+    the <a href="/privacy">privacy policy</a>.
+</p>
+
+<footer>
+    AVR Capture is a video contribution tool. This page covers the iOS
+    application only.
+</footer>
+
+</body>
+</html>

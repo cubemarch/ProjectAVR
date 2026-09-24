@@ -1,0 +1,176 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>$(DEVELOPMENT_LANGUAGE)</string>
+    <key>CFBundleDisplayName</key>
+    <string>AVR Capture</string>
+    <key>CFBundleExecutable</key>
+    <string>$(EXECUTABLE_NAME)</string>
+    <key>CFBundleIdentifier</key>
+    <string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
+    <key>CFBundleInfoDictionaryVersion</key>
+    <string>6.0</string>
+    <key>CFBundleName</key>
+    <string>$(PRODUCT_NAME)</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>1.0</string>
+    <key>CFBundleVersion</key>
+    <string>1</string>
+
+    <!--
+        Camera. Shown the first time capture is requested.
+
+        This string is not decoration. An app that calls
+        `AVCaptureDevice.requestAccess(for: .video)` without it is killed by the
+        system on the spot, with no prompt and no catchable error — which
+        presents as an immediate launch crash.
+    -->
+    <key>NSCameraUsageDescription</key>
+    <string>AVR Capture uses the camera to record and broadcast live video. On devices that support it, both rear cameras are used together to produce a stereoscopic picture.</string>
+
+    <!--
+        Microphone. Shown the first time a broadcast is prepared with sound
+        switched on — and only then. With Sound off in Settings the app never
+        attaches a microphone input, so this prompt never appears, the app does
+        not list under Settings › Privacy & Security › Microphone, and the
+        orange recording indicator stays dark.
+
+        Same failure mode as the camera key: requesting audio access without it
+        terminates the process immediately.
+    -->
+    <key>NSMicrophoneUsageDescription</key>
+    <string>AVR Capture uses the microphone to send sound with your broadcast. You can turn sound off in Settings.</string>
+
+    <!--
+        Local network. Required since iOS 14 for *any* connection to a LAN
+        address, including the UDP discovery broadcast and the TCP push to the
+        server. Without this key the connection fails with EPERM and no prompt
+        is ever shown, which looks exactly like the server being down.
+    -->
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>AVR Capture can find a receiving server on this Wi-Fi network and send your broadcast to it.</string>
+
+    <!--
+        Privacy policy and support pages.
+
+        THESE ARE PLACEHOLDERS AND MUST BE REPLACED BEFORE SUBMISSION.
+        Guideline 5.1.1 requires a reachable privacy policy and App Store
+        Connect requires a support URL; a broadcasting app with neither is
+        rejected on sight. Tracked as a line item in docs/APP_STORE.md.
+
+        `example.com` is reserved by RFC 2606 and will never resolve to anything
+        real, and `SupportLinks` rejects the reserved names outright — so an
+        unconfigured build hides both rows rather than putting a broken link in
+        front of a reviewer. Replacing the host is all that is needed; the paths
+        are what the server serves (see server/legal.js).
+
+        The host must belong to the tool, not to any platform the video is
+        watched on. The app is a content-neutral broadcasting tool and must not
+        link to a viewing destination — the same server process can answer for
+        both names.
+    -->
+    <key>AVRPrivacyPolicyURL</key>
+    <string>https://capture.example.com/privacy</string>
+    <key>AVRSupportURL</key>
+    <string>https://capture.example.com/support</string>
+
+    <!--
+        Export compliance. The app uses TLS and a SHA-256 certificate pin, both
+        from the operating system's own frameworks, and implements no
+        cryptography of its own — which is the standard exemption. Declaring it
+        here rather than answering the question by hand keeps the answer
+        consistent across uploads, and makes it a code review away from anyone
+        who changes the premise.
+    -->
+    <key>ITSAppUsesNonExemptEncryption</key>
+    <false/>
+
+    <!--
+        Declaring the discovery port's Bonjour service is not required for a
+        plain UDP broadcast, but iOS uses this list to describe the app in the
+        local-network prompt, and an app that declares nothing is described
+        vaguely.
+    -->
+    <key>NSBonjourServices</key>
+    <array>
+        <string>_avr-live._tcp</string>
+    </array>
+
+    <!-- Pairing links: avr://pair?host=…&amp;port=…&amp;key=… -->
+    <key>CFBundleURLTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleURLName</key>
+            <string>com.projectavr.capture.pairing</string>
+            <key>CFBundleURLSchemes</key>
+            <array>
+                <string>avr</string>
+            </array>
+        </dict>
+    </array>
+
+    <!--
+        Launch screen.
+
+        iOS draws this from the bundle before any of our code runs, so it is a
+        still image by construction — it cannot be a SwiftUI view and it cannot
+        show a spinner. Left as an empty dictionary it is a plain black
+        rectangle, which is exactly what a hung app looks like, and bringing up
+        two cameras takes long enough for that to be the first thing anyone
+        sees.
+
+        So it shows the same `camera.aperture` glyph on the same background that
+        `StartupView` opens with, and `StartupView` then takes over and starts
+        pulsing it. The image is generated from the system symbol by
+        `ios/Tools/make-launch-logo.swift` so the two cannot drift apart.
+
+        The key must be present either way: an app with no launch screen at all
+        is run in a legacy compatibility mode, letterboxed to an older screen
+        size, which on a modern iPhone reads as a blank screen rather than as a
+        layout problem.
+    -->
+    <key>UILaunchScreen</key>
+    <dict>
+        <key>UIColorName</key>
+        <string>LaunchBackground</string>
+        <key>UIImageName</key>
+        <string>LaunchLogo</string>
+        <key>UIImageRespectsSafeAreaInsets</key>
+        <true/>
+    </dict>
+
+    <!--
+        Landscape only. Stereo depends on the two lenses being separated
+        horizontally, which they are only when the phone is on its side; in
+        portrait the baseline is vertical and the result is not a stereo pair at
+        all. Constraining the app is more honest than letting the operator
+        produce something unwatchable.
+    -->
+    <key>UISupportedInterfaceOrientations</key>
+    <array>
+        <string>UIInterfaceOrientationLandscapeLeft</string>
+        <string>UIInterfaceOrientationLandscapeRight</string>
+    </array>
+
+    <key>UIRequiredDeviceCapabilities</key>
+    <array>
+        <string>arm64</string>
+        <string>video-camera</string>
+    </array>
+
+    <key>UIApplicationSceneManifest</key>
+    <dict>
+        <key>UIApplicationSupportsMultipleScenes</key>
+        <false/>
+    </dict>
+
+    <key>UIStatusBarHidden</key>
+    <true/>
+    <key>UIUserInterfaceStyle</key>
+    <string>Dark</string>
+</dict>
+</plist>

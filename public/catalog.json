@@ -1,0 +1,76 @@
+{
+    "_comment": "Curated metadata. Files in public/media/ are auto-discovered and merged with these entries by id (the filename slug), so anything here overrides what the filename implies. The seeded titles are Creative Commons films from the Blender Foundation, served with CORS so the app is playable on first run.",
+
+    "items": [
+        {
+            "id": "big-buck-bunny",
+            "title": "Big Buck Bunny",
+            "src": "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4",
+            "synopsis": "A giant rabbit with a heart bigger than himself takes revenge on three rodents who torment the forest's smaller creatures. The Blender Foundation's third open movie, and still the standard test reel for anything that plays video.",
+            "genre": "Animation",
+            "studio": "Blender Foundation",
+            "year": 2008,
+            "duration": 596,
+            "width": 1280,
+            "height": 720,
+            "resolution": "720p",
+            "projection": "flat",
+            "stereo": "mono",
+            "trending": true,
+            "hero": true,
+            "tags": ["open movie", "creative commons", "demo"]
+        },
+        {
+            "id": "sintel",
+            "title": "Sintel",
+            "src": "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/Sintel.mp4",
+            "synopsis": "A lone traveller searches the frozen north for the dragon she raised from a hatchling. Fourteen minutes that still hold up as a showcase for what an open production pipeline can do.",
+            "genre": "Fantasy",
+            "studio": "Blender Foundation",
+            "year": 2010,
+            "duration": 888,
+            "width": 1280,
+            "height": 720,
+            "resolution": "720p",
+            "projection": "flat",
+            "stereo": "mono",
+            "trending": true,
+            "tags": ["open movie", "creative commons"]
+        },
+        {
+            "id": "tears-of-steel",
+            "title": "Tears of Steel",
+            "src": "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/TearsOfSteel.mp4",
+            "synopsis": "Live action and computer graphics collide in a science fiction short built to stress-test Blender's visual effects tooling. Shot in Amsterdam, rendered by volunteers.",
+            "genre": "Science Fiction",
+            "studio": "Blender Foundation",
+            "year": 2012,
+            "duration": 734,
+            "width": 1280,
+            "height": 720,
+            "resolution": "720p",
+            "projection": "flat",
+            "stereo": "mono",
+            "trending": true,
+            "tags": ["open movie", "vfx"]
+        },
+        {
+            "id": "elephants-dream",
+            "title": "Elephants Dream",
+            "src": "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/ElephantsDream.mp4",
+            "synopsis": "Two men navigate a vast, shifting machine that may or may not be of their own making. The first open movie, and the reason every one of these files exists.",
+            "genre": "Surreal",
+            "studio": "Blender Foundation",
+            "year": 2006,
+            "duration": 653,
+            "width": 1280,
+            "height": 720,
+            "resolution": "720p",
+            "projection": "flat",
+            "stereo": "mono",
+            "tags": ["open movie", "creative commons"]
+        }
+    ],
+
+    "rows": null
+}

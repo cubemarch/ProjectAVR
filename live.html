@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+        <meta name="theme-color" content="#0b0b0f" />
+        <title>Live monitor · ProjectAVR</title>
+        <meta name="description" content="Receive and display a live stereoscopic 3D broadcast from the AVR Capture app." />
+        <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%23ff4d4d'/%3E%3Ccircle cx='16' cy='16' r='6' fill='%23fff'/%3E%3C/svg%3E" />
+    </head>
+    <body>
+        <div class="layout">
+            <aside class="sidebar">
+                <div class="brand">
+                    <h1>ProjectAVR</h1>
+                    <span>Live</span>
+                </div>
+
+                <!--
+                    Signing up is reachable from here, not only from the home
+                    page. This is the page a shared broadcast link opens, so it
+                    is where a first-time visitor actually lands - and asking
+                    them to go and find the other page to make an account is
+                    how they leave instead.
+                -->
+                <section id="account">
+                    <h2>Account</h2>
+                    <div id="account-body"></div>
+                </section>
+
+                <!--
+                    The waiting room. Empty and hidden for a signed-out
+                    visitor, who still gets the public list below it - being
+                    invitable is something you opt into by signing in, not a
+                    precondition for watching anything.
+                -->
+                <section id="seat" hidden>
+                    <h2>Your seat</h2>
+                    <div id="seat-body"></div>
+                </section>
+
+                <section>
+                    <h2>Broadcasts</h2>
+                    <div id="session-list"><p class="muted">Looking for broadcasts…</p></div>
+                </section>
+
+                <section>
+                    <h2>Join by id</h2>
+                    <form id="join-form">
+                        <input id="join-id" type="text" maxlength="8" placeholder="A1B2C3" autocomplete="off" spellcheck="false" />
+                        <button type="submit" class="primary">Join</button>
+                    </form>
+                </section>
+
+                <section>
+                    <h2>Presentation</h2>
+
+                    <div class="field">
+                        <label for="projection">Projection</label>
+                        <select id="projection">
+                            <option value="">As broadcast</option>
+                            <option value="flat">Flat screen</option>
+                            <option value="dome180">180° dome</option>
+                            <option value="sphere360">360° sphere</option>
+                            <option value="fisheye">Fisheye</option>
+                        </select>
+                    </div>
+
+                    <label class="check">
+                        <input id="swap-eyes" type="checkbox" />
+                        Swap left / right eye
+                    </label>
+                </section>
+
+                <section>
+                    <h2>Activity</h2>
+                    <div id="log"></div>
+                </section>
+            </aside>
+
+            <main class="stage">
+                <div class="stage-bar">
+                    <h2 id="stage-title">No broadcast</h2>
+
+                    <div class="layout-group">
+                        <button data-layout="sbs" class="active" title="Both eyes side by side">Side&nbsp;by&nbsp;side</button>
+                        <button data-layout="left" title="Left eye only">L</button>
+                        <button data-layout="right" title="Right eye only">R</button>
+                        <button data-layout="anaglyph" title="Red/cyan — judge depth without a headset">Anaglyph</button>
+                        <button data-layout="difference" title="|L − R| — vertical misalignment shows as banding">Difference</button>
+                    </div>
+
+                    <!--
+                        Hidden for a broadcast that costs nothing, which is
+                        every broadcast on a deployment nobody charges for.
+                        When it is shown it shows the rate before the balance:
+                        the first question is what this costs per minute.
+                    -->
+                    <div class="cost-group" id="billing" hidden>
+                        <span id="cost-summary"></span>
+                        <div class="mode-group" id="mode-group">
+                            <button data-mode="2d" class="active" title="Watch flat">2D</button>
+                            <button data-mode="3d" title="Watch in stereo">3D</button>
+                        </div>
+                    </div>
+
+                    <!--
+                        Disabled until an audio track announces itself, so a
+                        silent broadcast reads as "this one has no sound"
+                        rather than "the unmute button does not work".
+                    -->
+                    <button id="mute" disabled title="This broadcast has no sound">Sound off</button>
+                    <button id="enter-vr" disabled>View in VR</button>
+                    <button id="leave">Leave</button>
+                </div>
+
+                <div class="canvas-wrap">
+                    <canvas id="stage-canvas"></canvas>
+
+                    <div class="placeholder">
+                        <h2>Waiting for a broadcast</h2>
+                        <p>
+                            Open <strong>AVR Capture</strong> on an iPhone, point it at this server and press record.
+                            Both eyes are decoded here in hardware and can be sent straight into a headset with
+                            <em>View in VR</em>.
+                        </p>
+                        <p class="muted">
+                            A broadcast id looks like <kbd>A1B2C3</kbd> and is shown in the capture app once it connects.
+                        </p>
+                    </div>
+                </div>
+
+                <div class="readout">
+                    <div>
+                        <h2>Stream</h2>
+                        <div id="stats"><p class="muted">Not watching anything.</p></div>
+                    </div>
+                    <div>
+                        <h2>Notes</h2>
+                        <p class="muted">
+                            <strong>Anaglyph</strong> and <strong>Difference</strong> are alignment tools. In Difference a
+                            correctly-aligned rig shows horizontal edges cancelling to black; anything that leaves bright
+                            horizontal banding is vertical misalignment, which is the one stereo error that reliably
+                            causes discomfort.
+                        </p>
+                        <p class="muted">
+                            If depth looks inverted — near objects reading as far — the eyes are swapped. Tick
+                            <em>Swap left / right eye</em> rather than re-shooting.
+                        </p>
+                    </div>
+                </div>
+            </main>
+
+            <!--
+                The room that comes with the broadcast, and the way out of it
+                into a private one. Both are collapsed away when nothing is
+                being watched: there is no room to be in.
+            -->
+            <aside class="room">
+                <header class="room-head">
+                    <h2>Room</h2>
+                    <span id="room-state" class="muted"></span>
+                </header>
+
+                <div id="chat-log" class="chat-log"></div>
+
+                <form id="chat-form" class="chat-form">
+                    <input
+                        id="chat-text"
+                        type="text"
+                        maxlength="400"
+                        placeholder="Say something"
+                        autocomplete="off"
+                        disabled
+                    />
+                    <button type="submit" class="primary" id="chat-send" disabled>Send</button>
+                </form>
+
+                <section class="one-to-one" id="one-to-one" hidden>
+                    <h2>One to one</h2>
+                    <div id="private-body"></div>
+                </section>
+            </aside>
+        </div>
+
+        <script type="module" src="/src/live/monitor.js"></script>
+    </body>
+</html>

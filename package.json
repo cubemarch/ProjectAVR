@@ -1,0 +1,47 @@
+{
+  "name": "projectavr",
+  "version": "1.0.0",
+  "description": "PlayCanvas-powered flat and immersive 180/360 video library with WebXR and VR-player exports",
+  "scripts": {
+    "dev": "concurrently -n app,server -c magenta,cyan \"vite\" \"node --env-file-if-exists=.env --watch server/index.js\"",
+    "dev:app": "vite",
+    "dev:server": "node --env-file-if-exists=.env server/index.js",
+    "build": "vite build",
+    "start": "node --env-file-if-exists=.env server/index.js",
+    "preview": "npm run build && node --env-file-if-exists=.env server/index.js",
+    "test": "node --test test/**/*.test.js",
+    "start:cluster": "node --env-file-if-exists=.env server/cluster.js",
+    "worker": "AVR_WORKER=1 node --env-file-if-exists=.env server/index.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/cubemarch/ProjectAVR.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/cubemarch/ProjectAVR/issues"
+  },
+  "homepage": "https://github.com/cubemarch/ProjectAVR#readme",
+  "dependencies": {
+    "@aws-sdk/client-bedrock-runtime": "^3.1136.0",
+    "compression": "^1.8.1",
+    "cookie-parser": "^1.4.7",
+    "express": "^4.22.2",
+    "hls.js": "^1.7.0",
+    "jose": "^6.2.9",
+    "playcanvas": "^2.21.4",
+    "ws": "^8.21.3"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-basic-ssl": "^2.3.0",
+    "concurrently": "^10.0.5",
+    "playwright": "^1.62.1",
+    "vite": "^8.2.1"
+  },
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  }
+}

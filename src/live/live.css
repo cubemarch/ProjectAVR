@@ -1,0 +1,813 @@
+/*
+ * Live monitor.
+ *
+ * Shares the app's palette but not its layout language: this is an instrument
+ * panel, not a storefront. Dense, fixed, no scrolling of the stage, and every
+ * number a director or a stereographer would want while a shot is running.
+ */
+
+:root {
+    --bg: #0b0b0f;
+    --bg-raised: #16161d;
+    --surface: #1e1e28;
+    --text: #f4f4f6;
+    --text-dim: #a2a2b0;
+    --text-faint: #6f6f80;
+
+    --accent: #7c5cff;
+    --accent-hot: #9b7dff;
+    --vr: #00d8e0;
+    --stereo: #ff9d3d;
+    --live: #ff4d4d;
+    --ok: #3ddc84;
+    --warn: #ffb020;
+
+    --sidebar-w: 320px;
+    --room-w: 300px;
+}
+
+* {
+    box-sizing: border-box;
+}
+
+html,
+body {
+    margin: 0;
+    height: 100%;
+    background: var(--bg);
+    color: var(--text);
+    font-family: "Inter", "Helvetica Neue", Helvetica, Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    overflow: hidden;
+}
+
+.layout {
+    display: grid;
+    grid-template-columns: var(--sidebar-w) 1fr var(--room-w);
+    height: 100vh;
+}
+
+/* Nothing being watched is nothing to be in a room about. */
+body:not(.watching) .layout {
+    grid-template-columns: var(--sidebar-w) 1fr;
+}
+
+body:not(.watching) .room {
+    display: none;
+}
+
+/* ------------------------------------------------------------- sidebar -- */
+
+.sidebar {
+    background: var(--bg-raised);
+    border-right: 1px solid #26262f;
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
+    padding: 20px;
+    gap: 22px;
+}
+
+.brand {
+    display: flex;
+    align-items: baseline;
+    gap: 9px;
+}
+
+.brand h1 {
+    font-size: 17px;
+    margin: 0;
+    letter-spacing: -0.01em;
+}
+
+.brand span {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--live);
+    font-weight: 700;
+}
+
+section h2 {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.09em;
+    color: var(--text-faint);
+    margin: 0 0 10px;
+}
+
+/* Sign up / sign in, at the top of the sidebar. The dialog itself brings its
+   own stylesheet (`src/ui/auth-modal.css`); this is only the block that opens
+   it, and it reads the palette above. */
+#account-body p {
+    margin: 0 0 10px;
+    font-size: 12.5px;
+    line-height: 1.55;
+}
+
+.account-who {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+}
+
+.account-who strong {
+    font-size: 14px;
+}
+
+.account-who .muted {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+}
+
+.account-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.account-actions button,
+.account-actions .btn-link {
+    flex: 1 1 auto;
+    white-space: nowrap;
+}
+
+/* An anchor, because Creator Studio is a different page rather than an action
+   on this one - middle-click and open it beside the monitor. */
+.account-actions .btn-link {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--surface);
+    border: 1px solid #32323e;
+    border-radius: 7px;
+    padding: 8px 13px;
+    color: var(--text);
+    font-size: 13px;
+    text-decoration: none;
+    transition: background 140ms ease, border-color 140ms ease;
+}
+
+.account-actions .btn-link:hover {
+    background: #2a2a36;
+    border-color: #44444f;
+}
+
+/* The waiting room, above the public list. */
+#seat-body p {
+    margin: 0;
+    font-size: 13px;
+    line-height: 1.5;
+}
+
+#seat-body .seat-admitted,
+#seat-body .seat-live {
+    background: var(--surface);
+    border: 1px solid #3a3a48;
+    border-left: 3px solid var(--accent);
+    border-radius: 9px;
+    padding: 11px 12px;
+    color: var(--text);
+}
+
+#seat-body .seat-live {
+    border-left-color: var(--live);
+}
+
+.session-card {
+    display: grid;
+    grid-template-columns: auto 1fr auto;
+    gap: 3px 8px;
+    width: 100%;
+    text-align: left;
+    background: var(--surface);
+    border: 1px solid transparent;
+    border-radius: 9px;
+    padding: 11px 12px;
+    margin-bottom: 8px;
+    color: var(--text);
+    cursor: pointer;
+    font: inherit;
+    transition: border-color 140ms ease, background 140ms ease;
+}
+
+.session-card:hover {
+    border-color: #3a3a48;
+}
+
+.session-card.active {
+    border-color: var(--accent);
+    background: #23203a;
+}
+
+.live-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--live);
+    align-self: center;
+    animation: pulse 1.8s ease-in-out infinite;
+}
+
+@keyframes pulse {
+    50% {
+        opacity: 0.25;
+    }
+}
+
+.session-name {
+    font-weight: 600;
+    font-size: 13px;
+}
+
+.session-id {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 11px;
+    color: var(--accent-hot);
+    letter-spacing: 0.06em;
+}
+
+.session-meta {
+    grid-column: 2 / -1;
+    font-size: 11px;
+    color: var(--text-dim);
+    line-height: 1.45;
+}
+
+/* --------------------------------------------------------------- forms -- */
+
+#join-form {
+    display: flex;
+    gap: 7px;
+}
+
+input[type="text"],
+select {
+    background: var(--surface);
+    border: 1px solid #32323e;
+    color: var(--text);
+    border-radius: 7px;
+    padding: 8px 10px;
+    font: inherit;
+    font-size: 13px;
+    width: 100%;
+}
+
+input[type="text"] {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+}
+
+input:focus,
+select:focus {
+    outline: 2px solid var(--accent);
+    outline-offset: -1px;
+}
+
+button {
+    background: var(--surface);
+    border: 1px solid #32323e;
+    color: var(--text);
+    border-radius: 7px;
+    padding: 8px 13px;
+    font: inherit;
+    font-size: 13px;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background 140ms ease, border-color 140ms ease;
+}
+
+button:hover:not(:disabled) {
+    background: #2a2a36;
+    border-color: #44444f;
+}
+
+button:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+button.primary {
+    background: var(--accent);
+    border-color: var(--accent);
+    font-weight: 600;
+}
+
+button.primary:hover:not(:disabled) {
+    background: var(--accent-hot);
+}
+
+.field {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-bottom: 11px;
+}
+
+.field label {
+    font-size: 11px;
+    color: var(--text-dim);
+}
+
+.check {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    color: var(--text-dim);
+    cursor: pointer;
+}
+
+/* --------------------------------------------------------------- stage -- */
+
+.stage {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+}
+
+.stage-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 12px 18px;
+    border-bottom: 1px solid #26262f;
+    background: var(--bg-raised);
+    flex-wrap: wrap;
+}
+
+#stage-title {
+    font-size: 14px;
+    font-weight: 600;
+    margin: 0;
+    margin-right: auto;
+}
+
+.layout-group {
+    display: flex;
+    border: 1px solid #32323e;
+    border-radius: 7px;
+    overflow: hidden;
+}
+
+.layout-group button {
+    border: 0;
+    border-radius: 0;
+    border-right: 1px solid #32323e;
+    font-size: 12px;
+    padding: 7px 11px;
+}
+
+.layout-group button:last-child {
+    border-right: 0;
+}
+
+.layout-group button.active {
+    background: var(--accent);
+    color: #fff;
+}
+
+/* What this is costing. Only present on a broadcast that charges. */
+.cost-group {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    padding: 4px 4px 4px 11px;
+    border: 1px solid #32323e;
+    border-radius: 7px;
+    font-size: 12px;
+    white-space: nowrap;
+}
+
+.cost-group[hidden] {
+    display: none;
+}
+
+#cost-summary {
+    font-variant-numeric: tabular-nums;
+    color: #d8d8e2;
+}
+
+.mode-group {
+    display: flex;
+    border: 1px solid #32323e;
+    border-radius: 5px;
+    overflow: hidden;
+}
+
+.mode-group button {
+    border: 0;
+    border-radius: 0;
+    border-right: 1px solid #32323e;
+    font-size: 12px;
+    padding: 5px 9px;
+}
+
+.mode-group button:last-child {
+    border-right: 0;
+}
+
+.mode-group button.active {
+    background: var(--accent);
+    color: #fff;
+}
+
+.mode-group button:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+.canvas-wrap {
+    flex: 1;
+    position: relative;
+    min-height: 0;
+    background: #000;
+}
+
+#stage-canvas {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    display: block;
+}
+
+body:not(.watching) #stage-canvas {
+    opacity: 0.25;
+}
+
+.placeholder {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    place-content: center;
+    text-align: center;
+    gap: 10px;
+    pointer-events: none;
+    color: var(--text-dim);
+    padding: 40px;
+}
+
+body.watching .placeholder {
+    display: none;
+}
+
+.placeholder h2 {
+    margin: 0;
+    font-size: 19px;
+    color: var(--text);
+}
+
+.placeholder p {
+    margin: 0;
+    max-width: 44ch;
+    font-size: 13px;
+    line-height: 1.6;
+}
+
+/* --------------------------------------------------------- stats + log -- */
+
+.readout {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 0 18px;
+    border-top: 1px solid #26262f;
+    background: var(--bg-raised);
+    padding: 14px 18px;
+    max-height: 34vh;
+    overflow-y: auto;
+}
+
+.readout h2 {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.09em;
+    color: var(--text-faint);
+    margin: 0 0 8px;
+}
+
+dl {
+    display: grid;
+    grid-template-columns: max-content 1fr;
+    gap: 3px 14px;
+    margin: 0 0 12px;
+    font-size: 12px;
+}
+
+dt {
+    color: var(--text-faint);
+}
+
+dd {
+    margin: 0;
+    font-variant-numeric: tabular-nums;
+}
+
+.track-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 11.5px;
+    font-variant-numeric: tabular-nums;
+}
+
+.track-table th {
+    text-align: left;
+    color: var(--text-faint);
+    font-weight: 500;
+    padding: 3px 8px 3px 0;
+    border-bottom: 1px solid #2c2c36;
+}
+
+.track-table td {
+    padding: 3px 8px 3px 0;
+    color: var(--text-dim);
+}
+
+.track-table td:first-child {
+    color: var(--stereo);
+}
+
+#log {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 11px;
+    line-height: 1.65;
+    max-height: 26vh;
+    overflow-y: auto;
+}
+
+.log-line {
+    color: var(--text-dim);
+}
+
+.log-line.ok {
+    color: var(--ok);
+}
+
+.log-line.warn {
+    color: var(--warn);
+}
+
+/* --------------------------------------------------------------- room -- */
+
+.room {
+    background: var(--bg-raised);
+    border-left: 1px solid #26262f;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    padding: 16px;
+    gap: 12px;
+}
+
+.room-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.room-head h2 {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.09em;
+    color: var(--text-faint);
+    margin: 0;
+}
+
+/*
+ * The messages, newest at the bottom, scrolled to as they arrive. Column-
+ * reverse would pin it there for free but reverses the reading order of a
+ * screen reader's traversal, so the scroll is done in script instead.
+ */
+.chat-log {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+    font-size: 12.5px;
+    line-height: 1.5;
+    overscroll-behavior: contain;
+}
+
+.chat-line {
+    overflow-wrap: anywhere;
+}
+
+.chat-line .who {
+    font-weight: 600;
+    color: var(--accent-hot);
+    margin-right: 5px;
+}
+
+/* The broadcaster, so a viewer can tell whose room they are in at a glance. */
+.chat-line.host .who {
+    color: var(--live);
+}
+
+.chat-line.host .who::after {
+    content: "host";
+    font-size: 9.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    background: #3a1f28;
+    color: var(--live);
+    border-radius: 3px;
+    padding: 1px 4px;
+    margin-left: 5px;
+    vertical-align: 1px;
+}
+
+.chat-line.system {
+    color: var(--text-faint);
+    font-style: italic;
+}
+
+/* Said to one person only - a rate limit, a refusal - and never remembered. */
+.chat-line.private {
+    color: var(--warn);
+    font-style: normal;
+    border-left: 2px solid var(--warn);
+    padding-left: 7px;
+}
+
+.chat-form {
+    display: flex;
+    gap: 7px;
+}
+
+.chat-form input {
+    flex: 1;
+    min-width: 0;
+}
+
+.one-to-one {
+    border-top: 1px solid #26262f;
+    padding-top: 12px;
+}
+
+.one-to-one h2 {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.09em;
+    color: var(--text-faint);
+    margin: 0 0 9px;
+}
+
+.one-to-one p {
+    margin: 0 0 9px;
+    font-size: 12.5px;
+    line-height: 1.5;
+}
+
+.one-to-one button {
+    width: 100%;
+}
+
+/* Somebody asking for a private turn, with the two answers side by side. */
+.ask-row {
+    display: grid;
+    grid-template-columns: 1fr auto auto;
+    align-items: center;
+    gap: 6px;
+    background: var(--surface);
+    border: 1px solid #2c2c36;
+    border-radius: 8px;
+    padding: 8px 9px;
+    margin-bottom: 7px;
+    font-size: 12.5px;
+}
+
+.ask-row .waiting {
+    grid-column: 1 / -1;
+    font-size: 11px;
+    color: var(--text-faint);
+}
+
+.ask-row button {
+    width: auto;
+    padding: 5px 10px;
+    font-size: 12px;
+}
+
+.private-now {
+    background: #23203a;
+    border: 1px solid var(--accent);
+    border-radius: 8px;
+    padding: 9px 10px;
+    margin-bottom: 9px;
+    font-size: 12.5px;
+    line-height: 1.5;
+}
+
+/* Talkback: the microphone button and what it is picking up. */
+
+.talk-row {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    align-items: center;
+    gap: 9px;
+    margin-bottom: 7px;
+}
+
+.talk-row button {
+    width: auto;
+    padding: 6px 12px;
+    font-size: 12.5px;
+}
+
+/* Live microphone, coloured like the record indicator it effectively is. */
+.talk-row button.talking {
+    background: #3a1f24;
+    border-color: #d2405a;
+    color: #ffd9e0;
+}
+
+.mic-meter {
+    height: 6px;
+    border-radius: 3px;
+    background: #1c1c24;
+    border: 1px solid #2c2c36;
+    overflow: hidden;
+}
+
+.mic-meter i {
+    display: block;
+    height: 100%;
+    background: linear-gradient(90deg, #3ba55d, #d2b340 75%, #d2405a);
+    transform: scaleX(0);
+    transform-origin: left center;
+    /* Fast up, slow down - a meter that decays reads as level rather than as
+       flicker, and the packets arrive every 40 ms. */
+    transition: transform 120ms ease-out;
+}
+
+.muted {
+    color: var(--text-faint);
+    font-size: 12px;
+    margin: 0;
+    line-height: 1.6;
+}
+
+kbd {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    background: var(--surface);
+    border: 1px solid #32323e;
+    border-radius: 4px;
+    padding: 1px 5px;
+    font-size: 11px;
+}
+
+.fatal {
+    display: grid;
+    place-content: center;
+    height: 100vh;
+    text-align: center;
+    padding: 40px;
+    gap: 12px;
+}
+
+.fatal p {
+    color: var(--text-dim);
+    max-width: 56ch;
+    line-height: 1.6;
+}
+
+@media (max-width: 1100px) {
+    .layout,
+    body:not(.watching) .layout {
+        grid-template-columns: var(--sidebar-w) 1fr;
+    }
+
+    /* Under the stage rather than beside it, and no longer a full column. */
+    .room {
+        grid-column: 2;
+        border-left: 0;
+        border-top: 1px solid #26262f;
+        max-height: 40vh;
+    }
+}
+
+@media (max-width: 860px) {
+    .layout,
+    body:not(.watching) .layout {
+        grid-template-columns: 1fr;
+        grid-template-rows: auto 1fr;
+    }
+
+    .room {
+        grid-column: 1;
+    }
+
+    .sidebar {
+        max-height: 40vh;
+    }
+
+    .readout {
+        grid-template-columns: 1fr;
+    }
+}
