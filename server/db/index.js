@@ -1501,4 +1501,205 @@ export const purchases = {
     }
 };
 
+/* ------------------------------------------------------------ recordings -- */
+
+/**
+ * A creator's recordings of their own 1:1s, and their listings.
+ *
+ * Only the creator's side is here. See the comment over `recordings` in
+ * `schema.sql` for why the viewer's recording is not, and why that is what
+ * makes selling one possible.
+ */
+export const recordings = {
+    /** Opened when the file starts, not when it finishes: a crash should leave a row. */
+    start({ creatorId, roomId = null, sessionId = null, stereo = 'mono' }) {
+        const id = newId();
+
+        getDb()
+            .prepare(
+                `INSERT INTO recordings (id, creator_id, room_id, session_id, stereo)
+                 VALUES (?, ?, ?, ?, ?)`
+            )
+            .run(id, creatorId, roomId, sessionId, stereo);
+
+        return this.byId(id);
+    },
+
+    byId(id) {
+        return getDb().prepare('SELECT * FROM recordings WHERE id = ?').get(id) ?? null;
+    },
+
+    /**
+     * The file landed.
+     *
+     * `stereo` is re-read from the session at this point rather than trusted
+     * from `start`: a rig whose second camera dropped out partway through
+     * announced two eyes and delivered one, and the tag has to describe the
+     * file that exists.
+     */
+    finish(id, { storageKey, durationMs = 0, sizeBytes = 0, stereo = null }) {
+        getDb()
+            .prepare(
+                `UPDATE recordings
+                    SET status = 'ready',
+                        storage_key = ?,
+                        duration_ms = ?,
+                        size_bytes = ?,
+                        stereo = COALESCE(?, stereo),
+                        finished_at = datetime('now')
+                  WHERE id = ?`
+            )
+            .run(storageKey, Math.trunc(durationMs), Math.trunc(sizeBytes), stereo, id);
+
+        return this.byId(id);
+    },
+
+    fail(id, reason) {
+        getDb()
+            .prepare(
+                `UPDATE recordings
+                    SET status = 'failed', failure_reason = ?, finished_at = datetime('now')
+                  WHERE id = ?`
+            )
+            .run(String(reason ?? '').slice(0, 200), id);
+
+        return this.byId(id);
+    },
+
+    forCreator(creatorId, limit = 50) {
+        return getDb()
+            .prepare('SELECT * FROM recordings WHERE creator_id = ? ORDER BY created_at DESC LIMIT ?')
+            .all(creatorId, Math.min(Number(limit) || 50, 200));
+    },
+
+    /**
+     * Put it on sale, or take it off.
+     *
+     * Listing writes the price and the title together because a listing with no
+     * price is not a listing, and the marketplace query keys on `listed_at`.
+     * Unlisting leaves both in place: somebody who already bought it keeps a
+     * receipt that names what they bought.
+     */
+    list(id, { title, price }) {
+        getDb()
+            .prepare(
+                `UPDATE recordings
+                    SET title = ?, price = ?, listed_at = datetime('now'), unlisted_at = NULL
+                  WHERE id = ?`
+            )
+            .run(title, Math.trunc(price), id);
+
+        return this.byId(id);
+    },
+
+    unlist(id) {
+        getDb()
+            .prepare("UPDATE recordings SET unlisted_at = datetime('now') WHERE id = ?").run(id);
+
+        return this.byId(id);
+    },
+
+    /** The marketplace. Listed, still listed, and actually playable. */
+    listed({ limit = 50, stereo = null } = {}) {
+        const clause = stereo === '3d' ? "AND r.stereo != 'mono'" : stereo === '2d' ? "AND r.stereo = 'mono'" : '';
+
+        return getDb()
+            .prepare(
+                `SELECT r.*, u.display_name AS creator_name,
+                        (SELECT COUNT(*) FROM recording_sales s WHERE s.recording_id = r.id) AS sales
+                   FROM recordings r
+                   JOIN users u ON u.id = r.creator_id
+                  WHERE r.listed_at IS NOT NULL
+                    AND r.unlisted_at IS NULL
+                    AND r.status = 'ready'
+                    ${clause}
+                  ORDER BY r.listed_at DESC
+                  LIMIT ?`
+            )
+            .all(Math.min(Number(limit) || 50, 200));
+    }
+};
+
+export const recordingSales = {
+    byPair(recordingId, buyerId) {
+        return (
+            getDb()
+                .prepare('SELECT * FROM recording_sales WHERE recording_id = ? AND buyer_id = ?')
+                .get(recordingId, buyerId) ?? null
+        );
+    },
+
+    create({ recordingId, buyerId, price }) {
+        const id = newId();
+
+        getDb()
+            .prepare('INSERT INTO recording_sales (id, recording_id, buyer_id, price) VALUES (?, ?, ?, ?)')
+            .run(id, recordingId, buyerId, Math.trunc(price));
+
+        return getDb().prepare('SELECT * FROM recording_sales WHERE id = ?').get(id);
+    },
+
+    /**
+     * Buy a listed recording: one sale row, one transfer, keyed on the sale.
+     *
+     * A sale is not a different kind of money from a watched minute, so it is
+     * the same `credits.transfer` - two ledger rows sharing a `ref_id`, in one
+     * SQLite transaction. What is different is that the reference has to exist
+     * before the money moves, because the `ref_id` a statement line points at
+     * is the sale. So the row is written first and removed again if the
+     * transfer refuses; a sale that was never paid for must not sit in the
+     * table looking like an entitlement.
+     *
+     * Three defences against paying twice, which is the failure that actually
+     * matters here. The read below catches the ordinary double click; the
+     * `idemKey` catches the retry that races past it and returns the first
+     * answer rather than a second charge; and `UNIQUE (recording_id, buyer_id)`
+     * is the one the database enforces whatever the code does.
+     */
+    buy({ recording, buyerId }) {
+        const owned = this.byPair(recording.id, buyerId);
+        if (owned) return { sale: owned, applied: false };
+
+        const sale = this.create({ recordingId: recording.id, buyerId, price: recording.price });
+
+        try {
+            credits.transfer({
+                fromUserId: buyerId,
+                toUserId: recording.creator_id,
+                amount: recording.price,
+                reason: 'recording_purchase',
+                refType: 'recording_sale',
+                refId: sale.id,
+                idemKey: `recording-sale:${sale.id}`
+            });
+        } catch (err) {
+            getDb().prepare('DELETE FROM recording_sales WHERE id = ?').run(sale.id);
+            throw err;
+        }
+
+        return { sale, applied: true };
+    },
+
+    /** What this account has bought, with enough of the recording to render a shelf. */
+    forBuyer(buyerId, limit = 50) {
+        return getDb()
+            .prepare(
+                `SELECT s.*, r.title, r.stereo, r.duration_ms, r.status, u.display_name AS creator_name
+                   FROM recording_sales s
+                   JOIN recordings r ON r.id = s.recording_id
+                   JOIN users u ON u.id = r.creator_id
+                  WHERE s.buyer_id = ?
+                  ORDER BY s.created_at DESC
+                  LIMIT ?`
+            )
+            .all(buyerId, Math.min(Number(limit) || 50, 200));
+    },
+
+    forRecording(recordingId) {
+        return getDb()
+            .prepare('SELECT * FROM recording_sales WHERE recording_id = ? ORDER BY created_at DESC')
+            .all(recordingId);
+    }
+};
+
 export { nowIso };

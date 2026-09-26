@@ -6,7 +6,10 @@ import { LiveConnection, fetchSessions } from './connection.js';
 import { StereoPipeline, webCodecsSupport } from './decoder.js';
 import { AudioPlayer, audioCodecsAvailable } from './audio.js';
 import { StereoView, LAYOUT, PROJECTION } from './stereo-view.js';
+import { formatSummary } from '../catalog/media-format.js';
+import { dollars as formatCredits } from '../ui/money.js';
 import { Talkback, TALKBACK_STATE } from './talkback.js';
+import { ViewerRecorder } from './recorder.js';
 import { TRACK, trackName } from './protocol.js';
 
 /**
@@ -37,6 +40,9 @@ const PRIVATE_POLL_MS = 4000;
 
 /** Lines kept in the room pane. The server replays fifty on join. */
 const CHAT_LINES = 200;
+
+/** Whether this browser wants the stereographer's controls. Off by default. */
+const TOOLS_KEY = 'avr.live.tools';
 
 const el = (id) => document.getElementById(id);
 
@@ -83,6 +89,15 @@ class Monitor {
         // with the socket it belonged to. Null means the person has not asked
         // for it once on this broadcast, which is not the same as off.
         this.talkback = null;
+
+        // Recording, which is two unrelated things wearing one word. `recording`
+        // is the polled state of the creator's, which this server makes and the
+        // viewer is merely told about. `recorder` is the viewer's own, which is
+        // made here out of the canvas and the two voices and is saved to their
+        // disk - it is never uploaded and the server has no route that would
+        // take it.
+        this.recording = null;
+        this.recorder = null;
 
         this._pollTimer = null;
         this._statsTimer = null;
@@ -345,7 +360,50 @@ class Monitor {
             </p>`;
     }
 
+    /**
+     * Show or hide the stereographer's half of the page.
+     *
+     * Turning the tools off puts the picture back to side-by-side. Leaving it
+     * in Difference with the button that set it now hidden would be a page
+     * nobody could get a normal picture out of again.
+     *
+     * @param {boolean} on
+     * @param {boolean} [persist] False on the first call, which only restores.
+     */
+    setTools(on, persist = true) {
+        document.body.classList.toggle('show-tools', on);
+        el('tools-toggle').setAttribute('aria-pressed', String(on));
+        el('tools-toggle').classList.toggle('active', on);
+
+        if (!on) {
+            this.view.setLayout(LAYOUT.SBS);
+            for (const b of document.querySelectorAll('[data-layout]')) {
+                b.classList.toggle('active', b.dataset.layout === LAYOUT.SBS);
+            }
+        }
+
+        if (persist) {
+            try {
+                localStorage.setItem(TOOLS_KEY, on ? '1' : '0');
+            } catch {
+                // Private browsing. The toggle still works for this visit.
+            }
+        }
+    }
+
     bindControls() {
+        let tools = false;
+        try {
+            tools = localStorage.getItem(TOOLS_KEY) === '1';
+        } catch {
+            // As above.
+        }
+        this.setTools(tools, false);
+
+        el('tools-toggle').addEventListener('click', () => {
+            this.setTools(!document.body.classList.contains('show-tools'));
+        });
+
         for (const button of document.querySelectorAll('[data-layout]')) {
             button.addEventListener('click', () => {
                 this.view.setLayout(button.dataset.layout);
@@ -445,7 +503,7 @@ class Monitor {
                 <span class="live-dot"></span>
                 <span class="session-name">${escapeHtml(session.name)}</span>
                 <span class="session-id">${session.sessionId}</span>
-                <span class="session-meta">${escapeHtml(session.device)} · ${session.projection}/${session.stereo}</span>
+                <span class="session-meta">${escapeHtml(session.device)} · ${escapeHtml(formatSummary(session))}</span>
                 <span class="session-meta">${escapeHtml(tracks || 'waiting for frames')}</span>
                 <span class="session-meta">${session.viewers} watching · up ${formatDuration(session.uptimeSeconds)}</span>
             `;
@@ -600,6 +658,17 @@ class Monitor {
     }
 
     leave() {
+        // Before the audio graph it is drawing from is torn down: a recording
+        // in progress is stopped and *saved*, not discarded. The conversation
+        // being over is the normal way one ends, and throwing away what
+        // somebody was told they were recording would be the worst possible
+        // reading of "the turn ended".
+        if (this.recorder?.recording) {
+            this.recorder.stop().catch(() => {});
+        }
+        this.recorder = null;
+        this.recording = null;
+
         this.connection?.close();
         this.pipeline?.close();
         this.audio?.close();
@@ -790,8 +859,35 @@ class Monitor {
             return;
         }
 
+        await this.checkRecording();
+
         this.renderPrivate();
         this.schedulePrivate();
+    }
+
+    /**
+     * Where recording stands, for whichever side this is.
+     *
+     * Folded into the 1:1 poll rather than given a timer of its own: it is only
+     * ever asked inside a private turn, the two answers are drawn in the same
+     * panel, and a permission question is not a sub-second matter. Outside a
+     * turn there is nothing to ask and the state is dropped, so a panel cannot
+     * go on showing a record button for a conversation that ended.
+     */
+    async checkRecording() {
+        const id = this.sessionId;
+
+        if (!id || !this.quote?.private) {
+            this.recording = null;
+            return;
+        }
+
+        try {
+            const state = await api.live.recording.state(id);
+            if (id === this.sessionId) this.recording = state;
+        } catch {
+            /* the turn may have just ended; the next poll settles it */
+        }
     }
 
     /** Something happened to a 1:1 on this broadcast, pushed down the socket. */
@@ -895,6 +991,32 @@ class Monitor {
                 // microphone, so it must not be deferred behind an await.
                 await this.toggleTalkback();
                 return;
+            } else if (action === 'record') {
+                // The viewer's own recording. Same reason as talkback: it opens
+                // a microphone, so nothing may be awaited before it.
+                await this.toggleMyRecording();
+                return;
+            } else if (action === 'record-ask') {
+                const { viewer } = await api.live.recording.askConsent(id);
+                this.recording = { ...(this.recording ?? {}), viewer };
+                this.notify(
+                    viewer.allowed
+                        ? 'You may record this conversation.'
+                        : 'Asked the creator whether you may record.',
+                    'ok'
+                );
+            } else if (action === 'record-start') {
+                await api.live.recording.start(id);
+                this.notify('Recording your side of the conversation.', 'ok');
+            } else if (action === 'record-stop') {
+                const { recording } = await api.live.recording.stop(id);
+                this.notify(
+                    `Recording saved — ${recordingLength(recording.durationMs)}, tagged ${recording.tag.toUpperCase()}. ` +
+                        `It is in your profile, where you can put it on sale.`,
+                    'ok'
+                );
+            } else if (action === 'record-allow' || action === 'record-refuse') {
+                await api.live.recording.answerConsent(id, action === 'record-allow');
             }
         } catch (err) {
             this.notify(privateError(err), 'warn');
@@ -950,6 +1072,64 @@ class Monitor {
     }
 
     /**
+     * Record this conversation to this computer, or stop and save.
+     *
+     * The permission is checked here as well as drawn, because a button that
+     * is not on screen is not a guarantee about anything. What the check is
+     * not is a security boundary: the file is made in this browser out of a
+     * canvas and a microphone the person already has, so what it really
+     * enforces is that this product does not offer to do it behind the
+     * creator's back.
+     */
+    async toggleMyRecording() {
+        if (this.recorder?.recording) {
+            const saved = await this.recorder.stop();
+            this.notify(
+                saved
+                    ? `Saved ${saved.filename} (${recordingLength(saved.durationMs)}) to your downloads.`
+                    : 'Nothing was recorded.',
+                saved ? 'ok' : 'warn'
+            );
+            this.renderPrivate();
+            return;
+        }
+
+        if (!this.quote?.private) {
+            this.notify('Recording only works inside a 1:1.', 'warn');
+            return;
+        }
+
+        if (!this.recording?.viewer?.allowed) {
+            this.notify('The creator has not agreed to this conversation being recorded.', 'warn');
+            return;
+        }
+
+        if (!this.recorder) {
+            this.recorder = new ViewerRecorder({
+                canvas: el('stage-canvas'),
+                audio: this.audio,
+                // Talkback's microphone if it is open, rather than a second
+                // capture of the same device. Looked up per start, so turning
+                // talkback on after recording began does not silently change
+                // which stream is being recorded mid-file.
+                microphone: () => this.talkback?.stream ?? null
+            });
+
+            this.recorder.addEventListener('change', () => this.renderPrivate());
+        }
+
+        const started = await this.recorder.start();
+
+        if (!started) {
+            if (this.recorder.error) this.notify(this.recorder.error, 'warn');
+        } else if (this.recorder.warning) {
+            this.notify(this.recorder.warning, 'warn');
+        }
+
+        this.renderPrivate();
+    }
+
+    /**
      * The microphone meter.
      *
      * Written straight to the element rather than through `renderPrivate`,
@@ -982,6 +1162,7 @@ class Monitor {
             body.innerHTML = isPrivate
                 ? `<div class="private-now">This broadcast is private to one viewer. Nobody else can
                        watch it while it is.</div>
+                   ${recordRow(this.recording)}
                    <button data-private="end">End the 1:1</button>`
                 : this.requests.length
                   ? this.requests.map(askRow).join('')
@@ -1000,6 +1181,7 @@ class Monitor {
                     }.
                 </div>
                 ${talkRow(this.talkback, this.session?.talkback === true)}
+                ${viewerRecordRow(this.recording?.viewer ?? null, this.recorder, this.recording?.creatorRecording === true)}
                 <button data-private="end">End the 1:1</button>`;
 
             if (this.talkback) this.renderLevel(this.talkback.level);
@@ -1186,7 +1368,10 @@ class Monitor {
         const rows = [
             ['Broadcast', `${this.session.name} (${this.sessionId})`],
             ['Source', `${this.session.device}`],
-            ['Layout', `${this.session.projection} / ${this.session.stereo} / ${this.session.mode}`],
+            // Not `flat / sbs / 3d`. Those are handshake values, and printing
+            // them here showed a paying viewer the inside of the pipe.
+            ['Layout', formatSummary(this.session)],
+            ['Watching in', (this.session.mode ?? this.mode).toUpperCase()],
             ['Link', `${kbps} kbps in · ${this.connection?.connected ? 'connected' : 'offline'}`],
             ['Pairs shown', `${stats.pairsPresented}`],
             [
@@ -1309,6 +1494,115 @@ function talkRow(talkback, available) {
         }</p>`;
 }
 
+/**
+ * The creator's recording control, and the viewer's question if there is one.
+ *
+ * What this button starts is made on the server out of the contribution feed,
+ * so it holds the creator's picture and the creator's voice and nothing the
+ * viewer said - talkback travels the other way and never passes through it.
+ * That asymmetry is the reason this side needs no permission and the other
+ * side does, and the label says so rather than leaving it to be discovered.
+ *
+ * @param {object|null} state - The creator's half of `GET .../recording`.
+ */
+function recordRow(state) {
+    if (!state) return '';
+
+    if (state.available === false) {
+        return '<p class="muted">Recording is not available on this server right now.</p>';
+    }
+
+    const mine = state.mine ?? { recording: false };
+    const elapsed = mine.startedAt ? formatDuration(Math.floor((Date.now() - mine.startedAt) / 1000)) : '';
+
+    const control = mine.recording
+        ? `<button data-private="record-stop" class="recording">Stop recording${elapsed ? ` · ${escapeHtml(elapsed)}` : ''}</button>`
+        : '<button data-private="record-start">Record this 1:1</button>';
+
+    const question = state.asked
+        ? `<div class="record-ask">
+               <p>Your viewer is asking to record this conversation. Their recording would
+                  carry both voices and is saved on their own computer, not here.</p>
+               <button data-private="record-allow" class="primary">Allow</button>
+               <button data-private="record-refuse">Refuse</button>
+           </div>`
+        : '';
+
+    return `
+        <div class="record-row">${control}</div>
+        <p class="muted">${
+            mine.recording
+                ? 'Recording your camera and your voice. Theirs is not in it.'
+                : 'Records your camera and your voice only. You can put it up for sale afterwards.'
+        }</p>
+        ${question}`;
+}
+
+/**
+ * The viewer's recording control.
+ *
+ * Nothing here uploads anything. The file is written by this browser to this
+ * computer, which is why it may contain both voices at all - and why the
+ * creator is asked first, since one of those voices is theirs.
+ *
+ * @param {{policy: string, allowed: boolean, state: string}|null} viewer
+ * @param {import('./recorder.js').ViewerRecorder|null} recorder
+ * @param {boolean} creatorRecording
+ */
+function viewerRecordRow(viewer, recorder, creatorRecording) {
+    if (!viewer) return '';
+
+    const theirs = creatorRecording
+        ? '<p class="muted">The creator is recording their own camera and voice.</p>'
+        : '';
+
+    if (!ViewerRecorder.supported) {
+        return `<p class="muted">This browser cannot record video.</p>${theirs}`;
+    }
+
+    if (recorder?.busy) {
+        return `<div class="record-row"><button disabled>${
+            recorder.state === 'saving' ? 'Saving…' : 'Starting…'
+        }</button></div>${theirs}`;
+    }
+
+    if (recorder?.recording) {
+        return `
+            <div class="record-row"><button data-private="record" class="recording">Stop and save</button></div>
+            <p class="muted">Recording to your own computer. Nothing is uploaded.</p>
+            ${theirs}`;
+    }
+
+    if (viewer.state === 'denied') {
+        return `<p class="muted">${
+            viewer.policy === 'never'
+                ? 'This creator does not allow viewers to record.'
+                : 'The creator said no to recording this conversation.'
+        }</p>${theirs}`;
+    }
+
+    if (viewer.state === 'asked') {
+        return `<p class="muted">Waiting for the creator to say whether you may record.</p>${theirs}`;
+    }
+
+    if (viewer.allowed) {
+        return `
+            <div class="record-row"><button data-private="record">Record this 1:1</button></div>
+            <p class="muted">Both voices, saved to your own computer. Nothing is uploaded.</p>
+            ${theirs}`;
+    }
+
+    return `
+        <div class="record-row"><button data-private="record-ask">Ask to record</button></div>
+        <p class="muted">Recording a 1:1 needs the creator’s agreement. The file would stay on your computer.</p>
+        ${theirs}`;
+}
+
+/** A recorded length, from milliseconds, for a line of prose. */
+function recordingLength(durationMs) {
+    return formatDuration(Math.max(0, Math.round((durationMs ?? 0) / 1000)));
+}
+
 /** What a private turn costs, in whichever modes are on offer. */
 function privatePrices(modes) {
     const parts = [];
@@ -1367,17 +1661,6 @@ function escapeHtml(value) {
         /[&<>"']/g,
         (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]
     );
-}
-
-/**
- * Credits as money.
- *
- * One credit is one cent, and this is the only place on this page that divides
- * by a hundred - the same rule the profile page follows. Everything above here
- * counts in whole credits.
- */
-function formatCredits(credits) {
-    return `$${(Number(credits || 0) / 100).toFixed(2)}`;
 }
 
 function formatDuration(seconds) {

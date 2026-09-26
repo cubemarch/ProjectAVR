@@ -1,7 +1,15 @@
 import { api } from '../../api/client.js';
 import { icons } from '../icons.js';
 import { formatDuration } from '../../catalog/catalog.js';
-import { PROJECTION, STEREO } from '../../catalog/media-format.js';
+import {
+    PROJECTION,
+    PROJECTION_DETAIL,
+    PROJECTION_LABELS,
+    STEREO,
+    STEREO_DETAIL,
+    depthTag
+} from '../../catalog/media-format.js';
+import { dollars } from '../money.js';
 import { qrSvg } from '../qr.js';
 
 /**
@@ -76,6 +84,7 @@ export class CreatorPortal {
         // what the Go live panel offers, and blocking the dashboard on a
         // provider round trip would reintroduce the pause this removes.
         this._loadIdentity();
+        this._loadReadiness();
 
         await this.refresh();
     }
@@ -130,7 +139,34 @@ export class CreatorPortal {
             this.identityError = err;
         }
 
-        if (this.visible && this.view === 'broadcast') this._render();
+        // Two panels wait on this now: the Go live panel, and the readiness
+        // list on the dashboard. Both are started at open and either can
+        // finish second, so both have to be redrawn when this lands.
+        if (this.visible && (this.view === 'broadcast' || this.view === 'dashboard')) this._render();
+    }
+
+    /**
+     * What stands between this creator and being on air.
+     *
+     * All of it lives somewhere else — enrolment at the identity provider, the
+     * per-session stream checks in the relay, prices on the profile page — and
+     * none of it was said here. Studio is where somebody comes to broadcast, so
+     * Studio is where being unable to has to be visible, rather than at the end
+     * of a Go live panel that turns out to be a gate.
+     */
+    async _loadReadiness() {
+        try {
+            const { streamChecks, creator } = await api.profile.mine();
+            this.checks = streamChecks ?? null;
+            this.pricing = creator ?? null;
+        } catch {
+            // Same rule as the identity read: one panel is poorer for it, the
+            // rest of Studio carries on.
+            this.checks = null;
+            this.pricing = null;
+        }
+
+        if (this.visible && this.view === 'dashboard') this._render();
     }
 
     async refresh() {
@@ -203,10 +239,12 @@ export class CreatorPortal {
                     </div>
                 </header>
                 <div class="portal-body" data-body></div>
+                <div class="portal-dialog" data-dialog-host hidden></div>
             </div>
         `;
 
         this.body = this.mount.querySelector('[data-body]');
+        this.dialogHost = this.mount.querySelector('[data-dialog-host]');
 
         this.mount.addEventListener('click', (e) => this._onClick(e));
         this.mount.addEventListener('submit', (e) => this._onSubmit(e));
@@ -226,6 +264,96 @@ export class CreatorPortal {
         });
 
         this._bindDropZone();
+    }
+
+    /* -------------------------------------------------------------- dialog -- */
+
+    /**
+     * Ask a question, or state a fact, without leaving Studio.
+     *
+     * `prompt`, `confirm` and `alert` were doing this. They freeze the whole
+     * tab, they cannot be styled to look like anything else here, and after the
+     * second one a browser offers to suppress the rest — which silently removes
+     * the confirmation in front of a delete that takes the video files with it.
+     *
+     * @param {object} spec
+     * @param {string} spec.title
+     * @param {string} [spec.body]
+     * @param {{label: string, value?: string, placeholder?: string}} [spec.field]
+     *   Present for a question with an answer; absent for a yes/no.
+     * @param {string} [spec.confirm]
+     * @param {string|null} [spec.cancel] - `null` for a message with one way out.
+     * @param {boolean} [spec.danger]
+     * @returns {Promise<string|boolean|null>} the typed value, `true` for a
+     *   plain confirmation, or `null` if it was dismissed.
+     */
+    _ask({ title, body = '', field = null, confirm = 'OK', cancel = 'Cancel', danger = false }) {
+        const host = this.dialogHost;
+        if (!host) return Promise.resolve(null);
+
+        host.innerHTML = `
+            <div class="portal-dialog-panel" role="dialog" aria-modal="true" aria-label="${escapeHtml(title)}">
+                <h3>${escapeHtml(title)}</h3>
+                ${body ? `<p>${escapeHtml(body)}</p>` : ''}
+                ${
+                    field
+                        ? `<label class="portal-dialog-field">
+                               <span>${escapeHtml(field.label)}</span>
+                               <input type="text" data-dialog-field
+                                   value="${escapeHtml(field.value ?? '')}"
+                                   placeholder="${escapeHtml(field.placeholder ?? '')}" />
+                           </label>`
+                        : ''
+                }
+                <div class="portal-dialog-actions">
+                    ${cancel ? `<button class="btn btn-secondary sm" data-dialog="cancel">${escapeHtml(cancel)}</button>` : ''}
+                    <button class="btn ${danger ? 'btn-danger' : 'btn-primary'} sm" data-dialog="confirm">
+                        ${escapeHtml(confirm)}
+                    </button>
+                </div>
+            </div>`;
+
+        host.hidden = false;
+
+        const input = host.querySelector('[data-dialog-field]');
+        (input ?? host.querySelector('[data-dialog="confirm"]'))?.focus();
+        input?.select();
+
+        return new Promise((resolve) => {
+            const done = (value) => {
+                host.hidden = true;
+                host.innerHTML = '';
+                host.removeEventListener('click', onClick);
+                window.removeEventListener('keydown', onKey);
+                resolve(value);
+            };
+
+            const accept = () => done(field ? input?.value ?? '' : true);
+
+            const onClick = (e) => {
+                if (e.target === host || e.target.closest('[data-dialog="cancel"]')) {
+                    done(null);
+                    return;
+                }
+                if (e.target.closest('[data-dialog="confirm"]')) accept();
+            };
+
+            const onKey = (e) => {
+                if (e.key === 'Escape') done(null);
+                if (e.key === 'Enter' && field) {
+                    e.preventDefault();
+                    accept();
+                }
+            };
+
+            host.addEventListener('click', onClick);
+            window.addEventListener('keydown', onKey);
+        });
+    }
+
+    /** A dead end with one way out of it. */
+    _say(title, body = '') {
+        return this._ask({ title, body, confirm: 'OK', cancel: null });
     }
 
     /**
@@ -258,7 +386,10 @@ export class CreatorPortal {
             if (!file) return;
 
             if (!/^video\//.test(file.type) && !/\.(mp4|m4v|mov|mkv|webm)$/i.test(file.name)) {
-                alert('That does not look like a video file.');
+                this._say(
+                    'That is not a video file',
+                    `“${file.name}” is not one of MP4, M4V, MOV, MKV or WebM.`
+                );
                 return;
             }
 
@@ -326,6 +457,8 @@ export class CreatorPortal {
         const remote = this.overview?.storage?.remote;
 
         return `
+            ${this._readinessHtml()}
+
             <div class="stat-row">
                 ${statTile('Titles', t.titles)}
                 ${statTile('Published', t.published)}
@@ -357,6 +490,82 @@ export class CreatorPortal {
 
             <h3 class="section-title">Your titles</h3>
             ${this._titlesTableHtml(this.titles.slice(0, 8))}
+        `;
+    }
+
+    /**
+     * The first thing on the dashboard: can you go live, and for how much.
+     *
+     * The stream checks expire with the session by design, so this is a
+     * different answer every time Studio is opened — which is exactly why it
+     * cannot be left on another page for the creator to remember to visit.
+     */
+    _readinessHtml() {
+        // Nothing is known yet. An empty row of grey ticks would be a claim.
+        if (this.checks === undefined && this.enrolled === undefined) return '';
+
+        const checks = this.checks ?? { standard: false, spatial: false };
+        const p = this.pricing;
+        const wants3d = Boolean(p?.public3dEnabled || p?.private3dEnabled);
+
+        const steps = [
+            {
+                done: this.enrolled === true,
+                label: 'Identity on file',
+                detail:
+                    this.enrolled === true
+                        ? 'Checked against your face before each broadcast link is issued.'
+                        : 'Needed once, before your first broadcast. The Go live panel will ask.'
+            },
+            {
+                done: Boolean(checks.standard),
+                label: 'Standard stream confirmed',
+                detail: checks.standard
+                    ? 'Confirmed this session.'
+                    : 'Confirmed once per sign-in, from your profile. Until then you cannot go on air.'
+            }
+        ];
+
+        if (wants3d) {
+            steps.push({
+                done: Boolean(checks.spatial),
+                label: 'Stereo Side-by-Side stream confirmed',
+                detail: checks.spatial
+                    ? 'Confirmed this session, so you can offer 3D.'
+                    : 'You are offering 3D, so this one is required too.'
+            });
+        }
+
+        const blocked = steps.some((s) => !s.done);
+
+        return `
+            <section class="panel ready-panel">
+                <h3 class="section-title">Going live</h3>
+
+                <ul class="ready-list">
+                    ${steps
+                        .map(
+                            (s) => `
+                        <li class="ready-step ${s.done ? 'is-done' : ''}">
+                            <span class="ready-mark">${s.done ? icons.check({ size: 13 }) : ''}</span>
+                            <div>
+                                <strong>${escapeHtml(s.label)}</strong>
+                                <span class="muted small">${escapeHtml(s.detail)}</span>
+                            </div>
+                        </li>`
+                        )
+                        .join('')}
+                </ul>
+
+                ${p ? `<p class="muted small ready-prices">${escapeHtml(priceSummary(p))}</p>` : ''}
+
+                <div class="ready-actions">
+                    <button class="btn ${blocked ? 'btn-secondary' : 'btn-vr'} sm" data-view="broadcast">Go live</button>
+                    <button class="btn btn-secondary sm" data-action="open-profile">
+                        ${blocked ? 'Run the checks' : 'Checks and prices'}
+                    </button>
+                </div>
+            </section>
         `;
     }
 
@@ -498,18 +707,18 @@ export class CreatorPortal {
                         <div class="field-row">
                             <label><span>Projection</span>
                                 <select name="projection">
-                                    ${option(PROJECTION.FLAT, 'Flat / rectilinear', t.projection)}
-                                    ${option(PROJECTION.DOME180, '180° equirectangular dome', t.projection)}
-                                    ${option(PROJECTION.SPHERE360, '360° equirectangular sphere', t.projection)}
-                                    ${option(PROJECTION.FISHEYE, 'Circular fisheye', t.projection)}
+                                    ${option(PROJECTION.FLAT, PROJECTION_DETAIL[PROJECTION.FLAT], t.projection)}
+                                    ${option(PROJECTION.DOME180, PROJECTION_DETAIL[PROJECTION.DOME180], t.projection)}
+                                    ${option(PROJECTION.SPHERE360, PROJECTION_DETAIL[PROJECTION.SPHERE360], t.projection)}
+                                    ${option(PROJECTION.FISHEYE, PROJECTION_DETAIL[PROJECTION.FISHEYE], t.projection)}
                                 </select>
                             </label>
 
                             <label><span>Stereo layout</span>
                                 <select name="stereo">
-                                    ${option(STEREO.MONO, 'Monoscopic (2D)', t.stereo)}
-                                    ${option(STEREO.SBS, 'Side-by-side (left | right)', t.stereo)}
-                                    ${option(STEREO.TB, 'Over-under (left / right)', t.stereo)}
+                                    ${option(STEREO.MONO, STEREO_DETAIL[STEREO.MONO], t.stereo)}
+                                    ${option(STEREO.SBS, STEREO_DETAIL[STEREO.SBS], t.stereo)}
+                                    ${option(STEREO.TB, STEREO_DETAIL[STEREO.TB], t.stereo)}
                                 </select>
                             </label>
 
@@ -720,7 +929,7 @@ export class CreatorPortal {
                     <div class="endpoint"><div class="endpoint-label">Address</div><code>${escapeHtml(d.host)}</code></div>
                     <div class="endpoint"><div class="endpoint-label">Port</div><code>${escapeHtml(String(d.port))}</code></div>
                     <div class="endpoint"><div class="endpoint-label">Stream key</div><code>${escapeHtml(d.key)}</code></div>
-                    <div class="endpoint"><div class="endpoint-label">Encrypted</div><code>${d.tls ? 'on' : 'off'}</code></div>
+                    <div class="endpoint"><div class="endpoint-label">Encrypted</div><code>${d.tls ? 'Yes' : 'No'}</code></div>
                     ${d.pin ? `<div class="endpoint"><div class="endpoint-label">Certificate pin</div><code>${escapeHtml(d.pin)}</code></div>` : ''}
                 </details>
 
@@ -1159,8 +1368,22 @@ export class CreatorPortal {
                     window.dispatchEvent(new CustomEvent('avr:exit-portal'));
                     break;
 
+                // The stream checks and the four prices live on the profile
+                // page. Studio is where their absence is felt, so Studio is
+                // where the door to them is.
+                case 'open-profile':
+                    this.close();
+                    window.dispatchEvent(new CustomEvent('avr:open-profile'));
+                    break;
+
                 case 'new': {
-                    const title = prompt('Title name');
+                    const title = await this._ask({
+                        title: 'New title',
+                        body: 'A working name. You can change it, and everything else, on the next screen.',
+                        field: { label: 'Title name', placeholder: 'Untitled' },
+                        confirm: 'Create'
+                    });
+
                     if (!title?.trim()) return;
                     this.editing = await api.creator.create({ title: title.trim() });
                     this.view = 'edit';
@@ -1191,7 +1414,17 @@ export class CreatorPortal {
                     break;
 
                 case 'delete':
-                    if (!confirm('Delete this title and its files? This cannot be undone.')) return;
+                    if (
+                        !(await this._ask({
+                            title: 'Delete this title?',
+                            body: 'The uploaded video and everything transcoded from it go too. This cannot be undone.',
+                            confirm: 'Delete',
+                            danger: true
+                        }))
+                    ) {
+                        return;
+                    }
+
                     await api.creator.remove(id);
                     this.editing = null;
                     this.view = 'titles';
@@ -1203,7 +1436,17 @@ export class CreatorPortal {
                     break;
 
                 case 'rotate-feed':
-                    if (!confirm('Rotate the feed token? Existing headset links will stop working.')) return;
+                    if (
+                        !(await this._ask({
+                            title: 'Rotate the feed token?',
+                            body: 'Every headset link you have already handed out stops working, and you will need to send the new one.',
+                            confirm: 'Rotate',
+                            danger: true
+                        }))
+                    ) {
+                        return;
+                    }
+
                     await api.post('/api/auth/feed-token/rotate');
                     this._loadFeed();
                     break;
@@ -1234,7 +1477,7 @@ export class CreatorPortal {
                     break;
             }
         } catch (err) {
-            alert(err.message);
+            this._say('That did not work', err.message);
         }
     }
 
@@ -1393,7 +1636,7 @@ export class CreatorPortal {
             this._render();
         } catch (err) {
             if (text) text.textContent = err.message;
-            else alert(err.message);
+            else this._say('The upload did not finish', err.message);
         }
     }
 }
@@ -1562,6 +1805,25 @@ function statTile(label, value) {
     return `<div class="stat-tile"><div class="stat-value">${value}</div><div class="stat-label">${label}</div></div>`;
 }
 
+/**
+ * The four rates on one line, in dollars.
+ *
+ * Read-only here. Changing them is one click away on the profile page, and two
+ * places that both edit the same four numbers is how they end up disagreeing.
+ */
+function priceSummary(c) {
+    const rate = (amount, enabled = true) => (!enabled ? 'off' : amount > 0 ? dollars(amount) : 'free');
+
+    return (
+        [
+            `Public 2D ${rate(c.public2dPerMin)}`,
+            `public 3D ${rate(c.public3dPerMin, c.public3dEnabled)}`,
+            `1:1 2D ${rate(c.private2dPerMin)}`,
+            `1:1 3D ${rate(c.private3dPerMin, c.private3dEnabled)}`
+        ].join(' · ') + ' — a minute'
+    );
+}
+
 function endpointRow(label, url) {
     return `
         <div class="endpoint">
@@ -1574,17 +1836,21 @@ function option(value, label, current) {
     return `<option value="${value}"${value === current ? ' selected' : ''}>${label}</option>`;
 }
 
+/**
+ * The badge in the titles table.
+ *
+ * The short shape plus the depth tag, because a pill in a table cell has no
+ * room for the full layout name — and the editor two clicks away states it in
+ * full. Both halves are words that appear elsewhere in the product rather than
+ * the `SBS 3D` / `OU 3D` shorthand this used to invent for itself.
+ */
 function formatLabel(t) {
-    const p =
-        t.projection === PROJECTION.DOME180
-            ? '180°'
-            : t.projection === PROJECTION.SPHERE360
-              ? '360°'
-              : t.projection === PROJECTION.FISHEYE
-                ? `${t.fisheyeFov ?? 190}° fisheye`
-                : 'Flat';
+    const shape =
+        t.projection === PROJECTION.FISHEYE && t.fisheyeFov
+            ? `${t.fisheyeFov}° fisheye`
+            : (PROJECTION_LABELS[t.projection] ?? PROJECTION_LABELS[PROJECTION.FLAT]);
 
-    return `${p} · ${t.stereo === STEREO.MONO ? '2D' : t.stereo === STEREO.SBS ? 'SBS 3D' : 'OU 3D'}`;
+    return `${shape} · ${depthTag(t.stereo)}`;
 }
 
 /** Small diagram showing how the source frame maps to what each eye sees. */

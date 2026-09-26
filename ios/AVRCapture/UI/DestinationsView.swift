@@ -411,7 +411,7 @@ struct DestinationEditor: View {
 
                 if usesTLS {
                     if let certificatePin {
-                        LabeledContent("Certificate") {
+                        LabeledContent("Certificate pin") {
                             Text(Self.pinSummary(certificatePin))
                                 .font(.footnote.monospaced())
                                 .foregroundStyle(.secondary)
@@ -421,11 +421,13 @@ struct DestinationEditor: View {
                             self.certificatePin = nil
                         }
                     } else {
-                        LabeledContent("Certificate", value: "Checked by iOS")
+                        LabeledContent("Certificate pin", value: "None — checked by iOS")
                     }
                 }
             } header: {
-                Text("Encryption")
+                // "Encrypted" and "Certificate pin" are the two field names in
+                // the shared vocabulary; see `docs/LIVE.md`.
+                Text("Encrypted")
             } footer: {
                 // Three states, three different truths, and the wrong one
                 // stated confidently is worse than saying nothing. In
@@ -605,7 +607,7 @@ struct ImportConfirmationView: View {
                                 LabeledDetail("Address", candidate.endpointLabel)
                                 LabeledDetail("Protocol", candidate.transport.label)
                                 LabeledDetail("Network", candidate.isLocalNetwork ? "Local only" : "Public internet")
-                                LabeledDetail("Security", candidate.securityLabel)
+                                LabeledDetail("Encrypted", candidate.encryptedLabel)
                                 LabeledDetail("Stream key", candidate.carriesKey ? "Included in this link" : "Not included — add it yourself")
                                 LabeledDetail("Source", candidate.source.label)
                             }

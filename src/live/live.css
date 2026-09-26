@@ -346,6 +346,24 @@ button.primary:hover:not(:disabled) {
     margin-right: auto;
 }
 
+/* The stereographer's half of the page: alignment layouts, the projection
+   override, the track table and the log. Off unless the Tools button is on,
+   because the person this page is usually open in front of is paying by the
+   minute to watch it, not measuring it.
+
+   Hidden with `body:not(.show-tools)` rather than a `display: none` class so
+   each element keeps whichever display its own rule gave it when it comes
+   back - flex for the button group, grid for the readout. */
+body:not(.show-tools) .tools-only {
+    display: none;
+}
+
+#tools-toggle.active {
+    background: var(--accent);
+    color: #fff;
+    border-color: var(--accent);
+}
+
 .layout-group {
     display: flex;
     border: 1px solid #32323e;
@@ -746,6 +764,49 @@ dd {
     transition: transform 120ms ease-out;
 }
 
+/* Recording: one control per side of a 1:1, and the permission question. */
+
+.record-row {
+    display: flex;
+    gap: 8px;
+    margin: 9px 0 5px;
+}
+
+.record-row button {
+    width: auto;
+    padding: 6px 12px;
+    font-size: 12.5px;
+}
+
+/* The same red as a live microphone, for the same reason: something in this
+   room is being written down. */
+.record-row button.recording {
+    background: #3a1f24;
+    border-color: #d2405a;
+    color: #ffd9e0;
+}
+
+.record-ask {
+    background: #23203a;
+    border: 1px solid var(--accent);
+    border-radius: 8px;
+    padding: 9px 10px;
+    margin: 9px 0 7px;
+    font-size: 12.5px;
+    line-height: 1.5;
+}
+
+.record-ask p {
+    margin: 0 0 8px;
+}
+
+.record-ask button {
+    width: auto;
+    padding: 5px 10px;
+    font-size: 12px;
+    margin-right: 6px;
+}
+
 .muted {
     color: var(--text-faint);
     font-size: 12px;
@@ -792,22 +853,78 @@ kbd {
     }
 }
 
+/*
+ * One column, and the page scrolls.
+ *
+ * This used to declare two grid rows for three panels while `html, body` were
+ * `overflow: hidden` and `.layout` was pinned to `100vh`. The room landed in an
+ * implicit third row below the fold with nothing able to scroll to it, so on a
+ * phone the chat and every 1:1 control were on the page and unreachable. The
+ * instrument-panel layout is right on a desktop and simply does not fit here;
+ * below this width it becomes an ordinary scrolling document.
+ */
 @media (max-width: 860px) {
+    html,
+    body {
+        height: auto;
+        overflow-y: auto;
+    }
+
     .layout,
     body:not(.watching) .layout {
         grid-template-columns: 1fr;
-        grid-template-rows: auto 1fr;
+        grid-template-rows: none;
+        height: auto;
+        min-height: 100vh;
+        min-height: 100dvh;
+    }
+
+    /* The picture first. Source order puts the sidebar ahead of it, which is
+       correct beside the stage and wrong above it. */
+    .stage {
+        order: 1;
     }
 
     .room {
+        order: 2;
         grid-column: 1;
+        max-height: none;
+        border-left: 0;
+        border-top: 1px solid #26262f;
     }
 
     .sidebar {
-        max-height: 40vh;
+        order: 3;
+        max-height: none;
+        border-right: 0;
+        border-top: 1px solid #26262f;
+    }
+
+    /* No column height left to divide, so the picture states its own shape
+       instead of collapsing to nothing. */
+    .canvas-wrap {
+        flex: 0 0 auto;
+        aspect-ratio: 16 / 9;
+    }
+
+    /* Otherwise it grows without limit on a page that now scrolls. */
+    .chat-log {
+        max-height: 46vh;
     }
 
     .readout {
         grid-template-columns: 1fr;
+        max-height: none;
+    }
+
+    /* Nine controls in the bar. The title takes its own line rather than
+       squeezing the rest to their initials. */
+    .stage-bar {
+        padding: 10px 14px;
+    }
+
+    #stage-title {
+        flex: 1 0 100%;
+        margin-right: 0;
     }
 }

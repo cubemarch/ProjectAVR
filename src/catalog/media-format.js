@@ -31,6 +31,78 @@ export const STEREO = {
     TB: 'tb'
 };
 
+/* ------------------------------------------------------------ vocabulary -- */
+
+/**
+ * The words these values are shown to people in.
+ *
+ * One table, because the alternative is what was here before: the browse
+ * shelves said "VR180", Studio said "180° equirectangular dome", the badge on
+ * the same title said "180°", and the live monitor printed the wire value
+ * `dome180` at the viewer. Four names for one thing, across screens a creator
+ * moves between while setting up a broadcast.
+ *
+ * The stereo names are the capture app's own `CaptureConfig.Mode` labels —
+ * **Standard** and **Stereo Side-by-Side**, the terminology `docs/IOS_BRIEF.md`
+ * fixes — so a creator reading a web screen with the phone in the other hand is
+ * looking for the words that are actually on it. Note what is deliberately
+ * absent: nothing here says "VR180" or "MV-HEVC", because neither is what this
+ * pipeline emits.
+ *
+ * `2D` and `3D` are a separate axis and stay where they are. They are what a
+ * viewer buys, not a control anybody sets, and they appear on price rows and
+ * marketplace tags rather than anywhere describing capture.
+ */
+export const PROJECTION_LABELS = {
+    [PROJECTION.FLAT]: 'Flat',
+    [PROJECTION.DOME180]: '180° dome',
+    [PROJECTION.SPHERE360]: '360° sphere',
+    [PROJECTION.FISHEYE]: 'Fisheye'
+};
+
+export const STEREO_LABELS = {
+    [STEREO.MONO]: 'Standard',
+    [STEREO.SBS]: 'Stereo Side-by-Side',
+    [STEREO.TB]: 'Stereo Over-Under'
+};
+
+/** The longer forms, for a settings row that has space to say what it means. */
+export const PROJECTION_DETAIL = {
+    [PROJECTION.FLAT]: 'Flat — a cinema screen in front of the viewer',
+    [PROJECTION.DOME180]: '180° dome — equirectangular, viewer at the centre',
+    [PROJECTION.SPHERE360]: '360° sphere — equirectangular, all the way round',
+    [PROJECTION.FISHEYE]: 'Fisheye — circular, de-warped on playback'
+};
+
+export const STEREO_DETAIL = {
+    [STEREO.MONO]: 'Standard — one image shown to both eyes',
+    [STEREO.SBS]: 'Stereo Side-by-Side — left | right in one frame',
+    [STEREO.TB]: 'Stereo Over-Under — left / right in one frame'
+};
+
+/**
+ * How a format reads in one line, e.g. `180° dome · Stereo Side-by-Side`.
+ *
+ * Unknown values are passed through rather than dropped: a broadcast
+ * announcing a projection this build has never heard of should show what it
+ * said, not an empty string.
+ *
+ * @param {{projection?: string, stereo?: string, fisheyeFov?: number}} format
+ */
+export function formatSummary({ projection, stereo, fisheyeFov } = {}) {
+    const shape =
+        projection === PROJECTION.FISHEYE && fisheyeFov
+            ? `${fisheyeFov}° fisheye`
+            : (PROJECTION_LABELS[projection] ?? projection ?? 'Unknown');
+
+    return [shape, STEREO_LABELS[stereo] ?? stereo].filter(Boolean).join(' · ');
+}
+
+/** The commercial tag, which is the only place `2D`/`3D` is the right word. */
+export function depthTag(stereo) {
+    return stereo === STEREO.MONO ? '2D' : '3D';
+}
+
 /**
  * Filename tokens recognised by the major players, most specific first.
  *

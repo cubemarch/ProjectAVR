@@ -244,7 +244,7 @@ Side-by-Side**, and **Spatial Recording** only where literally accurate.
 |---|---|---|
 | Quality | 720p (4 Mbps), 1080p (8 Mbps) | 1080p |
 | Frame rate | 24–60 | 30 |
-| Mode | Stereo (both cameras), Mono | Stereo, if the hardware offers the pair |
+| Mode | Stereo Side-by-Side (both cameras), Standard (one) | Stereo Side-by-Side, if the hardware offers the pair. The status bar names the mode actually going out, which a thermal fallback can make the other one |
 | Sound | On, Off | **On** — a broadcasting tool that goes out silent unless configured otherwise is a fault waiting to happen, and silence is the one fault nobody behind the camera can hear |
 | Return audio | On, Off | **Off** — it is the only setting that makes the phone produce sound the operator did not record, and with no headset the microphone will send it straight back out |
 | Projection | Flat, 180° dome, Fisheye | Flat |
@@ -568,6 +568,15 @@ forever is worse than one that admits it is off air.
 is worse for a viewer than staying mono, and the declared layout changed, so the
 fallback goes through a full re-handshake. It needs two consecutive `.critical`
 windows, not one.
+
+**The status bar names the mode being sent, not the mode that was selected.**
+The notice that announces a fallback is dismissible and the Settings row goes on
+reading **Stereo Side-by-Side**, so before this the only lasting evidence that
+one eye had been dropped was on the Diagnostics screen. The bar now carries the
+effective mode beside the destination, in orange when it is not what was asked
+for. `BroadcastController.thermalMonoOverride` is `@Published` for this reason —
+a latch nothing observes would leave the badge stale after the notice was
+dismissed.
 
 **Capture interruptions do not end the broadcast.** A phone call or a control
 centre camera grab is not an error and most of them end by themselves within

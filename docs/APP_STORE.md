@@ -228,12 +228,12 @@ app, not a mockup.
 
 | # | Screen | Scene in the viewfinder | Caption |
 |---|---|---|---|
-| 1 | Live, stereo, status bar showing elapsed time and bitrate | A lecture bench with apparatus on it | Broadcast live in stereo |
+| 1 | Live, status bar reading elapsed time, bitrate and **Stereo Side-by-Side** | A lecture bench with apparatus on it | Broadcast live in stereo |
 | 2 | Destinations list, three saved entries | — | Save every destination you use |
 | 3 | Import confirmation sheet | — | Nothing is saved until you confirm |
 | 4 | Settings, capture section | — | H.264 or HEVC, 720p or 1080p, up to 60 fps |
 | 5 | Diagnostics | — | Know exactly what your device can do |
-| 6 | Live, mono, reconnect indicator visible | A stage rehearsal, wide shot | Keeps going when the network wobbles |
+| 6 | Live in Standard, reconnect indicator visible | A stage rehearsal, wide shot | Keeps going when the network wobbles |
 
 Destination names in screenshots: `Main Studio`, `Lecture Hall B`, `Field Unit`.
 Hosts: use `203.0.113.x` (RFC 5737 documentation range). **No real key visible in
@@ -426,7 +426,11 @@ Short enough to follow in five minutes. Include it under the Notes.
 > 6. **The rights acknowledgement appears.** Read it and tap Accept. This is the
 >    2.5.14 consent gate and appears once.
 > 7. The status bar shows *connecting*, then *live*, with elapsed time and
->    bitrate.
+>    bitrate, the destination it is going to, and whether it is sending
+>    **Standard** or **Stereo Side-by-Side**. On a phone that cannot run two
+>    cameras, or one that has got too hot to, the mode reads Standard in orange
+>    while the setting still says Stereo Side-by-Side — the bar names what is
+>    actually going out.
 > 8. Open the viewer URL from the Notes in a browser. You should see the live
 >    picture from the phone within a few seconds. On a two-rear-camera iPhone it
 >    will be stereoscopic; on other models, a single image.

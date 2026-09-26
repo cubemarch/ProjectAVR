@@ -616,3 +616,93 @@ CREATE TABLE IF NOT EXISTS account_agreements (
 
     PRIMARY KEY (user_id, kind)
 );
+
+/* ------------------------------------------------------------ recordings -- */
+
+-- A recording of a 1:1, and what it is doing in the marketplace.
+--
+-- **Only a creator's own recording is ever in this table.** In a 1:1 either
+-- side may record, and the two recordings are different artifacts made in
+-- different places. The viewer's is made in the viewer's browser, mixes their
+-- own microphone with what they are hearing, and is saved to their disk: it is
+-- a private memento of a conversation they were in, and it never reaches this
+-- server. The creator's is made here, by an FFmpeg attached to the live session
+-- as an ordinary subscriber, which means it contains exactly what the phone
+-- sent and nothing else. Talkback travels the other way up the pipeline and is
+-- structurally absent from it.
+--
+-- That is what makes a sale possible at all. A file that cannot contain the
+-- customer is a file the customer has no stake in, so listing one for sale asks
+-- nobody's permission but the creator's. A recording that mixed both voices
+-- would be a recording of a named paying person, and selling it would be a
+-- different product with a different consent model. `creator_settings.
+-- recording_policy` governs the *viewer's* side for the same reason: it is the
+-- one of the two that captures somebody who is not the person deciding.
+--
+-- `stereo` is what actually arrived, read off the live session, not what the
+-- creator typed. A broadcast whose second camera never started is tagged 2D
+-- however it was configured, because the tag is a promise about the file.
+CREATE TABLE IF NOT EXISTS recordings (
+    id              TEXT PRIMARY KEY,
+    creator_id      TEXT NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+
+    -- The room it was made in, kept for the audit trail rather than for a join:
+    -- rooms are in memory and do not outlive a restart, so this is a name for
+    -- something that no longer exists by the time anybody reads it.
+    room_id         TEXT,
+    session_id      TEXT,
+
+    -- Where the bytes are, in the storage layer's own key space. Never a path
+    -- and never a URL: local and S3 deployments agree on keys and on nothing
+    -- else.
+    storage_key     TEXT,
+
+    -- 'recording' | 'ready' | 'failed'. A row exists from the moment recording
+    -- starts, so a broadcast that dies mid-file leaves evidence rather than
+    -- nothing.
+    status          TEXT NOT NULL DEFAULT 'recording',
+    failure_reason  TEXT,
+
+    -- What is in the file. 'mono' means one eye; anything else is stereo and
+    -- earns the 3D tag.
+    stereo          TEXT NOT NULL DEFAULT 'mono',
+    duration_ms     INTEGER NOT NULL DEFAULT 0,
+    size_bytes      INTEGER NOT NULL DEFAULT 0,
+
+    -- The listing. Null price means not for sale; the two move together and
+    -- `listed_at` is what the marketplace sorts on.
+    title           TEXT,
+    price           INTEGER,
+    listed_at       TEXT,
+    unlisted_at     TEXT,
+
+    created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+    finished_at     TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_recordings_creator ON recordings (creator_id, created_at DESC);
+
+-- Listed recordings, newest first. Partial, because the marketplace only ever
+-- reads the listed ones and a creator's unsold drafts should not be in the
+-- index it scans.
+CREATE INDEX IF NOT EXISTS idx_recordings_listed
+    ON recordings (listed_at DESC) WHERE listed_at IS NOT NULL AND unlisted_at IS NULL;
+
+-- One row per person per recording: buying twice is not a thing anybody wants
+-- to do by accident, and the UNIQUE constraint is what makes the second click
+-- idempotent rather than expensive.
+--
+-- `price` is copied rather than joined. What somebody paid is a fact about the
+-- moment they paid it, and a creator raising their price later must not
+-- retroactively change what the receipt says.
+CREATE TABLE IF NOT EXISTS recording_sales (
+    id              TEXT PRIMARY KEY,
+    recording_id    TEXT NOT NULL REFERENCES recordings (id) ON DELETE CASCADE,
+    buyer_id        TEXT NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+    price           INTEGER NOT NULL,
+    created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+
+    UNIQUE (recording_id, buyer_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_recording_sales_buyer ON recording_sales (buyer_id, created_at DESC);

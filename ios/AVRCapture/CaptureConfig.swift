@@ -98,6 +98,16 @@ final class CaptureConfig: ObservableObject {
         }
     }
 
+    /// How many cameras the broadcast carries.
+    ///
+    /// The two labels are fixed by `docs/IOS_BRIEF.md`: user-facing terminology
+    /// is **Standard** and **Stereo Side-by-Side**, and only where it is
+    /// accurate. It is accurate here — the composited output really is two
+    /// rectilinear eyes laid out side by side, which is why neither label says
+    /// "VR180" or "MV-HEVC". They are also the words the web Studio uses when
+    /// it tells a creator which mode to broadcast in, so somebody reading one
+    /// screen while operating the other is not translating between "Stereo" and
+    /// "Stereo Side-by-Side". See the vocabulary table in `docs/LIVE.md`.
     enum Mode: String, CaseIterable, Identifiable {
         case separate
         case mono
@@ -106,8 +116,17 @@ final class CaptureConfig: ObservableObject {
 
         var label: String {
             switch self {
-            case .separate: return "Stereo"
-            case .mono: return "Mono"
+            case .separate: return "Stereo Side-by-Side"
+            case .mono: return "Standard"
+            }
+        }
+
+        /// The short form, for places too narrow for the full label — a
+        /// segmented control, a status badge. Never the only thing on screen.
+        var shortLabel: String {
+            switch self {
+            case .separate: return "Side-by-Side"
+            case .mono: return "Standard"
             }
         }
 

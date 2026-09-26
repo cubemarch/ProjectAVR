@@ -65,6 +65,18 @@ export class Talkback extends EventTarget {
         return this.state === TALKBACK_STATE.LIVE;
     }
 
+    /**
+     * The open microphone, for the viewer's own recording to mix in rather
+     * than opening the same device twice. Null whenever the microphone is off,
+     * which is the whole point: there is nothing here to borrow unless the
+     * person is already being heard.
+     *
+     * @returns {MediaStream|null}
+     */
+    get stream() {
+        return this.live ? this._stream : null;
+    }
+
     /** Whether this browser has the pieces at all. Checked before offering the control. */
     static get supported() {
         return (

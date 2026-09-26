@@ -6,6 +6,7 @@ import { readiness, previewableSession, CHECK_KINDS, PREVIEW_POLL_MS } from './r
 import { billing } from './billing.js';
 import { chat } from './chat.js';
 import { privateTurns } from './private.js';
+import { recorders, viewerConsent } from './recording.js';
 import { IngestServer, getStreamKey, isStreamKeyPinned } from './ingest.js';
 import { LiveRelay } from './relay.js';
 import { DiscoveryBeacon, DISCOVERY_PORT } from './discovery.js';
@@ -13,6 +14,7 @@ import { lanAddress } from '../dlna.js';
 import { requireAuth, requireRole } from '../auth/middleware.js';
 import { identityEnforced } from '../identity/providers.js';
 import { playlistFor } from '../transcode/index.js';
+import { recordingView } from '../routes/recordings.js';
 import { PROTOCOL_NAME, PROTOCOL_VERSION } from '../../src/live/protocol.js';
 
 /**
@@ -410,7 +412,167 @@ export function mountLive(app) {
             return;
         }
 
+        // The recording stops with the conversation whoever ended it, and the
+        // permission the viewer was given expires with it. Awaiting the stop
+        // would hold the response open for FFmpeg's shutdown and the upload;
+        // the row is updated either way and the creator's list reflects it.
+        recorders.stop(session.id, 'the private turn ended').catch(() => {});
+        viewerConsent.clear(session.id);
+
         res.json({ ok: true });
+    });
+
+    /* ------------------------------------------------------------- recording -- */
+
+    /**
+     * Who is in this room, and which side is asking.
+     *
+     * Recording is a property of a 1:1 and of nothing else. A public broadcast
+     * has an audience rather than a counterparty, and there is nobody in it to
+     * ask.
+     */
+    function inRoom(req, res) {
+        const session = sessions.get(req.params.id);
+
+        if (!session || !session.live) {
+            res.status(404).json({ error: 'no such broadcast' });
+            return null;
+        }
+
+        const room = rooms.roomFor(session);
+
+        if (!room) {
+            res.status(409).json({ error: 'not_private' });
+            return null;
+        }
+
+        const userId = req.auth.sub;
+
+        if (userId !== room.creatorId && userId !== room.userId) {
+            res.status(403).json({ error: 'not_yours' });
+            return null;
+        }
+
+        return { session, room, userId, isCreator: userId === room.creatorId };
+    }
+
+    /**
+     * The state of both recordings, from whichever side is asking.
+     *
+     * The creator is told about theirs, which this server is making, and about
+     * a question waiting for them. The viewer is told what they are permitted
+     * to do in their own browser, which is the only place their recording
+     * exists.
+     */
+    router.get('/watch/:id/recording', requireAuth, (req, res) => {
+        const ctx = inRoom(req, res);
+        if (!ctx) return;
+
+        res.set('Cache-Control', 'no-store');
+
+        if (ctx.isCreator) {
+            res.json({
+                mine: recorders.stateFor(ctx.session.id),
+                available: recorders.available,
+                policy: viewerConsent.policyFor(ctx.room.creatorId),
+                asked: viewerConsent.pending(ctx.session.id),
+                pollAfterMs: VIEWER_POLL_MS
+            });
+            return;
+        }
+
+        res.json({
+            viewer: viewerConsent.stateFor(ctx.session, ctx.userId),
+            creatorRecording: recorders.isRecording(ctx.session.id),
+            pollAfterMs: VIEWER_POLL_MS
+        });
+    });
+
+    /**
+     * Start the creator's recording.
+     *
+     * Nobody is asked, because there is nobody in the file to ask. What this
+     * records is what the phone sent - the creator's own picture and voice -
+     * and the viewer's audio travels the other way and never reaches it. The
+     * viewer is told it is happening all the same, through the poll above: a
+     * recording light is not consent but it is not nothing either.
+     */
+    router.post('/watch/:id/recording/start', requireRole('creator'), json, async (req, res) => {
+        const ctx = inRoom(req, res);
+        if (!ctx) return;
+
+        if (!ctx.isCreator) {
+            res.status(403).json({ error: 'not_yours' });
+            return;
+        }
+
+        const started = await recorders.start({
+            session: ctx.session,
+            creatorId: ctx.userId,
+            roomId: ctx.room.id
+        });
+
+        if (!started.ok) {
+            res.status(started.reason === 'recording_unavailable' ? 503 : 409).json({ error: started.reason });
+            return;
+        }
+
+        res.json({ id: started.id, mine: recorders.stateFor(ctx.session.id) });
+    });
+
+    /**
+     * Stop it, finalise the file and store it.
+     *
+     * Awaited, unlike the stop on the way out of a turn: a creator who pressed
+     * stop is waiting to be told whether they have a recording, and "it is in
+     * your list" is only true once the row says `ready`.
+     */
+    router.post('/watch/:id/recording/stop', requireRole('creator'), json, async (req, res) => {
+        const ctx = inRoom(req, res);
+        if (!ctx) return;
+
+        const stopped = await recorders.stop(ctx.session.id, 'stopped by the creator');
+
+        if (!stopped.ok) {
+            res.status(stopped.reason === 'not_recording' ? 409 : 500).json({ error: stopped.reason });
+            return;
+        }
+
+        res.json({ recording: recordingView(stopped.recording) });
+    });
+
+    /** The viewer asks to record. Answered from the profile, or by the creator. */
+    router.post('/watch/:id/recording/consent', requireAuth, json, (req, res) => {
+        const ctx = inRoom(req, res);
+        if (!ctx) return;
+
+        if (ctx.isCreator) {
+            res.status(409).json({ error: 'not_the_viewer' });
+            return;
+        }
+
+        const asked = viewerConsent.ask(ctx.session, ctx.userId);
+
+        if (!asked.ok) {
+            res.status(403).json({ error: asked.reason });
+            return;
+        }
+
+        res.json({ viewer: viewerConsent.stateFor(ctx.session, ctx.userId) });
+    });
+
+    router.post('/watch/:id/recording/consent/answer', requireRole('creator'), json, (req, res) => {
+        const ctx = inRoom(req, res);
+        if (!ctx) return;
+
+        const answered = viewerConsent.answer(ctx.session, ctx.userId, req.body?.allow === true);
+
+        if (!answered.ok) {
+            res.status(answered.reason === 'nothing_asked' ? 409 : 403).json({ error: answered.reason });
+            return;
+        }
+
+        res.json({ asked: viewerConsent.pending(ctx.session.id) });
     });
 
     /* --------------------------------------------------------- setup checks -- */

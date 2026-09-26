@@ -82,7 +82,7 @@ struct DiagnosticsView: View {
             // The reason this list is shown at all, rather than reduced to a
             // yes/no: which pairs are permitted is a per-model fact that no
             // amount of reasoning from the spec sheet will produce.
-            Text("Reported by the system, not inferred from the model. Stereo side-by-side needs the wide and ultra-wide pair to appear here.")
+            Text("Reported by the system, not inferred from the model. Stereo Side-by-Side needs the wide and ultra-wide pair to appear here.")
         }
     }
 
@@ -91,13 +91,13 @@ struct DiagnosticsView: View {
         let diagnostics = broadcast.capture.diagnostics
 
         Section {
-            LabeledContent("Stereo requested", value: diagnostics.stereoRequested ? "Yes" : "No")
+            LabeledContent("Side-by-Side requested", value: diagnostics.stereoRequested ? "Yes" : "No")
             LabeledContent("Ultra-wide connected", value: diagnostics.ultraWideConnected ? "Yes" : "No")
             LabeledContent("Preview connected", value: diagnostics.previewConnected ? "Yes" : "No")
             LabeledContent("Wide buffers", value: "\(diagnostics.wideBuffersSeen)")
             LabeledContent("Ultra-wide buffers", value: "\(diagnostics.ultraWideBuffersSeen)")
             LabeledContent("Pairs emitted", value: "\(diagnostics.pairsEmitted)")
-            LabeledContent("Mono fallbacks", value: "\(diagnostics.monoFallbacks)")
+            LabeledContent("Single-camera fallbacks", value: "\(diagnostics.monoFallbacks)")
             LabeledContent("Interruptions", value: "\(diagnostics.interruptions)")
 
             // Three rows rather than one, because "the broadcast was silent"

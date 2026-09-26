@@ -17,6 +17,7 @@ import { runIdentitySweep } from './identity/retention.js';
 import { mountCreator } from './routes/creator.js';
 import { mountViewer } from './routes/viewer.js';
 import { mountProfiles } from './routes/profiles.js';
+import { mountRecordings } from './routes/recordings.js';
 import { mountCredits } from './credits/index.js';
 import { paymentsBanner } from './credits/providers.js';
 import { mountDeoVR } from './deovr.js';
@@ -26,6 +27,7 @@ import { mountLegal } from './legal.js';
 import { DlnaServer, lanAddress } from './dlna.js';
 import { queueStats } from './media/jobs.js';
 import { mountLive, startLive, stopLive, liveBanner, sessions as liveSessions } from './live/index.js';
+import { recorders } from './live/recording.js';
 import {
     mountTranscode,
     startTranscode,
@@ -206,6 +208,7 @@ mountViewer(app);
 mountCreator(app);
 mountProfiles(app);
 mountCredits(app);
+mountRecordings(app);
 mountLive(app);
 
 // Claims `/live/hls` and `/live/transcode`, so it has to come before the
@@ -307,6 +310,12 @@ export function start() {
         // here only so the banner can report what it found.
         await startTranscode();
 
+        // The recorder needs the same binary and its own scratch directory.
+        // Sweeping is safe here and only here: nothing is recording yet, so
+        // anything left behind is an unfinalised file from a crash.
+        await recorders.probeFfmpeg();
+        await recorders.sweepScratch();
+
         console.log(`\n  ProjectAVR  (pid ${process.pid})`);
         console.log(`  ─────────────────────────────────────────────`);
         console.log(`  Library      ${items.length} title${items.length === 1 ? '' : 's'}`);
@@ -378,6 +387,11 @@ export function start() {
         dlna?.stop();
         stopTranscode();
         stopLive();
+
+        // Every recording in progress is finished rather than dropped. FFmpeg
+        // writes the MP4 index on its way out, so a killed recorder costs the
+        // creator the whole file - a deploy should not do that.
+        recorders.stopAll().catch(() => {});
         server.close(() => process.exit(0));
         setTimeout(() => process.exit(0), 5000).unref();
     };

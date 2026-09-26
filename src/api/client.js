@@ -417,7 +417,82 @@ class ApiClient extends EventTarget {
         declinePrivate: (requestId) => this.post(`/api/live/private/${encodeURIComponent(requestId)}/decline`),
 
         /** End the turn. Either party may, and it is the same call for both. */
-        endPrivate: (sessionId) => this.post(`/api/live/watch/${encodeURIComponent(sessionId)}/private/end`)
+        endPrivate: (sessionId) => this.post(`/api/live/watch/${encodeURIComponent(sessionId)}/private/end`),
+
+        /* ---------------------------------------------------------- recording -- */
+
+        /**
+         * Recording a 1:1.
+         *
+         * Only the creator's side is here, because only the creator's side
+         * involves the server: their recording is made by an FFmpeg attached
+         * to the live session and contains what the phone sent. The viewer's
+         * recording is made in their own browser by `ViewerRecorder` and never
+         * leaves it - the only thing these routes do for the viewer is carry
+         * the permission question to the creator and the answer back.
+         */
+        recording: {
+            /**
+             * Both sides poll this. The creator gets `{mine, available,
+             * policy, asked}`; the viewer gets `{viewer, creatorRecording}`.
+             */
+            state: (sessionId) => this.get(`/api/live/watch/${encodeURIComponent(sessionId)}/recording`),
+
+            start: (sessionId) => this.post(`/api/live/watch/${encodeURIComponent(sessionId)}/recording/start`),
+
+            /** Resolves once FFmpeg has finalised the file, not when it is asked to. */
+            stop: (sessionId) => this.post(`/api/live/watch/${encodeURIComponent(sessionId)}/recording/stop`),
+
+            /** Viewer: may I record this? */
+            askConsent: (sessionId) =>
+                this.post(`/api/live/watch/${encodeURIComponent(sessionId)}/recording/consent`),
+
+            /** Creator: yes or no. */
+            answerConsent: (sessionId, allow) =>
+                this.post(`/api/live/watch/${encodeURIComponent(sessionId)}/recording/consent/answer`, { allow })
+        }
+    };
+
+    /* ----------------------------------------------------------- recordings -- */
+
+    /**
+     * The recording marketplace.
+     *
+     * What is on sale is the creator's own recording of a 1:1. There is no
+     * call here that uploads one, because the other recording of the same
+     * conversation - the viewer's, with both voices in it - is theirs and
+     * stays on their disk.
+     */
+    recordings = {
+        /** The creator's own, listed or not, failures included. */
+        mine: () => this.get('/api/recordings/mine').then((d) => d.recordings),
+
+        /** @param {{title: string, price: number}} listing price in credits */
+        list: (id, listing) => this.post(`/api/recordings/${encodeURIComponent(id)}/list`, listing).then((d) => d.recording),
+
+        unlist: (id) => this.post(`/api/recordings/${encodeURIComponent(id)}/unlist`).then((d) => d.recording),
+
+        /** @param {'2d'|'3d'|null} [tag] filter on what was captured */
+        market: (tag = null) => this.get(`/api/recordings/market${tag ? `?tag=${encodeURIComponent(tag)}` : ''}`),
+
+        purchased: () => this.get('/api/recordings/purchased').then((d) => d.recordings),
+
+        /** @throws with `status: 402` and `details.error` of `insufficient_credits` */
+        buy: (id) => this.post(`/api/recordings/${encodeURIComponent(id)}/buy`),
+
+        /**
+         * Where the bytes are. A plain URL rather than a fetch, so the browser
+         * can range-request it into a `<video>` and the file never has to sit
+         * in the page's memory. It is checked against the sale on every
+         * request; the storage key is never exposed.
+         *
+         * A `<video>` element cannot carry an Authorization header, so the
+         * token rides in the query - which the server accepts on GETs only.
+         */
+        fileUrl: (id) => {
+            const token = this.accessToken ? `?access_token=${encodeURIComponent(this.accessToken)}` : '';
+            return `/api/recordings/${encodeURIComponent(id)}/file${token}`;
+        }
     };
 
     /* ------------------------------------------------------------- profiles -- */

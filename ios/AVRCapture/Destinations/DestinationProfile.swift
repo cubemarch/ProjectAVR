@@ -134,15 +134,20 @@ struct DestinationProfile: Identifiable, Codable, Equatable, Sendable {
         updatedAt = try container.decodeIfPresent(Date.self, forKey: .updatedAt) ?? Date()
     }
 
-    /// How the destination describes its own security, for the confirmation
-    /// sheet and the destination list. Deliberately plain language: the person
-    /// reading it is deciding whether to trust an address, not auditing a
-    /// cipher suite.
-    var securityLabel: String {
+    /// Whether the connection is encrypted, for the confirmation sheet and the
+    /// destination list.
+    ///
+    /// The field is called **Encrypted** wherever it is shown, which is the
+    /// word `docs/LIVE.md` fixes for all three products — the web Studio
+    /// labels the same value the same way, so a creator reading one screen
+    /// while operating the other is comparing like with like. Deliberately
+    /// plain language beyond that: the person reading it is deciding whether
+    /// to trust an address, not auditing a cipher suite.
+    var encryptedLabel: String {
         switch (usesTLS, certificatePin != nil) {
-        case (false, _): return "Not encrypted"
-        case (true, true): return "Encrypted, pinned certificate"
-        case (true, false): return "Encrypted"
+        case (false, _): return "No"
+        case (true, true): return "Yes, certificate pinned"
+        case (true, false): return "Yes"
         }
     }
 

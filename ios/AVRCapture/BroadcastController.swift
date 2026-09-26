@@ -202,7 +202,11 @@ final class BroadcastController: ObservableObject {
     /// a device that reached `.critical` once under this load will reach it
     /// again — oscillating between one and two eyes is worse for a viewer than
     /// staying mono.
-    private var thermalMonoOverride = false
+    ///
+    /// Published because the status bar names what is actually going out, and
+    /// a latch nothing observes would leave it reading Side-by-Side after the
+    /// fallback notice had been dismissed.
+    @Published private(set) var thermalMonoOverride = false
     private var criticalThermalWindows = 0
 
     init(config: CaptureConfig, destinations: DestinationStore) {

@@ -59,11 +59,13 @@ enum DestinationImport {
 
         var endpointLabel: String { Redact.endpoint(host: host, port: port) }
 
-        var securityLabel: String {
+        /// See `DestinationProfile.encryptedLabel` for why the field is called
+        /// **Encrypted** rather than "Security".
+        var encryptedLabel: String {
             switch (usesTLS, certificatePin != nil) {
-            case (false, _): return "Not encrypted"
-            case (true, true): return "Encrypted, pinned certificate"
-            case (true, false): return "Encrypted"
+            case (false, _): return "No"
+            case (true, true): return "Yes, certificate pinned"
+            case (true, false): return "Yes"
             }
         }
 

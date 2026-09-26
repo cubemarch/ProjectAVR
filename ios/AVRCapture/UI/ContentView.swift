@@ -149,7 +149,9 @@ struct ContentView: View {
                     telemetry: broadcast.telemetry,
                     destination: destinations.selected?.name,
                     ready: destinations.isReadyToBroadcast,
-                    returnAudio: broadcast.returnAudio
+                    returnAudio: broadcast.returnAudio,
+                    mode: broadcast.effectiveStereo ? .separate : .mono,
+                    modeDegraded: config.mode == .separate && !broadcast.effectiveStereo
                 )
                 .padding(.horizontal, 20)
                 .padding(.top, 8)
@@ -327,6 +329,15 @@ private struct StatusBar: View {
     /// coming out of it right now.
     let returnAudio: ReturnAudioPlayer.State
 
+    /// What is actually going out, which is not always what was selected: a
+    /// phone that cannot run two cameras, or one that got too hot to, sends
+    /// Standard with the setting still reading Stereo Side-by-Side.
+    let mode: CaptureConfig.Mode
+
+    /// Stereo Side-by-Side was asked for and is not what is being sent. The
+    /// notice that says so is dismissible; this is not.
+    let modeDegraded: Bool
+
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 12) {
             HStack(spacing: 7) {
@@ -339,10 +350,18 @@ private struct StatusBar: View {
                         .font(.system(.footnote, design: .rounded).weight(.semibold))
                         .foregroundStyle(.white)
 
-                    if status.isLive || ready, let destination {
-                        Text("to \(destination)")
-                            .font(.caption2)
-                            .foregroundStyle(.white.opacity(0.7))
+                    if status.isLive || ready {
+                        HStack(spacing: 4) {
+                            if let destination {
+                                Text("to \(destination)")
+                                Text("·")
+                            }
+
+                            Text(mode.shortLabel)
+                                .foregroundStyle(modeDegraded ? Color.orange : Color.white.opacity(0.7))
+                        }
+                        .font(.caption2)
+                        .foregroundStyle(.white.opacity(0.7))
                     }
                 }
             }

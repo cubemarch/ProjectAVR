@@ -76,7 +76,7 @@ struct SettingsView: View {
 
             if let selected = destinations.selected {
                 LabeledContent("Address", value: selected.endpointLabel)
-                LabeledContent("Security", value: selected.securityLabel)
+                LabeledContent("Encrypted", value: selected.encryptedLabel)
 
                 // Only for a destination that leaves the building. Cleartext on
                 // a studio LAN is a normal choice and warning about it here
@@ -111,12 +111,16 @@ struct SettingsView: View {
 
     private var captureSection: some View {
         Section {
+            // Not segmented. "Stereo Side-by-Side" is the term the web Studio
+            // asks creators to broadcast in and the term the brief fixes, and
+            // it does not fit in a segment — abbreviating it here would put the
+            // two products back to using different words for one control. The
+            // menu style also matches Quality, Codec and Projection around it.
             Picker("Mode", selection: modeBinding) {
                 ForEach(CaptureConfig.Mode.allCases) { mode in
                     Text(mode.label).tag(mode)
                 }
             }
-            .pickerStyle(.segmented)
             .disabled(!broadcast.supportsStereo)
 
             Text(config.mode.detail)

@@ -268,27 +268,10 @@ export class TranscodePipeline extends EventEmitter {
         const config = this._configs.get(TRACK.LEFT) ?? this._configs.get(TRACK.PACKED);
         if (!config) return;
 
-        const rungs = this.rungs;
-
-        await fs.mkdir(this.outputDir, { recursive: true });
-        await Promise.all(
-            rungs.map((rung) => fs.mkdir(path.join(this.outputDir, rung.name), { recursive: true }))
-        );
-
         const audio = this._audioFormat !== null;
 
-        const args = buildArgs({
-            inputCodec: codecFamily(config.codec),
-            stereo: this.stereo,
-            frameRate: frameRateOf(this.session),
-            sourceWidth: config.codedWidth || 1920,
-            sourceHeight: config.codedHeight || 1080,
-            outputDir: this.outputDir,
-            rungs,
-            segmentSeconds: this.segmentSeconds,
-            playlistLength: this.playlistLength,
-            audio
-        });
+        await this._prepareOutput();
+        const args = this._buildArgs(config, audio);
 
         // stdin is closed, the two eyes get file descriptors 3 and 4, and sound
         // gets 5. Using extra descriptors rather than, say, named pipes on disk
@@ -328,8 +311,50 @@ export class TranscodePipeline extends EventEmitter {
         child.on('error', (err) => this._fail(err));
         child.on('exit', (code, signal) => this._onExit(code, signal));
 
-        this._watchForPlaylist();
+        this._watchForReady();
         this.emit('started', this);
+    }
+
+    /*
+     * The three seams a subclass needs.
+     *
+     * Everything above and below this point - the frame intake, the aligner,
+     * the backpressure accounting, the restart backoff, the SIGINT shutdown -
+     * is the same work whether the frames end up in a segment directory or a
+     * single file. Only the destination differs, so only the destination is
+     * overridable. See `RecordingPipeline` in `server/live/recording.js`.
+     */
+
+    /** Make whatever the output needs to exist before FFmpeg opens it. */
+    async _prepareOutput() {
+        await fs.mkdir(this.outputDir, { recursive: true });
+        await Promise.all(
+            this.rungs.map((rung) => fs.mkdir(path.join(this.outputDir, rung.name), { recursive: true }))
+        );
+    }
+
+    /**
+     * @param {object} config - The video track's CONFIG payload.
+     * @param {boolean} audio - Whether this spawn carries sound.
+     */
+    _buildArgs(config, audio) {
+        return buildArgs({
+            inputCodec: codecFamily(config.codec),
+            stereo: this.stereo,
+            frameRate: frameRateOf(this.session),
+            sourceWidth: config.codedWidth || 1920,
+            sourceHeight: config.codedHeight || 1080,
+            outputDir: this.outputDir,
+            rungs: this.rungs,
+            segmentSeconds: this.segmentSeconds,
+            playlistLength: this.playlistLength,
+            audio
+        });
+    }
+
+    /** Decide when the output is usable and emit `ready`. */
+    _watchForReady() {
+        this._watchForPlaylist();
     }
 
     /**
@@ -570,7 +595,7 @@ export class TranscodePipeline extends EventEmitter {
 const AUDIO_GRACE_MS = 500;
 
 /** `avc1.640028` -> `h264`; `hvc1.1.6.L93.B0` -> `hevc`. */
-function codecFamily(codec) {
+export function codecFamily(codec) {
     return String(codec).startsWith('hvc1') || String(codec).startsWith('hev1') ? 'hevc' : 'h264';
 }
 
@@ -582,7 +607,7 @@ function sameFormat(a, b) {
  * The phone does not announce its frame rate, so it is inferred from what the
  * session has actually been receiving and snapped to a sane value.
  */
-function frameRateOf(session) {
+export function frameRateOf(session) {
     const measured = session.stats.get(TRACK.LEFT)?.rates().fps ?? 0;
 
     if (measured >= 50) return 60;

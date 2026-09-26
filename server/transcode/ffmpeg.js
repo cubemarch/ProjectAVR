@@ -210,6 +210,80 @@ export function buildArgs({
 }
 
 /**
+ * The same inputs, muxed to one file instead of a ladder.
+ *
+ * A recording is not a delivery format, so almost everything the ladder exists
+ * for is wrong here: there is nobody to switch rendition for, no segment to
+ * expire, and no reason to spend CPU making four copies of something that will
+ * be watched once. One rung at the source resolution, one file.
+ *
+ * `faststart` moves the index to the front of the file on close. Without it the
+ * `moov` atom is written last and a browser cannot begin playback until it has
+ * the whole thing - which for an hour of side-by-side 1080p is a long wait for
+ * a file the buyer has already paid for.
+ *
+ * The file is finalised by FFmpeg's own clean shutdown, which is why the
+ * recorder stops with SIGINT and waits rather than killing the process. A
+ * SIGKILLed MP4 has no index and is not playable by anything.
+ */
+export function recordArgs({
+    inputCodec = 'h264',
+    stereo = true,
+    frameRate = 30,
+    sourceWidth = 1920,
+    sourceHeight = 1080,
+    outputFile,
+    audio = false
+}) {
+    const args = ['-hide_banner', '-nostdin', '-loglevel', 'warning', '-progress', 'pipe:2', '-stats_period', '2'];
+
+    const input = (fd) => [
+        '-use_wallclock_as_timestamps', '1',
+        '-f', inputCodec,
+        '-framerate', String(frameRate),
+        '-i', `pipe:${fd}`
+    ];
+
+    args.push(...input(3));
+    if (stereo) args.push(...input(4));
+
+    if (audio) {
+        args.push('-use_wallclock_as_timestamps', '1', '-f', 'aac', '-i', 'pipe:5');
+    }
+
+    const audioInput = stereo ? 2 : 1;
+
+    // One rung, at the source height, so the file keeps whatever the phone
+    // actually sent. `filterGraph` is shared with the ladder above: the eyes
+    // are stacked the same way, because a recording of a stereo broadcast has
+    // to be playable by the same things that play a stereo broadcast.
+    const rungs = [{ name: 'file', height: even(sourceHeight), bitrate: 0 }];
+
+    args.push('-filter_complex', filterGraph({ stereo, frameRate, sourceWidth, sourceHeight, rungs }));
+    args.push('-map', '[v0]');
+
+    const encoder = encoderName();
+    args.push('-c:v', encoder);
+
+    // Quality-targeted rather than bitrate-targeted, which is the right knob
+    // for a file nobody is streaming over a constrained link. libx264 reads
+    // -crf; the hardware encoders do not, and take a bitrate instead.
+    if (encoder === 'libx264') {
+        args.push('-preset', 'veryfast', '-crf', '20');
+    } else {
+        args.push('-b:v', '12M');
+    }
+
+    args.push('-g', String(Math.max(1, Math.round(frameRate * 2))), '-pix_fmt', 'yuv420p');
+
+    if (audio) args.push('-map', `${audioInput}:a:0`, '-c:a', 'copy');
+
+    args.push('-movflags', '+faststart', '-f', 'mp4', '-y', outputFile);
+
+    return args;
+}
+
+/**
  * Compose the two eyes and split into one branch per rung.
  *
  * The eyes are stacked horizontally into a single frame. That is what every

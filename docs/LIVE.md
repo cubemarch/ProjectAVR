@@ -77,6 +77,13 @@ Both outputs run at once from one ingest. They are not alternatives. Sound, when
 it is switched on, takes the same path on its own track — see
 [The audio track](#the-audio-track).
 
+Recording a 1:1 adds a third consumer on the same seam: `RecordingPipeline`
+subclasses `TranscodePipeline` and attaches as an ordinary subscriber, writing
+one MP4 instead of a ladder. Because it sits where every other subscriber sits,
+it sees exactly what a viewer sees coming *down* from the camera — talkback goes
+the other way and cannot reach it. See
+[MONETISATION.md](MONETISATION.md#where-this-is-up-to).
+
 ---
 
 ## Why there are two delivery paths
@@ -364,8 +371,15 @@ into the other had to translate.
 | **Address** | The ingest host | "server", "URL" |
 | **Port** | The ingest TCP port | |
 | **Stream key** | The credential in `HELLO.key`, as the creator sees it | "token", "secret" |
-| **Encrypted** | Whether the link uses TLS | "TLS", "secure" |
+| **Encrypted** | Whether the link uses TLS, said as Yes or No on both sides | "TLS", "secure" |
 | **Certificate pin** | The SHA-256 of the pinned certificate | "fingerprint" |
+| **Standard** | One camera. What the 2D stream check confirms | "mono", "2D mode" |
+| **Stereo Side-by-Side** | The wide and ultra-wide pair. What the 3D stream check confirms | "MV-HEVC", "VR180", "spatial" |
+
+The two mode names come from the capture app's own Mode control, so the stream
+checks on the profile page name the control the creator is reaching for rather
+than describing it. The server's check kind for the second one is `spatial` —
+an API and database value, like `grant` below, and not a word on either screen.
 
 `avr://pair` itself is unchanged and stays that way: it is a wire format that
 every issued link, every QR code the portal draws and the app's URL handler are
@@ -578,6 +592,8 @@ node --test test/chat.test.js             # the room, rate limits, who may post
 node --test test/private-turn.test.js     # request, accept, decline, and the eviction
 node --test test/talkback.test.js         # the upstream path, against a real relay
 node --test test/talkback-client.test.js  # the AudioWorklet, and when the browser drops
+node --test test/recordings.test.js       # recording a 1:1, and the marketplace over it
+node --test test/recorder-client.test.js  # the viewer's own recording, in the browser
 ```
 
 The last of those builds two H.264 clips with visibly different content, drives

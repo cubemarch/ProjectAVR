@@ -179,23 +179,25 @@ async function boot() {
     browse.on('play', (item) => playItem(item));
     browse.on('enterVr', (item) => playItem(item, { enterVr: true }));
     browse.on('showCompat', () => compat.open());
+    browse.on('notice', (message) => toast(message));
 
     /**
-     * Clicking a creator's picture.
+     * Going to watch a creator.
      *
-     * A creator who is on air goes straight to the monitor page for that
-     * broadcast - a separate document, because the live path carries its own
-     * decoders and has nothing to do with the catalogue. One who is set up but
-     * not yet broadcasting has nothing to watch, so their page is the sensible
-     * destination instead of an empty player.
+     * A separate document, because the live path carries its own decoders and
+     * has nothing to do with the catalogue. Only fired for a creator who is
+     * actually on air - one who is not opens their page inside browse, which
+     * is where the prices are.
      */
     browse.on('watchCreator', (creator) => {
-        if (creator.status === 'live' && creator.live?.sessionId) {
+        if (creator.live?.sessionId) {
             location.href = `/live/${encodeURIComponent(creator.live.sessionId)}`;
             return;
         }
 
-        toast(`${creator.name} is set up but not on air yet.`);
+        // The list moved on between the render and the click.
+        toast(`${creator.name} has just gone off air.`);
+        browse.refreshCreators();
     });
 
     // Only while the browse view is actually on screen. Polling behind a player
@@ -276,6 +278,8 @@ async function boot() {
         profile.close();
         history.pushState({}, '', '/');
         browse.refreshCreators();
+        // Something may have been listed or taken down while they were in there.
+        browse.refreshRecordings();
     });
 
     browse.on('openStudio', () => openStudio());
@@ -295,6 +299,19 @@ async function boot() {
         history.pushState({ portal: true }, '', '/creator');
         portal.open();
     }
+
+    // Studio and the profile page each hold half of what going live needs —
+    // Studio the titles and the feed, the profile page the checks and the
+    // prices — so each has a door to the other rather than a trip through home.
+    window.addEventListener('avr:open-profile', async () => {
+        history.pushState({ profile: true }, '', '/profile');
+        await profile.open('going-live');
+    });
+
+    window.addEventListener('avr:open-studio', () => {
+        profile.close();
+        openStudio();
+    });
 
     window.addEventListener('avr:exit-portal', () => {
         history.pushState({}, '', '/');
@@ -317,7 +334,12 @@ async function boot() {
         else profile.close();
     });
 
-    api.addEventListener('session', (e) => browse.renderAccount(e.detail));
+    api.addEventListener('session', (e) => {
+        browse.renderAccount(e.detail);
+        // Signing in or out changes both what the market route will answer and
+        // which of those recordings this account already owns.
+        browse.refreshRecordings();
+    });
 
     playerUI.on('back', exitPlayback);
     playerUI.on('enterVr', enterVr);

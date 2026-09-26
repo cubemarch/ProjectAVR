@@ -170,6 +170,20 @@ body.is-immersive #render-canvas {
     background: rgba(255, 255, 255, 0.08);
 }
 
+/* The compatibility panel was reachable only through a bare cast glyph, which
+   is a guess even for somebody who knows the feature exists. The word is
+   dropped below 900px, where the header has no room for it and the glyph plus
+   the `aria-label` is all that fits. */
+.icon-btn.labelled {
+    width: auto;
+    grid-auto-flow: column;
+    gap: 8px;
+    padding: 0 12px;
+    font-size: 13px;
+    font-weight: 600;
+    white-space: nowrap;
+}
+
 /* ------------------------------------------------------------- billboard -- */
 
 .billboard {
@@ -254,6 +268,45 @@ body.is-immersive #render-canvas {
     flex-wrap: wrap;
 }
 
+/* The two heroes that have no artwork behind them: a live broadcast, whose
+   only picture is the one you have not paid for yet, and the opening statement
+   on a deployment with nothing on air and nothing in the library. Both get a
+   worked surface rather than a flat panel, so the page does not open on a
+   rectangle of background colour. */
+.billboard-art-blank {
+    background-image:
+        radial-gradient(1200px 520px at 18% 12%, rgba(124, 92, 255, 0.3), transparent 62%),
+        radial-gradient(900px 480px at 82% 78%, rgba(229, 9, 20, 0.18), transparent 60%);
+    background-color: #101018;
+}
+
+.billboard-live,
+.billboard-opening {
+    height: min(62vh, 560px);
+}
+
+.billboard-opening h1 {
+    font-size: clamp(30px, 3.6vw, 52px);
+    max-width: 16em;
+}
+
+/* Reused by the creator sheet, so the same two words mean the same thing in
+   both places they appear. */
+.live-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 9px;
+    border-radius: 3px;
+    /* The same red as the badge on a creator's face in the row below, because
+       they are saying the same thing about the same person. */
+    background: #e50914;
+    color: #fff;
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0.14em;
+}
+
 .btn {
     display: inline-flex;
     align-items: center;
@@ -329,19 +382,9 @@ body.is-immersive #render-canvas {
     margin: 0;
 }
 
-.shelf-head .explore {
-    font-size: 12px;
-    letter-spacing: 0.08em;
-    color: var(--vr);
-    opacity: 0;
-    transform: translateX(-6px);
-    transition: opacity 0.25s var(--ease), transform 0.25s var(--ease);
-}
-
-.shelf:hover .shelf-head .explore {
-    opacity: 1;
-    transform: translateX(0);
-}
+/* There was an `EXPLORE ALL ›` here, in the accent colour, appearing on hover.
+   It was a `<span>` with nothing bound to it: a link-coloured control that did
+   nothing, on every shelf. Removed along with the markup. */
 
 .shelf-viewport {
     position: relative;
@@ -847,12 +890,51 @@ body.is-immersive .player-shell .avr-video {
     margin: 0 0 8px;
 }
 
-/* ------------------------------------------------------------- responsive -- */
+/* ------------------------------------------------------------- responsive --
+ *
+ * Three tiers where there used to be one.
+ *
+ * The single 900px cut this replaces hid `.site-nav` and the search field
+ * outright, which on a phone reduced the header to a wordmark and an avatar:
+ * every format filter and My List became unreachable on the class of device
+ * most likely to be browsing. Nothing below hides a control that is not
+ * reachable somewhere else on the same screen. Where something will not fit,
+ * it wraps or scrolls rather than disappearing.
+ */
 
 @media (max-width: 900px) {
-    .site-nav,
-    .search-box input {
+    .site-header {
+        gap: 16px;
+    }
+
+    /* Back to a square glyph. The button keeps its `aria-label`, so it is still
+       named for a screen reader and in a tooltip. */
+    .icon-btn.labelled {
+        width: 34px;
+        padding: 0;
+    }
+
+    .icon-btn.labelled span {
         display: none;
+    }
+
+    /* Scrolls sideways rather than vanishing. */
+    .site-nav {
+        gap: 18px;
+        overflow-x: auto;
+        scrollbar-width: none;
+    }
+
+    .site-nav::-webkit-scrollbar {
+        display: none;
+    }
+
+    .site-nav button {
+        white-space: nowrap;
+    }
+
+    .search-box input {
+        width: 120px;
     }
 
     .card {
@@ -872,6 +954,201 @@ body.is-immersive .player-shell .avr-video {
 
     .billboard {
         height: 70vh;
+    }
+
+    .billboard-inner {
+        max-width: none;
+        padding-right: 4vw;
+    }
+}
+
+/* Phones. The header gives up on one row and puts the nav on its own. */
+@media (max-width: 700px) {
+    /* Two rows now, and the billboard below still has to clear it. */
+    :root {
+        --header-h: 80px;
+    }
+
+    .site-header {
+        height: auto;
+        flex-wrap: wrap;
+        align-items: center;
+        gap: 6px 14px;
+        padding: 10px 4vw 8px;
+        background: linear-gradient(180deg, rgba(0, 0, 0, 0.92) 0%, rgba(0, 0, 0, 0.55) 68%, rgba(0, 0, 0, 0) 100%);
+    }
+
+    .brand {
+        font-size: 22px;
+    }
+
+    .site-nav {
+        order: 3;
+        flex: 1 0 100%;
+        font-size: 13px;
+        padding-bottom: 2px;
+    }
+
+    .header-right {
+        gap: 10px;
+    }
+
+    .search-box {
+        padding: 6px 10px;
+    }
+
+    .search-box input {
+        width: 90px;
+        font-size: 13px;
+    }
+
+    .billboard {
+        height: auto;
+        min-height: 62vh;
+        padding-top: calc(var(--header-h) + 36px);
+        margin-bottom: -48px;
+    }
+
+    .billboard::after {
+        background:
+            linear-gradient(90deg, rgba(11, 11, 15, 0.92) 0%, rgba(11, 11, 15, 0.78) 100%),
+            linear-gradient(0deg, var(--bg) 0%, rgba(11, 11, 15, 0) 34%);
+    }
+
+    .billboard-inner {
+        padding-bottom: 40px;
+    }
+
+    .billboard-actions {
+        flex-wrap: wrap;
+    }
+
+    .shelf-head {
+        flex-wrap: wrap;
+        row-gap: 6px;
+    }
+
+    .shelf-head h2 {
+        font-size: 17px;
+    }
+
+    /* Hover-only affordance; there is no hover here. */
+    .shelf-arrow {
+        display: none;
+    }
+
+    .card {
+        width: 168px;
+    }
+
+    .recording-card {
+        width: 180px;
+    }
+
+    .modal-backdrop {
+        padding: 24px 12px;
+    }
+
+    .player-chrome {
+        padding: 16px 4vw;
+    }
+
+    /* Studio: the bar wraps, the nav gets its own scrolling row. */
+    .portal-head {
+        height: auto;
+        flex-wrap: wrap;
+        gap: 10px 14px;
+        padding: 12px 16px;
+    }
+
+    .portal-nav {
+        order: 3;
+        flex: 1 0 100%;
+        overflow-x: auto;
+        scrollbar-width: none;
+    }
+
+    .portal-nav::-webkit-scrollbar {
+        display: none;
+    }
+
+    .portal-nav button {
+        white-space: nowrap;
+    }
+
+    .portal-body {
+        padding: 22px 16px 70px;
+    }
+
+    .profile-shell {
+        padding: 0 16px 48px;
+    }
+
+    .profile-card {
+        padding: 18px 16px;
+    }
+
+    /* Back, the title and the way into Studio share one line at 360px. */
+    .profile-bar h1 {
+        font-size: 17px;
+    }
+
+    .balance {
+        font-size: 28px;
+    }
+
+    /* Label above value, so neither is squeezed to two characters. */
+    .check-row {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 10px;
+    }
+
+    .destination-row {
+        flex-direction: column;
+    }
+
+    .destination-url {
+        font-size: 12px;
+    }
+}
+
+@media (max-width: 480px) {
+    .site-nav {
+        gap: 14px;
+    }
+
+    /* Narrowed, not removed. Search is the only way to reach a title that is
+       not on a shelf, so hiding it here would strand part of the catalogue. */
+    .search-box {
+        padding: 6px 8px;
+        gap: 6px;
+    }
+
+    .search-box input {
+        width: 68px;
+    }
+
+    .card {
+        width: 148px;
+    }
+
+    .billboard h1 {
+        font-size: clamp(28px, 8vw, 40px);
+    }
+
+    .billboard-actions .btn {
+        flex: 1 1 auto;
+        justify-content: center;
+    }
+
+    .modal-body {
+        padding: 8px 18px 28px;
+    }
+
+    .editor-actions,
+    .tier-row {
+        flex-wrap: wrap;
     }
 }
 
@@ -1263,6 +1540,153 @@ body.is-portal {
 .portal-body {
     padding: 30px 32px 80px;
     max-width: 1280px;
+}
+
+/* Studio's own dialog, in place of `prompt`/`confirm`/`alert`. Fixed rather
+   than absolute so it covers the portal however far down it is scrolled. */
+.portal-dialog {
+    position: fixed;
+    inset: 0;
+    z-index: 70;
+    display: grid;
+    place-items: center;
+    padding: 24px;
+    background: rgba(5, 5, 10, 0.72);
+    backdrop-filter: blur(3px);
+}
+
+.portal-dialog[hidden] {
+    display: none;
+}
+
+.portal-dialog-panel {
+    width: min(440px, 100%);
+    background: var(--surface);
+    border: 1px solid #2c2c3a;
+    border-radius: 10px;
+    padding: 24px;
+    box-shadow: 0 24px 64px rgba(0, 0, 0, 0.6);
+}
+
+.portal-dialog-panel h3 {
+    margin: 0 0 8px;
+    font-size: 18px;
+    letter-spacing: -0.01em;
+}
+
+.portal-dialog-panel p {
+    margin: 0 0 16px;
+    font-size: 14px;
+    line-height: 1.5;
+    color: var(--text-dim);
+}
+
+.portal-dialog-field {
+    display: block;
+    margin-bottom: 18px;
+}
+
+.portal-dialog-field span {
+    display: block;
+    margin-bottom: 6px;
+    font-size: 12px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--text-faint);
+}
+
+.portal-dialog-field input {
+    width: 100%;
+    padding: 10px 12px;
+    border-radius: 6px;
+    border: 1px solid #333344;
+    background: var(--bg-raised);
+    color: var(--text);
+    font: inherit;
+}
+
+.portal-dialog-field input:focus {
+    outline: none;
+    border-color: var(--accent);
+}
+
+.portal-dialog-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+}
+
+/* Only ever on the button that destroys something. */
+.btn-danger {
+    background: #c9182a;
+    color: #fff;
+}
+
+.btn-danger:hover {
+    background: #e02034;
+}
+
+/* The "Going live" panel at the top of the Studio dashboard: what still
+   stands between this creator and being on air, and what they charge once
+   they are. First on the page because the answer changes every sign-in. */
+.ready-panel {
+    margin-top: 0;
+}
+
+.ready-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    gap: 12px;
+}
+
+.ready-step {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+}
+
+.ready-step > div {
+    display: grid;
+    gap: 2px;
+}
+
+.ready-step strong {
+    font-size: 14px;
+    font-weight: 500;
+}
+
+/* Empty ring until done, tick after. The ring is the incomplete state rather
+   than a cross: nothing here has failed, it has just not happened yet. */
+.ready-mark {
+    flex: 0 0 auto;
+    width: 20px;
+    height: 20px;
+    margin-top: 1px;
+    border-radius: 50%;
+    border: 1.5px solid rgba(255, 255, 255, 0.24);
+    display: grid;
+    place-items: center;
+    color: #fff;
+}
+
+.ready-step.is-done .ready-mark {
+    background: #2f9e58;
+    border-color: #2f9e58;
+}
+
+.ready-prices {
+    margin: 14px 0 0;
+    padding-top: 12px;
+    border-top: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+.ready-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-top: 16px;
 }
 
 .section-title {
@@ -1793,7 +2217,9 @@ body.is-portal {
 .creator-row {
     display: flex;
     gap: 18px;
-    padding: 6px 42px 4px;
+    /* The same 4vw gutter every other shelf uses. A fixed 42px here put the
+       first face out of line with every heading on the page. */
+    padding: 6px 4vw 4px;
     overflow-x: auto;
     scrollbar-width: none;
 }
@@ -1887,6 +2313,50 @@ body.is-portal {
     color: var(--text-faint);
 }
 
+/* ------------------------------------------------------- the creator sheet -- */
+
+/* Opened by a creator who is not on air, where there used to be a toast. One
+   column rather than the two the title modal uses: there is no artwork, and
+   everything on it is a fact about a person or a price. */
+.creator-body {
+    display: block;
+    position: relative;
+    padding: 30px 32px 32px;
+}
+
+.creator-head {
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    margin-bottom: 18px;
+}
+
+.creator-head h2 {
+    margin: 0 0 4px;
+    font-size: 26px;
+    letter-spacing: -0.02em;
+}
+
+.creator-face.lg {
+    width: 76px;
+    height: 76px;
+    flex: 0 0 auto;
+}
+
+.creator-tagline {
+    font-size: 16px;
+    color: var(--text);
+    margin: 0 0 10px;
+}
+
+.creator-body .spec-list {
+    margin-top: 20px;
+}
+
+.creator-body .billboard-actions {
+    margin-top: 22px;
+}
+
 /* ------------------------------------------------------------------ profile -- */
 
 body.is-profile {
@@ -1909,20 +2379,62 @@ body.is-profile {
     gap: 20px;
 }
 
-.profile-bar {
+/* The heading and the tabs are one sticky block, so the tab row cannot end up
+   floating over the title it belongs under. */
+.profile-head {
     position: sticky;
     top: 0;
     z-index: 2;
+    background: var(--bg);
+}
+
+.profile-bar {
     display: flex;
     align-items: center;
     gap: 16px;
     padding: 18px 0;
-    background: var(--bg);
 }
 
 .profile-bar h1 {
     font-size: 21px;
     margin: 0;
+    margin-right: auto;
+}
+
+/* The sections. Scrolls sideways rather than wrapping, so four tabs stay on
+   one line at 320px. */
+.profile-tabs {
+    display: flex;
+    gap: 4px;
+    overflow-x: auto;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    scrollbar-width: none;
+}
+
+.profile-tabs::-webkit-scrollbar {
+    display: none;
+}
+
+.profile-tab {
+    flex: 0 0 auto;
+    background: none;
+    border: none;
+    border-bottom: 2px solid transparent;
+    color: var(--text-dim);
+    font: inherit;
+    font-size: 14px;
+    padding: 8px 14px;
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+.profile-tab:hover {
+    color: #fff;
+}
+
+.profile-tab.on {
+    color: #fff;
+    border-bottom-color: var(--accent);
 }
 
 .profile-error {
@@ -2238,4 +2750,176 @@ body.is-profile {
         flex-direction: column;
         align-items: flex-start;
     }
+}
+
+/* --------------------------------------------------- recorded 1:1s for sale -- */
+
+/* Sits inside `.shelf-head`, which already carries the 4vw gutter — a second
+   one here pushed the filter in twice as far as the heading it lines up with. */
+.tag-filter {
+    display: flex;
+    gap: 6px;
+    margin-left: auto;
+}
+
+.tag-filter button {
+    background: none;
+    border: 1px solid #2c2c36;
+    border-radius: 999px;
+    color: var(--text-dim);
+    padding: 3px 12px;
+    font: inherit;
+    font-size: 12px;
+    cursor: pointer;
+}
+
+.tag-filter button.active {
+    border-color: var(--vr);
+    color: var(--text);
+}
+
+.recording-row {
+    display: flex;
+    gap: 14px;
+    padding: 6px 4vw 4px;
+    overflow-x: auto;
+    scrollbar-width: none;
+}
+
+.recording-row::-webkit-scrollbar {
+    display: none;
+}
+
+.recording-card {
+    flex: 0 0 auto;
+    width: 208px;
+    display: grid;
+    gap: 7px;
+    background: var(--bg-raised);
+    border: 1px solid #23232c;
+    border-radius: 8px;
+    padding: 10px;
+}
+
+/* No poster exists for a recording of a conversation, and inventing one from
+   a frame of it would publish a still nobody agreed to. */
+.recording-art {
+    position: relative;
+    height: 96px;
+    border-radius: 6px;
+    background: linear-gradient(140deg, #1d1b2b, #121218);
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    padding: 8px;
+}
+
+.recording-length {
+    align-self: flex-end;
+    font-size: 11px;
+    color: var(--text-dim);
+}
+
+.recording-card h3 {
+    margin: 0;
+    font-size: 14px;
+    font-weight: 600;
+    line-height: 1.3;
+    /* Two lines, then an ellipsis: a long title must not push the price and
+       the button out of line with the cards either side of it. */
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
+.recording-meta {
+    display: flex;
+    justify-content: space-between;
+    gap: 8px;
+    font-size: 12px;
+    color: var(--text-faint);
+}
+
+.recording-meta .price {
+    color: var(--text);
+    font-variant-numeric: tabular-nums;
+}
+
+.recording-card .btn {
+    width: 100%;
+    justify-content: center;
+    padding: 6px 10px;
+    font-size: 13px;
+}
+
+.shelf-note {
+    padding: 4px 4vw 8px;
+    margin: 0;
+    color: var(--text-faint);
+    font-size: 13px;
+}
+
+.recording-player {
+    display: block;
+    width: 100%;
+    max-height: 62vh;
+    background: #000;
+}
+
+/* One column: there is no spec list beside a recording to fill the second. */
+.modal-body.recording-body {
+    grid-template-columns: 1fr;
+    gap: 6px;
+    padding: 16px 32px 28px;
+}
+
+.modal-body.recording-body h2 {
+    margin: 0;
+    font-size: 21px;
+}
+
+.modal-sub {
+    color: var(--text-faint);
+    font-size: 13px;
+    margin: 0 0 8px;
+}
+
+/* A creator's own recordings, and the listing controls on each. */
+
+.recording-line {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 10px;
+    padding: 12px 0;
+    border-top: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+/* The description takes the slack so the controls stay right-aligned and in
+   the same order on every row. */
+.recording-line > div:first-child {
+    flex: 1 1 220px;
+}
+
+.recording-line p {
+    margin: 3px 0 0;
+    font-size: 12.5px;
+}
+
+.recording-line input[type='text'] {
+    flex: 1 1 200px;
+    min-width: 160px;
+}
+
+.recording-line input[type='number'] {
+    width: 96px;
+}
+
+.recording-line .price {
+    font-variant-numeric: tabular-nums;
+}
+
+.recording-line .btn {
+    flex: 0 0 auto;
 }

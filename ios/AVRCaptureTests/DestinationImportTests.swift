@@ -125,7 +125,7 @@ final class DestinationImportTests: XCTestCase {
 
         XCTAssertTrue(candidate.usesTLS)
         XCTAssertEqual(candidate.certificatePin, samplePin)
-        XCTAssertEqual(candidate.securityLabel, "Encrypted, pinned certificate")
+        XCTAssertEqual(candidate.encryptedLabel, "Yes, certificate pinned")
         XCTAssertEqual(TransportSecurity(profile: candidate.profile()), .tls(pin: samplePin))
     }
 
@@ -155,7 +155,7 @@ final class DestinationImportTests: XCTestCase {
         let candidate = try DestinationImport.candidate(from: url("avr://pair?host=192.168.1.10&port=8081"))
 
         XCTAssertFalse(candidate.usesTLS)
-        XCTAssertEqual(candidate.securityLabel, "Not encrypted")
+        XCTAssertEqual(candidate.encryptedLabel, "No")
         XCTAssertEqual(TransportSecurity(profile: candidate.profile()), .cleartext)
     }
 
@@ -238,7 +238,7 @@ final class DestinationImportTests: XCTestCase {
 
         XCTAssertFalse(candidates[0].usesTLS)
         XCTAssertNil(candidates[0].certificatePin)
-        XCTAssertEqual(candidates[0].securityLabel, "Not encrypted")
+        XCTAssertEqual(candidates[0].encryptedLabel, "No")
     }
 
     func testReadsEncryptionFieldsFromSchemaTwo() throws {
@@ -257,7 +257,7 @@ final class DestinationImportTests: XCTestCase {
         """))
 
         XCTAssertEqual(candidates[0].certificatePin, pin)
-        XCTAssertEqual(candidates[0].securityLabel, "Encrypted, pinned certificate")
+        XCTAssertEqual(candidates[0].encryptedLabel, "Yes, certificate pinned")
 
         XCTAssertTrue(candidates[1].usesTLS)
         XCTAssertNil(candidates[1].certificatePin, "a real host name is validated by iOS")

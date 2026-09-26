@@ -350,8 +350,11 @@ defaults to **`ask`**. In an all-party-consent jurisdiction silence is not
 agreement, so the default cannot be the permissive one.
 
 The asymmetry the product calls for — in a 1:1 the viewer records both voices,
-the creator records only their own — is Stage 5 below. The column exists and is
-editable now so that the policy is set before anything can act on it.
+the creator records only their own — is enforced by *where each recording is
+made* rather than by a flag, and is described in [Stage 5](#stage-5--recording-and-the-marketplace)
+below. The policy governs the viewer's side only: the creator needs nobody's
+permission to record their own camera, and there is nobody else in that file to
+ask.
 
 ---
 
@@ -460,17 +463,55 @@ the confirmation is refused by the server unless a broadcast is live — and, fo
 3D, unless two eyes have actually delivered frames. 18 tests in
 `test/stream-check.test.js`.
 
-Everything below is specified but not built.
+**Stage 5 — Recording and the marketplace. Done.** In a 1:1 both parties may
+record, and the two recordings are made in different places on purpose.
 
-### Stage 5 — Recording and the marketplace
+**The creator's** is made on this server by
+[`RecordingPipeline`](../server/live/recording.js), a subclass of the HLS
+`TranscodePipeline` attached to the live session as an ordinary subscriber. It
+therefore contains exactly what the phone sent — the creator's picture and the
+creator's voice — and talkback, which travels the other way and never passes
+through a subscriber, is *structurally* absent rather than filtered out. One
+FFmpeg, one rung, one `-y` MP4 with `+faststart`. The parent's restart-on-exit
+is overridden: respawning over a half-written MP4 truncates it, and an MP4 that
+never got its index is unsalvageable, so a recorder that loses FFmpeg fails the
+whole recording and says why. `stop()` sends `SIGINT`, waits for the child to
+finalise, stores the file through `server/storage`, and writes the row.
 
-In a 1:1, both parties may record, subject to `recording_policy`: the viewer's
-recording carries both voices, the creator's carries only their own. The creator
-may list a recording for sale, setting the price at listing time, tagged **2D**
-or **3D** by what was actually captured rather than by what was typed.
+**The viewer's** is made in their browser by
+[`ViewerRecorder`](../src/live/recorder.js) — the canvas they are watching,
+mixed with the sound they are hearing and their own microphone — and saved to
+their own disk. It is never uploaded, and there is no route that would accept
+it. A file with a paying customer's voice in it is not a thing this service
+should hold, and the cheapest way to be sure of that is for it never to arrive.
+This is the side `recording_policy` governs: the viewer asks over
+`POST /api/live/watch/:id/recording/consent`, the creator answers, and the
+answer does not outlive the turn.
 
-New tables (additive, no `ALTER`): `recordings` and `recording_sales`. A sale is
-a `credits.transfer()` like any other, keyed on the sale id.
+**Only the creator's kind is sellable**, for the same reason: it is the only one
+the customer is not in. Listing sets the title and the price
+(`POST /api/recordings/:id/list`, `ready` recordings only); taking a listing
+down does not revoke a purchase, because that would be a refund and a different
+act. The **2D**/**3D** tag comes from `session.carryingStereo` at the moment the
+file was finalised — frames actually received on both eyes, not what the phone
+announced and not what the creator typed — so a broadcast whose second camera
+dropped out is tagged 2D however it was configured.
+
+A sale is a `credits.transfer()` like any other, keyed on the sale id, with
+three separate defences against double-charging: the existing-sale read, the
+transfer's `idemKey`, and `UNIQUE (recording_id, buyer_id)`. If the transfer
+refuses, the sale row is deleted, so an unpaid sale can never look like an
+entitlement. Delivery is deliberately **not** a `/stream/` URL — that path
+serves any key it is given, which would make the key the entitlement. Instead
+`GET /api/recordings/:id/file` checks the sale on every request and the storage
+key never appears in a response body.
+
+New tables (additive, no `ALTER`): `recordings` and `recording_sales`. 21 tests
+in `test/recordings.test.js`, two of which record, store, list, buy and download
+a real file through a real FFmpeg, and 7 in `test/recorder-client.test.js` over
+the browser side's promises — nothing uploaded, talkback's microphone reused
+rather than reopened, and only the microphone this page opened released
+afterwards.
 
 ### Out of scope until asked
 

@@ -55,6 +55,8 @@ export class AudioPlayer extends EventTarget {
         this.context = null;
         /** @type {GainNode|null} */
         this.gain = null;
+        /** @type {MediaStreamAudioDestinationNode|null} */
+        this._tap = null;
 
         this.config = null;
 
@@ -262,6 +264,42 @@ export class AudioPlayer extends EventTarget {
         return this.muted ? this.unmute() : Promise.resolve(this.mute());
     }
 
+    /**
+     * A `MediaStream` of what is being played, for the viewer's own recording
+     * of a 1:1.
+     *
+     * Taken off the same gain node that feeds the speakers rather than off the
+     * decoder, so what lands in the file is what the person actually heard.
+     * That includes the mute: a muted viewer is not decoding into the graph at
+     * all (see `_onData`), so they record silence from this side, and the
+     * recorder says so rather than quietly producing a one-sided file.
+     *
+     * @returns {MediaStream|null} null when no sound track has arrived yet.
+     */
+    tap() {
+        if (!this.context) return null;
+
+        if (!this._tap) {
+            this._tap = this.context.createMediaStreamDestination();
+            this.gain.connect(this._tap);
+        }
+
+        return this._tap.stream;
+    }
+
+    /** Release the tap. Playback is unaffected. */
+    untap() {
+        if (!this._tap) return;
+
+        try {
+            this.gain?.disconnect(this._tap);
+        } catch {
+            /* the graph is already gone */
+        }
+
+        this._tap = null;
+    }
+
     stats() {
         return {
             codec: this.config?.codec ?? null,
@@ -286,6 +324,7 @@ export class AudioPlayer extends EventTarget {
         }
         this.decoder = null;
 
+        this._tap = null;
         this.context?.close().catch(() => {});
         this.context = null;
         this.gain = null;

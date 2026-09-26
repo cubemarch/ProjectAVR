@@ -1,5 +1,6 @@
 import { api } from '../api/client.js';
 import { icons } from './icons.js';
+import { dollars } from './money.js';
 import { CheckPreview } from '../live/check-preview.js';
 
 /**
@@ -13,9 +14,13 @@ import { CheckPreview } from '../live/check-preview.js';
  * One panel rather than two pages: the halves share a layout, a save button and
  * a set of errors, and the difference between them is one extra section.
  *
+ * The sections are tabs rather than one long scroll, because a creator who
+ * arrives here from Studio's "Run the checks" wants exactly one of them and
+ * should not have to find it past a credit statement.
+ *
  * Prices are in credits per minute and a credit is one US cent, so every number
- * that reaches this file is an integer. `dollars()` is the only place that
- * divides, and nothing multiplies back.
+ * that reaches this file is an integer. `dollars()` in `./money.js` is the only
+ * place that divides, and nothing multiplies back.
  */
 
 const TIER_LABELS = new Map([
@@ -25,10 +30,19 @@ const TIER_LABELS = new Map([
     [10000, '$100']
 ]);
 
-/** Credits as money, for a label. Never fed back into a request. */
-function dollars(credits) {
-    return `$${(Math.round(credits ?? 0) / 100).toFixed(2)}`;
-}
+/**
+ * The tabs, in the order a new account meets them.
+ *
+ * `going-live` is one section and not two because the checks and the prices
+ * answer the same question — whether this creator can be paid to go on air —
+ * and a price set on a rig that has never passed a check earns nothing.
+ */
+const SECTIONS = [
+    { id: 'you', label: 'You' },
+    { id: 'credits', label: 'Credits' },
+    { id: 'going-live', label: 'Going live', creatorOnly: true },
+    { id: 'recordings', label: 'Recordings' }
+];
 
 const REASON_LABELS = {
     purchase: 'Credits purchased',
@@ -50,6 +64,9 @@ export class ProfilePage {
         this.entries = [];
         this.error = null;
         this.busy = false;
+
+        /** Which tab is showing. @type {'you'|'credits'|'going-live'|'recordings'} */
+        this.section = 'you';
 
         /**
          * Which check the creator is being walked through, if any.
@@ -76,10 +93,17 @@ export class ProfilePage {
         this.pendingCreatorPatch = null;
     }
 
-    async open() {
+    /**
+     * @param {'you'|'credits'|'going-live'|'recordings'} [section]
+     *   Where to land. Studio sends creators straight to `going-live`; anything
+     *   the account has no business seeing falls back to `you` at render.
+     */
+    async open(section) {
         this.visible = true;
         this.mount.hidden = false;
         document.body.classList.add('is-profile');
+
+        if (section) this.section = section;
 
         this.error = null;
         this._render();
@@ -103,6 +127,10 @@ export class ProfilePage {
         try {
             this.data = await api.profile.mine();
             this.entries = await api.credits.ledger().catch(() => []);
+            // Both sides of the marketplace, and neither is fatal: a profile
+            // that cannot reach them is still a profile.
+            this.recordings = api.isCreator ? await api.recordings.mine().catch(() => []) : [];
+            this.purchased = await api.recordings.purchased().catch(() => []);
             this.error = null;
         } catch (err) {
             this.error = err.message;
@@ -116,12 +144,41 @@ export class ProfilePage {
     _render() {
         if (!this.visible) return;
 
+        const isCreator = this._isCreator();
+        const tabs = SECTIONS.filter((s) => !s.creatorOnly || isCreator);
+
+        // Only once the role is known. The first paint happens before the
+        // profile has been read, and dropping `going-live` on that paint would
+        // throw away where Studio just sent them.
+        if (this.data && !tabs.some((s) => s.id === this.section)) this.section = 'you';
+
         this.mount.innerHTML = `
             <div class="profile-shell">
-                <header class="profile-bar">
-                    <button class="btn ghost sm" data-act="back">${icons.chevronLeft({ size: 16 })} Back</button>
-                    <h1>Profile</h1>
-                </header>
+                <!-- Title and tabs stick together, as one block: two sticky
+                     elements at guessed offsets is how you get a tab row
+                     floating over the heading it belongs to. -->
+                <div class="profile-head">
+                    <header class="profile-bar">
+                        <button class="btn ghost sm" data-act="back">${icons.chevronLeft({ size: 16 })} Back</button>
+                        <h1>${isCreator ? 'Creator account' : 'Your account'}</h1>
+                        ${isCreator ? '<button class="btn btn-secondary sm" data-act="studio">Creator Studio</button>' : ''}
+                    </header>
+
+                    ${
+                        this.data
+                            ? `<nav class="profile-tabs" role="tablist">
+                                ${tabs
+                                    .map(
+                                        (s) => `
+                                    <button class="profile-tab ${s.id === this.section ? 'on' : ''}" role="tab"
+                                        aria-selected="${s.id === this.section}"
+                                        data-act="section" data-section="${s.id}">${s.label}</button>`
+                                    )
+                                    .join('')}
+                               </nav>`
+                            : ''
+                    }
+                </div>
 
                 ${this.error ? `<p class="profile-error">${escapeHtml(this.error)}</p>` : ''}
                 ${this.data ? this._bodyHtml() : '<p class="muted">Loading…</p>'}
@@ -136,16 +193,26 @@ export class ProfilePage {
         this._bind();
     }
 
-    _bodyHtml() {
-        const { profile } = this.data;
-        const isCreator = profile.role === 'creator' || profile.role === 'admin';
+    /** @returns {boolean} */
+    _isCreator() {
+        const role = this.data?.profile?.role;
+        return role === 'creator' || role === 'admin';
+    }
 
-        return `
-            ${this._identityHtml(profile)}
-            ${this._creditsHtml()}
-            ${isCreator ? this._checksHtml() : ''}
-            ${isCreator ? this._pricingHtml() : ''}
-        `;
+    _bodyHtml() {
+        switch (this.section) {
+            case 'credits':
+                return this._creditsHtml();
+
+            case 'going-live':
+                return `${this._checksHtml()}${this._pricingHtml()}`;
+
+            case 'recordings':
+                return `${this._isCreator() ? this._myRecordingsHtml() : ''}${this._purchasedHtml()}`;
+
+            default:
+                return this._identityHtml(this.data.profile);
+        }
     }
 
     _identityHtml(profile) {
@@ -271,8 +338,22 @@ export class ProfilePage {
                     can be the wrong way round while the picture itself looks perfect.
                 </p>
 
-                ${row('standard', 'Standard stream', 'Confirms picture and sound are arriving from your camera.')}
-                ${row('spatial', 'Spatial (3D) stream', 'Confirms the left and right eyes are the right way round.')}
+                ${
+                    // The two titles are the capture app's own Mode names, not
+                    // descriptions of them. A creator running this check has the
+                    // phone in the other hand, and "Spatial" — which is what
+                    // this row used to say — is not a control the app has.
+                    row(
+                        'standard',
+                        'Standard stream (2D)',
+                        'Broadcast in <strong>Standard</strong>. Confirms picture and sound are arriving from your camera.'
+                    )
+                }
+                ${row(
+                    'spatial',
+                    'Stereo Side-by-Side stream (3D)',
+                    'Broadcast in <strong>Stereo Side-by-Side</strong>. Confirms the left and right eyes are the right way round.'
+                )}
 
                 ${this.runningCheck ? this._checkPromptHtml() : ''}
             </section>
@@ -302,8 +383,9 @@ export class ProfilePage {
                                Your own stereo pair appears below. Confirm only if the two eyes are the right
                                way round and level with each other &mdash; the layout buttons under the picture
                                are how you tell.`
-                            : `Start a broadcast from the capture app. Your own outgoing picture appears below.
-                               Confirm only if it is the right camera, the right way up, and sound is arriving.`
+                            : `Start a broadcast in <strong>Standard</strong> from the capture app. Your own
+                               outgoing picture appears below. Confirm only if it is the right camera, the
+                               right way up, and sound is arriving.`
                     }
                 </p>
                 <div id="check-preview-slot"></div>
@@ -370,6 +452,130 @@ export class ProfilePage {
         `;
     }
 
+    /**
+     * The creator's own recordings, and what they can do with each.
+     *
+     * Only the creator's recordings appear here, because only they exist on
+     * this server: the viewer's recording of the same conversation was written
+     * to the viewer's own disk and there is no route that would have accepted
+     * it. That is also why these can be sold at all - the customer's voice is
+     * not in them.
+     *
+     * The 2D/3D tag is shown and not offered. It was decided by what the
+     * session was carrying when the file was finalised, so a broadcast whose
+     * second eye dropped out is listed as 2D whatever it was set to, and a
+     * buyer on a headset gets the format the tag promised.
+     */
+    _myRecordingsHtml() {
+        const recordings = this.recordings ?? [];
+
+        if (!recordings.length) {
+            return `
+                <section class="profile-card">
+                    <h2>Your recordings</h2>
+                    <p class="muted">
+                        Nothing recorded yet. In a 1:1 you can record your own camera and voice - the
+                        viewer's voice is never in it - and put the result up for sale here.
+                    </p>
+                </section>`;
+        }
+
+        return `
+            <section class="profile-card">
+                <h2>Your recordings</h2>
+                <p class="muted">
+                    Each one holds your camera and your voice only. Set the price when you list it;
+                    taking a listing down does not take it back from anyone who already bought it.
+                </p>
+                ${recordings.map((row) => this._recordingRowHtml(row)).join('')}
+            </section>`;
+    }
+
+    _recordingRowHtml(row) {
+        const id = escapeHtml(row.id);
+        const minutes = Math.max(1, Math.round((row.durationMs ?? 0) / 60000));
+        const tag = `<span class="badge ${row.tag === '3d' ? 'stereo' : 'vr'}">${row.tag.toUpperCase()}</span>`;
+
+        if (row.status !== 'ready') {
+            return `
+                <div class="recording-line">
+                    <div>
+                        <strong>${row.status === 'recording' ? 'Recording now' : 'Recording failed'}</strong>
+                        <p class="muted">${escapeHtml(row.failureReason ?? 'Started ' + new Date(row.createdAt).toLocaleString())}</p>
+                    </div>
+                    ${tag}
+                </div>`;
+        }
+
+        const heading = `
+            <div>
+                <strong>${escapeHtml(row.title ?? `Recording of ${new Date(row.createdAt).toLocaleDateString()}`)}</strong>
+                <p class="muted">
+                    ${minutes} min · ${formatBytes(row.sizeBytes)}
+                    ${row.sales ? ` · sold ${row.sales} time${row.sales === 1 ? '' : 's'}` : ''}
+                </p>
+            </div>
+            ${tag}`;
+
+        if (row.listed) {
+            return `
+                <div class="recording-line listed">
+                    ${heading}
+                    <span class="price">${dollars(row.price)}</span>
+                    <a class="btn ghost sm" href="${escapeHtml(api.recordings.fileUrl(row.id))}" target="_blank" rel="noopener">Watch</a>
+                    <button class="btn ghost sm" data-act="unlist-recording" data-id="${id}">Take down</button>
+                </div>`;
+        }
+
+        return `
+            <div class="recording-line">
+                ${heading}
+                <input type="text" id="rec-title-${id}" maxlength="120" placeholder="Title for the marketplace"
+                    value="${escapeHtml(row.title ?? '')}" />
+                <span class="price-input">
+                    <input type="number" id="rec-price-${id}" min="1" max="100000" step="1"
+                        value="${Number(row.price ?? 500)}" />
+                    <small>credits</small>
+                </span>
+                <a class="btn ghost sm" href="${escapeHtml(api.recordings.fileUrl(row.id))}" target="_blank" rel="noopener">Watch</a>
+                <button class="btn btn-primary sm" data-act="list-recording" data-id="${id}">Put on sale</button>
+            </div>`;
+    }
+
+    /** What this account has bought. Kept for both roles: a creator can buy too. */
+    _purchasedHtml() {
+        const purchased = this.purchased ?? [];
+
+        if (!purchased.length) {
+            return `
+                <section class="profile-card">
+                    <h2>Recordings you own</h2>
+                    <p class="muted">
+                        Nothing bought yet. Recordings creators have put up for sale appear on the
+                        home page, and what you buy stays here to watch again.
+                    </p>
+                </section>`;
+        }
+
+        return `
+            <section class="profile-card">
+                <h2>Recordings you own</h2>
+                ${purchased
+                    .map(
+                        (row) => `
+                    <div class="recording-line">
+                        <div>
+                            <strong>${escapeHtml(row.title ?? 'Untitled')}</strong>
+                            <p class="muted">${escapeHtml(row.creatorName ?? 'Creator')} · paid ${dollars(row.paid)}</p>
+                        </div>
+                        <span class="badge ${row.tag === '3d' ? 'stereo' : 'vr'}">${row.tag.toUpperCase()}</span>
+                        <a class="btn ghost sm" href="${escapeHtml(api.recordings.fileUrl(row.id))}" target="_blank" rel="noopener">Watch</a>
+                    </div>`
+                    )
+                    .join('')}
+            </section>`;
+    }
+
     /* --------------------------------------------------------------- events -- */
 
     _bind() {
@@ -381,6 +587,17 @@ export class ProfilePage {
                 switch (btn.dataset.act) {
                     case 'back':
                         window.dispatchEvent(new CustomEvent('avr:exit-profile'));
+                        break;
+                    case 'studio':
+                        window.dispatchEvent(new CustomEvent('avr:open-studio'));
+                        break;
+                    case 'section':
+                        // A check running under one tab has a socket and two
+                        // decoders open; leaving the tab ends it rather than
+                        // leaving it running behind a credit statement.
+                        if (this.runningCheck) this._endCheck();
+                        this.section = btn.dataset.section;
+                        this._render();
                         break;
                     case 'pick-avatar':
                         this.mount.querySelector('#avatar-file')?.click();
@@ -409,6 +626,12 @@ export class ProfilePage {
                         break;
                     case 'save-creator':
                         await this._saveCreator(this._creatorPatch());
+                        break;
+                    case 'list-recording':
+                        await this._listRecording(btn.dataset.id);
+                        break;
+                    case 'unlist-recording':
+                        await this._run(() => api.recordings.unlist(btn.dataset.id));
                         break;
                 }
             } catch (err) {
@@ -472,6 +695,31 @@ export class ProfilePage {
         }
 
         await this.refresh();
+    }
+
+    /**
+     * Put one recording on sale.
+     *
+     * The title and the price are read off the row being listed rather than
+     * from a shared form, so two recordings on screen at once cannot be listed
+     * with each other's numbers. The server validates both again and its
+     * complaint is what gets shown - there is one set of rules for this and it
+     * is not in the browser.
+     */
+    async _listRecording(id) {
+        const title = this.mount.querySelector(`#rec-title-${CSS.escape(id)}`)?.value ?? '';
+        const price = Number(this.mount.querySelector(`#rec-price-${CSS.escape(id)}`)?.value);
+
+        await this._run(async () => {
+            try {
+                await api.recordings.list(id, { title: title.trim(), price });
+            } catch (err) {
+                // The listing route answers with `errors: [...]` for a bad
+                // title or price, which is more use than "Request failed".
+                const details = err.details?.errors;
+                throw details?.length ? new Error(details.join('. ')) : err;
+            }
+        });
     }
 
     async _saveProfile() {
@@ -584,3 +832,9 @@ function escapeHtml(value) {
 }
 
 const escapeAttr = escapeHtml;
+
+/** A file size a person can judge a download by. */
+function formatBytes(bytes) {
+    const mb = (bytes ?? 0) / 1_000_000;
+    return mb >= 1000 ? `${(mb / 1000).toFixed(1)} GB` : `${Math.max(1, Math.round(mb))} MB`;
+}
