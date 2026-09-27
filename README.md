@@ -40,12 +40,13 @@ side and packages HLS for headsets while relaying the raw streams to a ~200 ms
 browser monitor for whoever is holding the camera. See
 **[docs/LIVE.md](docs/LIVE.md)**.
 
-The iPhone app is a content-neutral broadcasting tool in its own right — it
-ships no content, has no catalogue and no default destination, and sends only
-to an address its operator configures. Its architecture, threat model and
-App Store position are in **[docs/IOS_AUDIT.md](docs/IOS_AUDIT.md)**, with the
-submission pack in **[docs/APP_STORE.md](docs/APP_STORE.md)** and the
-physical-device test plan in **[docs/IOS_TESTING.md](docs/IOS_TESTING.md)**.
+The capture app is **no longer part of this repository**. It is a content-neutral
+broadcasting tool in its own right — it ships no content, has no catalogue and
+no default destination, and sends only to an address its operator configures —
+so it now lives and ships on its own, as **VRecord**, in a separate repository
+with its own brief, audit, test plan and App Store submission pack. Nothing here
+imports it and nothing in it imports this; the only thing the two share is the
+wire protocol described in **[docs/LIVE.md](docs/LIVE.md)**.
 
 ---
 
@@ -63,11 +64,14 @@ npm run dev
 npm run build && npm start        # production, single process
 npm run start:cluster             # one worker per core
 npm run worker                    # a transcoding worker
-npm test                          # 125 unit + integration tests
+npm test                          # 416 unit + integration tests
 ```
 
 For live broadcasting, install FFmpeg (`brew install ffmpeg`) and build the
-capture app in [`ios/`](ios/README.md). Everything else works without either.
+VRecord capture app from its own repository. Everything else works without
+either — and any client that speaks the ingest protocol in
+[`docs/LIVE.md`](docs/LIVE.md) will do, the iPhone app being one such client
+rather than a required component.
 
 **The first account you register becomes an admin**, so a fresh install is
 usable without a seeding step. After that, registration offers a checkbox for a
@@ -351,7 +355,6 @@ server/
   cluster.js                 multi-core supervisor
   live/                      TCP ingest, session registry, WebSocket relay
   transcode/                 FFmpeg supervision, stereo alignment, HLS ladder
-ios/AVRCapture/              the iPhone capture app (Swift, no dependencies)
 ```
 
 ---
@@ -359,7 +362,7 @@ ios/AVRCapture/              the iPhone capture app (Swift, no dependencies)
 ## Testing
 
 ```bash
-npm test                      # 125 unit + integration tests
+npm test                      # 416 unit + integration tests
 node test/smoke.mjs           # browser: browse, WebXR, shader compile
 node test/smoke-portal.mjs    # browser: register, upload, transcode, publish
 ```
@@ -401,14 +404,13 @@ have not run in an actual headset. DLNA has not been browsed from SkyBox or
 Pigasus on a real network — only driven directly over SOAP. Expect to tune panel
 distance and recentre feel on first contact with a device.
 
-**The iPhone capture app has only been run briefly on one phone.** Capture,
-encode, ingest and the browser monitor work end to end on an iPhone 16 Pro Max
-against a local server, but that is the whole of it: no long broadcast, no
-thermal soak, no second device. Multi-camera capture cannot be tested in the
-simulator at all. The left/right eye
-assignment in particular ships as a documented guess with a persisted toggle
-beside it — reversed eyes invert the depth of the scene and read as mildly
-uncomfortable rather than obviously broken, so check it through a headset first.
+**The live pipeline has only been exercised against one phone, once.** Capture,
+encode, ingest and the browser monitor worked end to end from a VRecord build on
+an iPhone 16 Pro Max against a local server, but that is the whole of it: no
+long broadcast, no thermal soak, no second device. The contribution client now
+lives in its own repository, so what this repository can still claim is narrower
+— that the ingest, relay and monitor ends of that one run behaved — and the
+capture end is that project's to prove.
 
 **Live has sound but no recording.** One AAC-LC track travels alongside the
 eyes, decoded in the browser and copied onto every HLS rung; nothing mixes it,

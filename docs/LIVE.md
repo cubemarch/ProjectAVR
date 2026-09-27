@@ -111,8 +111,10 @@ It does not get you to a usable camera monitor, which is why the relay stays.
 
 One framing for both hops — phone→ingest over TCP, ingest→browser over a binary
 WebSocket — so a frame is parsed by exactly one piece of code. Defined once in
-[`src/live/protocol.js`](../src/live/protocol.js) and mirrored in
-[`ios/AVRCapture/Net/WireProtocol.swift`](../ios/AVRCapture/Net/WireProtocol.swift).
+[`src/live/protocol.js`](../src/live/protocol.js) and mirrored in the capture
+app's `WireProtocol.swift`, which is now in a separate repository — so this
+section is a contract across a boundary, not an implementation detail. Changing
+it breaks a codebase that will not fail this build.
 
 Little-endian throughout:
 
@@ -188,9 +190,9 @@ enforced cheaply:
 4. **Off at both ends by default.** The viewer must press *Talk to them*, which
    is also the gesture that gets the microphone; the phone must have **Return
    audio** switched on in Settings, or the frames are read and discarded. The
-   capture app plays at most half a second of it and drops the rest — see
-   [`IOS_AUDIT.md`](IOS_AUDIT.md) §9 **H4** for the App Store judgement this
-   feature carries.
+   capture app plays at most half a second of it and drops the rest. The App
+   Store judgement this feature carries is recorded in the capture app's own
+   risk register, not here.
 
 ---
 
@@ -260,8 +262,10 @@ The banner tells you everything the phone needs:
                ~3s latency, segments in /var/folders/.../T/avr-live-hls
 ```
 
-Then build and run the capture app — see [`ios/README.md`](../ios/README.md) —
-and pair it from *Settings › Find a server*.
+Then build and run a contribution client. The reference one is the VRecord
+iPhone app, in its own repository; pair it from its Destinations screen using
+*Search this network*, or paste the `avr://pair?…` URL from
+`GET /api/live/pairing`.
 
 ### Endpoints
 
@@ -328,8 +332,7 @@ Three properties hold this up, and each one is there to keep something out:
 - **The destination link does not change.** The room and the chosen viewer are
   bound to the *grant*, server-side. The QR code the phone reads is the same
   `avr://pair?host=…&port=…&key=…` it has always been, so the capture app needs
-  no notion of "end users" at all — which is the point. See
-  [IOS_BRIEF.md](IOS_BRIEF.md).
+  no notion of "end users" at all — which is the point.
 - **Privacy is intrinsic, not a setting.** A session whose grant has a room is
   absent from the public list, answers 404 by id, is admission-checked at the
   relay, and is **never transcoded** — the HLS segments are plain static files
@@ -577,7 +580,7 @@ On ECS/Fargate:
   `getUserMedia` for it, which handles the viewer's side; the phone deliberately
   does not enable voice processing, because the only switch for it degrades the
   captured sound of every broadcast. The capture app tells the operator to wear
-  headphones — see [`IOS_AUDIT.md`](IOS_AUDIT.md) §10.
+  headphones.
 
 ---
 

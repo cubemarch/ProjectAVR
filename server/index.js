@@ -23,7 +23,6 @@ import { paymentsBanner } from './credits/providers.js';
 import { mountDeoVR } from './deovr.js';
 import { mountPlaylist } from './playlist.js';
 import { mountArt } from './art.js';
-import { mountLegal } from './legal.js';
 import { DlnaServer, lanAddress } from './dlna.js';
 import { queueStats } from './media/jobs.js';
 import { mountLive, startLive, stopLive, liveBanner, sessions as liveSessions } from './live/index.js';
@@ -235,10 +234,6 @@ app.get('/api/health', async (req, res) => {
 mountArt(app);
 mountDeoVR(app);
 mountPlaylist(app);
-
-// Before the SPA catch-all, or `/privacy` answers with index.html in any build
-// that has a `dist/` - which is every production one.
-mountLegal(app);
 
 // DLNA must claim its routes before the SPA fallback, or the catch-all answers
 // device discovery with index.html.

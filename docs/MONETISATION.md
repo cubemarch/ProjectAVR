@@ -3,10 +3,11 @@
 Credits, per-minute pricing, creator profiles, and the stream setup checks that
 gate what a creator is allowed to offer.
 
-This is a **web product** document. The iOS app has no part in any of it: it
-holds no balance, shows no price, and has no idea whether the person watching is
-paying. That separation is deliberate and is a standing constraint — see
-[`IOS_BRIEF.md`](IOS_BRIEF.md).
+This is a **web product** document. The capture app has no part in any of it:
+it holds no balance, shows no price, and has no idea whether the person watching
+is paying. That separation is deliberate, it is a standing constraint on both
+sides, and it is now also a repository boundary — the app ships on its own and
+nothing here may reach into it.
 
 ---
 
@@ -453,8 +454,9 @@ off by default, carries no identity, and the app cannot tell whose voice it is
 playing. That is an honest description of the binary and it is not the whole
 story: in *this* product the voice is a paying viewer in a 1:1, which a reviewer
 may read as the viewer interaction the capture app is supposed not to have. It
-is recorded as an open High risk in [`IOS_AUDIT.md`](IOS_AUDIT.md) §9 **H4**
-rather than left to be discovered.
+is recorded as an open High risk in the capture app's own register rather than
+left to be discovered. It is a risk this product creates for that one, which is
+the reason to keep writing it down after the split rather than before.
 
 **Stage 4 — The setup checks show the picture. Done.** Described in [The
 preview](#the-preview) above. A check used to be an attestation with nothing on
