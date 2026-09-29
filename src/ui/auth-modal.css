@@ -79,10 +79,14 @@
     margin-bottom: 22px;
 }
 
+/* The dialog carries its own copy of these rules rather than leaning on
+ * `netflix.css`, because it is styled to stand alone - see the token block at
+ * the top of this file. The lockup itself comes from `src/ui/brand-mark.js`,
+ * same as the header's. */
 .auth-backdrop .brand {
     display: flex;
-    align-items: baseline;
-    gap: 2px;
+    align-items: center;
+    gap: 8px;
     margin-bottom: 14px;
     font-weight: 800;
     font-size: 22px;
@@ -93,6 +97,21 @@
 
 .auth-backdrop .brand span {
     color: var(--auth-text);
+}
+
+.auth-backdrop .brand-symbol,
+.auth-backdrop .brand-word {
+    display: block;
+    width: auto;
+    -webkit-user-drag: none;
+}
+
+.auth-backdrop .brand-symbol {
+    height: 56px;
+}
+
+.auth-backdrop .brand-word {
+    height: 36px;
 }
 
 .auth-backdrop .auth-head h2 {

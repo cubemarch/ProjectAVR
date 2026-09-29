@@ -11,8 +11,18 @@
     <body>
         <div class="layout">
             <aside class="sidebar">
+                <!--
+                    The same lockup the rest of the site draws from
+                    `src/ui/brand-mark.js`, written out by hand because this
+                    sidebar is static markup rather than a rendered template.
+                    The paths are relative so Vite rewrites them to the hashed
+                    assets at build; keep the sizes in step with `live.css`.
+                -->
                 <div class="brand">
-                    <h1>LustXR</h1>
+                    <h1>
+                        <img class="brand-symbol" src="./src/assets/logo-symbol.png" alt="" width="78" height="52" />
+                        <img class="brand-word" src="./src/assets/logo-wordmark.png" alt="LustXR" width="96" height="32" />
+                    </h1>
                     <span>Live</span>
                 </div>
 

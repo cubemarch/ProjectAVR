@@ -1,4 +1,5 @@
 import * as pc from 'playcanvas';
+import { brandLockup } from './brand-mark.js';
 import { icons } from './icons.js';
 import { formatDuration, pickHero, searchCatalog } from '../catalog/catalog.js';
 import {
@@ -458,7 +459,7 @@ export class BrowseUI extends pc.EventHandler {
     _headerHtml() {
         return `
             <header class="site-header">
-                <div class="brand">A<span>VR</span></div>
+                <div class="brand">${brandLockup({ symbolHeight: 68, wordmarkHeight: 42 })}</div>
                 <nav class="site-nav">
                     <button data-filter="all" class="active">Home</button>
                     <button data-filter="vr">VR</button>

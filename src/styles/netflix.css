@@ -19,7 +19,10 @@
     --vr: #00d8e0;
     --stereo: #ff9d3d;
 
-    --header-h: 68px;
+    /* Tall enough to hold the 68px brand symbol with air above and below it.
+     * Everything under the fixed header clears it off this token, so the
+     * billboard and the rows follow on their own. */
+    --header-h: 96px;
     --ease: cubic-bezier(0.25, 0.46, 0.45, 0.94);
 }
 
@@ -88,10 +91,18 @@ body.is-immersive #render-canvas {
     box-shadow: 0 1px 0 rgba(255, 255, 255, 0.06);
 }
 
+/*
+ * The brand lockup - goggle symbol, then wordmark - drawn as two images by
+ * `src/ui/brand-mark.js`. Centred rather than baseline-aligned: an image's
+ * baseline is its bottom edge, and the wordmark's glyphs sit above its own,
+ * so baseline alignment would hang the symbol low by the height of the
+ * wordmark's descender padding.
+ */
 .brand {
     display: flex;
-    align-items: baseline;
-    gap: 2px;
+    align-items: center;
+    gap: 9px;
+    flex-shrink: 0;
     font-weight: 800;
     font-size: 26px;
     letter-spacing: -0.04em;
@@ -103,15 +114,46 @@ body.is-immersive #render-canvas {
     color: var(--text);
 }
 
+/*
+ * Height drives the size and width follows the intrinsic ratio, so a
+ * regenerated asset at a different resolution needs no CSS change. The
+ * `width`/`height` attributes in the markup reserve the same box before the
+ * images load, which is what keeps the nav from shifting sideways on a cold
+ * cache.
+ */
+.brand-symbol,
+.brand-word {
+    display: block;
+    width: auto;
+    -webkit-user-drag: none;
+}
+
+.brand-symbol {
+    height: 68px;
+}
+
+.brand-word {
+    height: 42px;
+}
+
+/*
+ * The brand lockup is a pair of images and cannot reflow, so when the row
+ * runs short something else has to give. The order of concession is: the
+ * search field first, then the nav's scroll behaviour at the 900px
+ * breakpoint, and the labels never - a filter reading "180°" over "dome" on
+ * two lines is worse than a narrower search box.
+ */
 .site-nav {
     display: flex;
     gap: 20px;
+    flex-shrink: 0;
     font-size: 14px;
     color: var(--text-dim);
 }
 
 .site-nav button {
     padding: 4px 0;
+    white-space: nowrap;
     transition: color 0.2s var(--ease);
 }
 
@@ -125,12 +167,18 @@ body.is-immersive #render-canvas {
     display: flex;
     align-items: center;
     gap: 16px;
+    min-width: 0;
+}
+
+.header-right button {
+    white-space: nowrap;
 }
 
 .search-box {
     display: flex;
     align-items: center;
     gap: 8px;
+    min-width: 0;
     border: 1px solid rgba(255, 255, 255, 0.22);
     background: rgba(0, 0, 0, 0.55);
     border-radius: 4px;
@@ -142,6 +190,9 @@ body.is-immersive #render-canvas {
     border-color: var(--accent);
 }
 
+/* `min-width: 0` because a text input's default intrinsic minimum is its
+ * `size` in characters, which would stop the box shrinking no matter what the
+ * flex rules say. */
 .search-box input {
     background: none;
     border: none;
@@ -149,6 +200,7 @@ body.is-immersive #render-canvas {
     color: var(--text);
     font-size: 14px;
     width: 190px;
+    min-width: 0;
 }
 
 .search-box input::placeholder {
@@ -902,11 +954,16 @@ body.is-immersive .player-shell .avr-video {
  * it wraps or scrolls rather than disappearing.
  */
 
-@media (max-width: 900px) {
-    .site-header {
-        gap: 16px;
-    }
-
+/*
+ * A header-only tier above the three below.
+ *
+ * The brand is a 237px-wide pair of images that cannot reflow or abbreviate,
+ * so the single-row header runs out of room at around 1200px - well before
+ * anything else on the page is under pressure. This relieves the header
+ * alone; the card grid and the rest of the layout are still fine here and are
+ * left at their full-width sizes.
+ */
+@media (max-width: 1200px) {
     /* Back to a square glyph. The button keeps its `aria-label`, so it is still
        named for a screen reader and in a tooltip. */
     .icon-btn.labelled {
@@ -918,9 +975,22 @@ body.is-immersive .player-shell .avr-video {
         display: none;
     }
 
-    /* Scrolls sideways rather than vanishing. */
+    /* The floor is what stops the box collapsing into an empty square: below
+       roughly this width the magnifier and the caret are all that is left,
+       and a search field you cannot read what you typed into is not one. */
+    .search-box {
+        min-width: 132px;
+    }
+
+    .search-box input {
+        width: 120px;
+    }
+
+    /* Last to give, and it gives by scrolling rather than by dropping
+       filters - same treatment the 900px tier used to apply on its own. */
     .site-nav {
-        gap: 18px;
+        flex-shrink: 1;
+        min-width: 0;
         overflow-x: auto;
         scrollbar-width: none;
     }
@@ -928,13 +998,16 @@ body.is-immersive .player-shell .avr-video {
     .site-nav::-webkit-scrollbar {
         display: none;
     }
+}
 
-    .site-nav button {
-        white-space: nowrap;
+@media (max-width: 900px) {
+    .site-header {
+        gap: 16px;
     }
 
-    .search-box input {
-        width: 120px;
+    /* Already scrolling from the tier above; here it just tightens up. */
+    .site-nav {
+        gap: 18px;
     }
 
     .card {
@@ -966,7 +1039,7 @@ body.is-immersive .player-shell .avr-video {
 @media (max-width: 700px) {
     /* Two rows now, and the billboard below still has to clear it. */
     :root {
-        --header-h: 80px;
+        --header-h: 128px;
     }
 
     .site-header {
@@ -980,6 +1053,15 @@ body.is-immersive .player-shell .avr-video {
 
     .brand {
         font-size: 22px;
+        gap: 7px;
+    }
+
+    .brand-symbol {
+        height: 56px;
+    }
+
+    .brand-word {
+        height: 34px;
     }
 
     .site-nav {
@@ -1495,9 +1577,19 @@ body.is-portal {
     align-items: center;
     gap: 26px;
     padding: 0 32px;
-    height: 66px;
+    height: 84px;
     background: var(--bg-raised);
     border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+/* Studio's bar is shorter than the site header, so the lockup comes down a
+ * step to leave the same air above and below it. */
+.portal-head .brand-symbol {
+    height: 56px;
+}
+
+.portal-head .brand-word {
+    height: 36px;
 }
 
 .portal-head .brand em {

@@ -1,5 +1,6 @@
 import { BRAND } from '../../brand.js';
 import { api } from '../api/client.js';
+import { brandLockup } from './brand-mark.js';
 import { icons } from './icons.js';
 import './auth-modal.css';
 
@@ -198,7 +199,7 @@ export class AuthModal {
                 <button class="modal-close" data-close aria-label="Close">${icons.close({ size: 18 })}</button>
 
                 <div class="auth-head">
-                    <div class="brand">A<span>VR</span></div>
+                    <div class="brand">${brandLockup({ symbolHeight: 56, wordmarkHeight: 36 })}</div>
                     <h2>${escapeHtml(title)}</h2>
                     ${this.reason ? `<p class="auth-reason">${escapeHtml(this.reason)}</p>` : ''}
                 </div>

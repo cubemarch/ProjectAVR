@@ -1,5 +1,6 @@
 import { LIVE_DESTINATION_NAME } from '../../../brand.js';
 import { api } from '../../api/client.js';
+import { brandLockup } from '../brand-mark.js';
 import { icons } from '../icons.js';
 import { formatDuration } from '../../catalog/catalog.js';
 import {
@@ -227,7 +228,7 @@ export class CreatorPortal {
         this.mount.innerHTML = `
             <div class="portal">
                 <header class="portal-head">
-                    <div class="brand">A<span>VR</span> <em>Studio</em></div>
+                    <div class="brand">${brandLockup({ symbolHeight: 56, wordmarkHeight: 36 })} <em>Studio</em></div>
                     <nav class="portal-nav">
                         <button data-view="dashboard">Dashboard</button>
                         <button data-view="titles">Titles</button>
