@@ -6,7 +6,7 @@ import { titles } from '../db/index.js';
 import { getStorage } from '../storage/index.js';
 import { invalidateCatalog } from '../library.js';
 import { resolveFormat } from '../../src/catalog/media-format.js';
-import { probe, packageHls, extractPoster, ffmpegAvailable } from './packager.js';
+import { probe, packageHls, packageProgressive, extractPoster, ffmpegAvailable, packagedCodecs } from './packager.js';
 
 /**
  * Post-upload processing.
@@ -113,21 +113,65 @@ async function processTitle({ titleId, sourcePath, cleanupSource = false }) {
     const workDir = await fs.mkdtemp(path.join(os.tmpdir(), 'avr-pkg-'));
 
     try {
-        titles.setStatus(titleId, 'processing', 'Packaging HLS 0%');
-
         const probed = await probe(sourcePath);
-        const { variants } = await packageHls({
-            sourcePath,
-            outputDir: workDir,
-            format,
-            probed,
-            onProgress: (pct) => titles.setStatus(titleId, 'processing', `Packaging HLS ${pct}%`)
-        });
+        const codecs = packagedCodecs();
+        const renditions = [];
 
-        titles.setStatus(titleId, 'processing', 'Uploading renditions');
+        let masterKey = null;
+        let watermarked = false;
 
-        const hlsPrefix = `hls/${title.creator_id}/${titleId}`;
-        await uploadTree(storage, workDir, hlsPrefix);
+        // One ladder per codec. H.264 alone by default, because a second full
+        // encode doubles the cost of every upload; the point of the loop is
+        // that adding HEVC is a deployment setting rather than a code change.
+        // H.264 goes first so it is the master the players without a codec
+        // preference land on.
+        for (const codec of codecs) {
+            const codecDir = codecs.length > 1 ? path.join(workDir, codec) : workDir;
+            const label = codecs.length > 1 ? `${codec.toUpperCase()} ` : '';
+
+            titles.setStatus(titleId, 'processing', `Packaging ${label}HLS 0%`);
+
+            const packaged = await packageHls({
+                sourcePath,
+                outputDir: codecDir,
+                format,
+                probed,
+                codec,
+                onProgress: (pct) => titles.setStatus(titleId, 'processing', `Packaging ${label}HLS ${pct}%`)
+            });
+
+            watermarked = watermarked || packaged.watermarked;
+
+            titles.setStatus(titleId, 'processing', `Remuxing ${label}downloads`);
+            const files = await packageProgressive({
+                outputDir: codecDir,
+                variants: packaged.variants,
+                hasAudio: probed.hasAudio,
+                codec
+            });
+            const bytesByName = new Map(files.map((f) => [f.name, f.bytes]));
+
+            const prefix = codecs.length > 1 ? `hls/${title.creator_id}/${titleId}/${codec}` : `hls/${title.creator_id}/${titleId}`;
+            if (!masterKey) masterKey = `${prefix}/master.m3u8`;
+
+            titles.setStatus(titleId, 'processing', `Uploading ${label}renditions`);
+            await uploadTree(storage, codecDir, prefix);
+
+            for (const rung of packaged.variants) {
+                renditions.push({
+                    name: rung.name,
+                    height: rung.height,
+                    width: rung.width,
+                    bitrate: rung.bitrate,
+                    codec,
+                    hlsKey: `${prefix}/v${rung.name}/index.m3u8`,
+                    // Absent when the remux failed. Surfaces that can only
+                    // carry a file must check rather than assume.
+                    mp4Key: bytesByName.has(rung.name) ? `${prefix}/mp4/${rung.name}.mp4` : null,
+                    bytes: bytesByName.get(rung.name) ?? null
+                });
+            }
+        }
 
         // Poster extraction is a nicety; a failure here must not fail the title.
         let posterKey = title.poster_key;
@@ -141,14 +185,15 @@ async function processTitle({ titleId, sourcePath, cleanupSource = false }) {
         }
 
         titles.update(titleId, {
-            hlsKey: `${hlsPrefix}/master.m3u8`,
+            hlsKey: masterKey,
             posterKey,
             duration: probed.duration,
             width: probed.width,
-            height: probed.height
+            height: probed.height,
+            renditions: JSON.stringify({ version: 1, watermarked, renditions })
         });
 
-        titles.setStatus(titleId, 'ready', `${variants.length} rendition(s)`);
+        titles.setStatus(titleId, 'ready', `${renditions.length} rendition(s)${watermarked ? '' : ', unmarked'}`);
         invalidateCatalog();
     } finally {
         await fs.rm(workDir, { recursive: true, force: true });

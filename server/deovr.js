@@ -1,7 +1,8 @@
 import { toDeoVR } from '../src/catalog/media-format.js';
-import { buildLibrary, absoluteUrl } from './library.js';
+import { buildLibrary, absoluteUrl, renditionsForRow } from './library.js';
 import { users, titles as titlesRepo } from './db/index.js';
 import { getStorage } from './storage/index.js';
+import { profileFor, selectRenditions } from './delivery/profiles.js';
 
 /**
  * DeoVR JSON feed - also the format Play'a consumes when you add a custom site.
@@ -131,6 +132,9 @@ export function mountDeoVR(app) {
                     width: row.width,
                     height: row.height,
                     src: storage.deliveryUrl(key),
+                    // A creator previewing an unpublished title in a headset
+                    // gets the same quality menu a viewer will.
+                    renditions: renditionsForRow(row).renditions,
                     poster: row.poster_key ? storage.deliveryUrl(row.poster_key) : null,
                     format: {
                         projection: row.projection,
@@ -165,23 +169,76 @@ export function mountDeoVR(app) {
             thumbnailUrl: absoluteUrl(base, item.poster || `/art/${item.id}-poster.svg`),
             videoThumbnail: item.previewClip ? absoluteUrl(base, item.previewClip) : undefined,
 
-            encodings: [
-                {
-                    name: item.codec || 'h264',
-                    videoSources: [
-                        {
-                            // `resolution` is the height, and drives the quality
-                            // picker label in both DeoVR and Play'a.
-                            resolution: height || 1080,
-                            height: height || undefined,
-                            width: width || undefined,
-                            url: absoluteUrl(base, item.src)
-                        }
-                    ]
-                }
-            ],
+            encodings: buildEncodings(item, base, profileFor(req), { width, height }),
 
             timeStamps: (item.chapters || []).map((c) => ({ ts: Math.round(c.time), name: c.name }))
         });
     });
+}
+
+/**
+ * The quality menu.
+ *
+ * DeoVR and Play'a group sources by codec (`encodings`) and, within a codec, by
+ * resolution (`videoSources`). Every entry becomes a row in the player's
+ * quality menu and the player picks between them itself - which is what makes
+ * this the point where the ladder either exists for the headset or does not.
+ * Handing over one source, as this used to, meant a title that had been
+ * packaged into five rungs was offered at exactly one, and a headset on a weak
+ * access point had nothing to drop to.
+ *
+ * Renditions are filtered to what this client can decode first. An 8K rung in
+ * the menu of a Quest 2 is not a harmless extra - it is a menu item that plays
+ * black.
+ *
+ * Which of a rung's two forms gets handed over follows the profile: headsets
+ * take the single-rung HLS playlist, desktop players take the progressive MP4
+ * they would rather byte-range. Either way the rung is the same encode, so a
+ * client that only understands one of the two still sees the whole ladder.
+ */
+function buildEncodings(item, base, profile, { width, height }) {
+    const selected = selectRenditions(item.renditions, profile);
+    const progressiveFirst = profile.container === 'progressive';
+
+    const byCodec = new Map();
+    for (const rendition of selected) {
+        const url = progressiveFirst
+            ? rendition.mp4 || rendition.hls
+            : rendition.hls || rendition.mp4;
+        if (!url) continue;
+
+        const codec = rendition.codec || 'h264';
+        if (!byCodec.has(codec)) byCodec.set(codec, []);
+
+        byCodec.get(codec).push({
+            // `resolution` is the height, and drives the quality picker label
+            // in both DeoVR and Play'a.
+            resolution: rendition.height || height || 1080,
+            height: rendition.height || undefined,
+            width: rendition.width || undefined,
+            url: absoluteUrl(base, url)
+        });
+    }
+
+    const encodings = [...byCodec].map(([name, videoSources]) => ({ name, videoSources }));
+
+    // Nothing usable in the manifest - an unpackaged title, or one whose
+    // renditions have all been filtered away. Serve what it has.
+    if (!encodings.length) {
+        return [
+            {
+                name: item.codec || 'h264',
+                videoSources: [
+                    {
+                        resolution: height || 1080,
+                        height: height || undefined,
+                        width: width || undefined,
+                        url: absoluteUrl(base, item.src)
+                    }
+                ]
+            }
+        ];
+    }
+
+    return encodings;
 }

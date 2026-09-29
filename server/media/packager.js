@@ -3,6 +3,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 
 import { STEREO } from '../../src/catalog/media-format.js';
+import { watermarkFilters, watermarkSource } from './watermark.js';
 
 /**
  * ffmpeg probing and HLS packaging.
@@ -63,6 +64,20 @@ export async function probe(filePath) {
     };
 }
 
+/** Every rung we know how to make, highest first. */
+const RUNGS = [
+    { height: 4320, bitrate: 60_000 },
+    { height: 2880, bitrate: 32_000 },
+    { height: 2160, bitrate: 18_000 },
+    { height: 1440, bitrate: 10_000 },
+    { height: 1080, bitrate: 6000 },
+    { height: 720, bitrate: 3000 },
+    { height: 480, bitrate: 1400 }
+];
+
+/** How many rungs a ladder gets. Each one is another full encode of the source. */
+const LADDER_SIZE = Math.max(1, Number(process.env.AVR_LADDER_RUNGS) || 5);
+
 /**
  * Choose an ABR ladder.
  *
@@ -71,54 +86,97 @@ export async function probe(filePath) {
  * frame, so the same nominal resolution carries twice the information and looks
  * soft at flat-video bitrates.
  *
- * @param {{width: number, height: number}} source
+ * The rungs are *spread* across the available range rather than taken from the
+ * top of it. That distinction is the difference between an adaptive ladder and
+ * a set of large files: taking the top four rungs of an 8K source produced
+ * 4320/2880/2160/1440, a range of 60 Mbps down to 10 Mbps, so a viewer whose
+ * link could not hold 10 Mbps had nothing to fall back to and simply buffered.
+ * A ladder has to reach the bottom of the range or it cannot adapt, and the
+ * bottom rung is the one that decides whether a title plays at all on a hotel
+ * connection.
+ *
+ * @param {{width?: number, height: number}} source
  * @param {object} format - Resolved media format.
- * @returns {Array<{height: number, bitrate: number, name: string}>}
+ * @param {{count?: number}} [opts]
+ * @returns {Array<{height: number, width: number|null, bitrate: number, name: string}>}
  */
-export function buildLadder(source, format) {
+export function buildLadder(source, format, { count = LADDER_SIZE } = {}) {
     const stereoFactor = format?.stereo && format.stereo !== STEREO.MONO ? 1.6 : 1;
+    const sourceHeight = source?.height || 1080;
+    const sourceWidth = source?.width || 0;
 
-    const rungs = [
-        { height: 4320, bitrate: 60_000 },
-        { height: 2880, bitrate: 32_000 },
-        { height: 2160, bitrate: 18_000 },
-        { height: 1440, bitrate: 10_000 },
-        { height: 1080, bitrate: 6000 },
-        { height: 720, bitrate: 3000 },
-        { height: 480, bitrate: 1400 }
-    ];
+    const finish = (rung) => ({
+        height: rung.height,
+        // Carried so that surfaces which must state a resolution - DLNA's
+        // `res@resolution`, DeoVR's quality menu - do not have to re-derive it
+        // and disagree with each other. Even, because H.264 requires it and
+        // `scale=-2` will round to the same value.
+        width: sourceWidth && sourceHeight ? 2 * Math.round((rung.height * sourceWidth) / sourceHeight / 2) : null,
+        bitrate: Math.round(rung.bitrate * stereoFactor),
+        name: `${rung.height}p`
+    });
 
-    const sourceHeight = source.height || 1080;
-
-    const selected = rungs
-        .filter((rung) => rung.height <= sourceHeight)
-        // Keep the ladder short; each extra rung is another full transcode.
-        .slice(0, 4)
-        .map((rung) => ({
-            height: rung.height,
-            bitrate: Math.round(rung.bitrate * stereoFactor),
-            name: `${rung.height}p`
-        }));
+    const candidates = RUNGS.filter((rung) => rung.height <= sourceHeight);
 
     // A source shorter than the lowest rung still needs one variant.
-    return selected.length ? selected : [{ height: sourceHeight, bitrate: Math.round(2000 * stereoFactor), name: `${sourceHeight}p` }];
+    if (!candidates.length) return [finish({ height: sourceHeight, bitrate: 2000 })];
+    if (candidates.length <= count) return candidates.map(finish);
+
+    // Evenly spaced by index, which keeps both ends: the top rung is what the
+    // title is worth on a good link, the bottom one is what makes it playable
+    // on a bad one, and neither is negotiable.
+    const picked = new Set();
+    for (let i = 0; i < count; i++) {
+        picked.add(Math.round((i * (candidates.length - 1)) / (count - 1)));
+    }
+
+    return [...picked].sort((a, b) => a - b).map((i) => finish(candidates[i]));
+}
+
+/** Which codecs to package. H.264 alone by default; see `docs/DELIVERY.md`. */
+export function packagedCodecs() {
+    const raw = (process.env.AVR_PACKAGE_CODECS || 'h264')
+        .split(',')
+        .map((s) => s.trim().toLowerCase())
+        .filter((s) => s === 'h264' || s === 'hevc');
+
+    return raw.length ? [...new Set(raw)] : ['h264'];
 }
 
 /**
- * Transcode into an HLS ABR ladder.
+ * Encoder settings per codec.
+ *
+ * HEVC carries the same picture at roughly 60% of the bitrate, which is the
+ * whole reason to offer it: it is what puts an 8K rung inside a standalone
+ * headset's Wi-Fi budget. `hvc1` rather than the default `hev1` tag because
+ * Apple's players - Safari, visionOS, AVFoundation - reject `hev1` in MP4 and
+ * fall back to nothing.
+ */
+function codecSettings(codec) {
+    if (codec === 'hevc') {
+        return { encoder: 'libx265', factor: 0.6, mp4Tag: 'hvc1', profile: 'main' };
+    }
+    return { encoder: 'libx264', factor: 1, mp4Tag: null, profile: 'high' };
+}
+
+/**
+ * Transcode into an HLS ABR ladder, with the brand mark burned in.
  *
  * @param {object} opts
  * @param {string} opts.sourcePath
  * @param {string} opts.outputDir
  * @param {object} opts.format - Resolved media format.
  * @param {{width: number, height: number}} [opts.probed]
+ * @param {string} [opts.codec] - `h264` (default) or `hevc`.
  * @param {(pct: number) => void} [opts.onProgress]
  * @param {AbortSignal} [opts.signal]
- * @returns {Promise<{masterPath: string, variants: object[], duration: number}>}
+ * @returns {Promise<{masterPath: string, variants: object[], duration: number,
+ *                    codec: string, watermarked: boolean}>}
  */
-export async function packageHls({ sourcePath, outputDir, format, probed, onProgress, signal }) {
+export async function packageHls({ sourcePath, outputDir, format, probed, codec = 'h264', onProgress, signal }) {
     const info = probed ?? (await probe(sourcePath));
     const ladder = buildLadder(info, format);
+    const settings = codecSettings(codec);
 
     await fs.mkdir(outputDir, { recursive: true });
 
@@ -132,18 +190,47 @@ export async function packageHls({ sourcePath, outputDir, format, probed, onProg
     // the map has to match what is actually being encoded.
     const hasAudio = info.hasAudio ?? false;
 
+    // The mark goes on once, at full resolution, ahead of the split - so every
+    // rung inherits it and no rung can be published without it.
+    const markPath = watermarkSource();
+    const mark = markPath
+        ? watermarkFilters({ width: info.width, height: info.height, format, inputIndex: 1 })
+        : null;
+
+    let source = '0:v';
+    if (mark) {
+        args.push('-i', markPath);
+        filters.push(...mark.filters);
+        source = mark.outLabel;
+    }
+
+    // `[0:v]` would be auto-split by ffmpeg; a label produced inside the graph
+    // has to be split by hand or the second rung fails to find its input.
+    if (ladder.length > 1 && source !== '0:v') {
+        filters.push(`[${source}]split=${ladder.length}${ladder.map((_, i) => `[s${i}]`).join('')}`);
+    }
+
     ladder.forEach((rung, i) => {
+        const input = source === '0:v' ? '0:v' : ladder.length > 1 ? `s${i}` : source;
+
         // -2 keeps width even and preserves aspect, which H.264 requires.
-        filters.push(`[0:v]scale=-2:${rung.height}[v${i}]`);
+        filters.push(`[${input}]scale=-2:${rung.height}[v${i}]`);
+
+        const bitrate = Math.round(rung.bitrate * settings.factor);
 
         args.push('-map', `[v${i}]`);
-        args.push(`-c:v:${i}`, 'libx264');
-        args.push(`-b:v:${i}`, `${rung.bitrate}k`);
-        args.push(`-maxrate:v:${i}`, `${Math.round(rung.bitrate * 1.15)}k`);
-        args.push(`-bufsize:v:${i}`, `${rung.bitrate * 2}k`);
+        args.push(`-c:v:${i}`, settings.encoder);
+        args.push(`-b:v:${i}`, `${bitrate}k`);
+        args.push(`-maxrate:v:${i}`, `${Math.round(bitrate * 1.15)}k`);
+        args.push(`-bufsize:v:${i}`, `${bitrate * 2}k`);
         args.push(`-preset:v:${i}`, process.env.AVR_X264_PRESET || 'veryfast');
-        args.push(`-profile:v:${i}`, 'high');
+        args.push(`-profile:v:${i}`, settings.profile);
         args.push(`-g:v:${i}`, '48', `-keyint_min:v:${i}`, '48', `-sc_threshold:v:${i}`, '0');
+
+        // Recorded at what was actually asked for, not at the table value, so
+        // the HEVC discount reaches the manifest the players read.
+        rung.bitrate = bitrate;
+        rung.codec = codec;
 
         varStreamMap.push(hasAudio ? `v:${i},a:${i},name:${rung.name}` : `v:${i},name:${rung.name}`);
     });
@@ -191,8 +278,68 @@ export async function packageHls({ sourcePath, outputDir, format, probed, onProg
     return {
         masterPath: path.join(outputDir, 'master.m3u8'),
         variants: ladder,
-        duration: info.duration
+        duration: info.duration,
+        codec,
+        watermarked: !!mark
     };
+}
+
+/**
+ * Remux each HLS rung into a standalone progressive MP4.
+ *
+ * Not every client speaks HLS. SkyBox and Pigasus browse by DLNA and expect a
+ * file they can byte-range; Whirligig takes a URL from an M3U and does the
+ * same; a plain download is a file or it is nothing. Those surfaces used to be
+ * handed the *source* - which is the one file on the server with no brand mark
+ * on it and no bitrate choice behind it.
+ *
+ * This costs no CPU. The rungs have already been encoded; `-c copy` lifts the
+ * same packets out of the MPEG-TS segments and writes them into MP4, so the
+ * only expense is reading and writing the bytes once. `+faststart` then moves
+ * the index to the front of the file, without which a headset seeking in a
+ * 30 GB file over Wi-Fi has to fetch the tail before it can show a frame.
+ *
+ * A rung that fails to remux is skipped rather than fatal: the HLS ladder is
+ * the primary delivery path and is already written by the time this runs.
+ *
+ * @param {object} opts
+ * @param {string} opts.outputDir - The directory `packageHls` wrote into.
+ * @param {object[]} opts.variants - Its returned `variants`.
+ * @param {boolean} [opts.hasAudio]
+ * @param {string} [opts.codec]
+ * @param {AbortSignal} [opts.signal]
+ * @returns {Promise<Array<{name: string, file: string, bytes: number}>>}
+ */
+export async function packageProgressive({ outputDir, variants, hasAudio = true, codec = 'h264', signal }) {
+    const mp4Dir = path.join(outputDir, 'mp4');
+    await fs.mkdir(mp4Dir, { recursive: true });
+
+    const { mp4Tag } = codecSettings(codec);
+    const made = [];
+
+    for (const rung of variants) {
+        const playlist = path.join(outputDir, `v${rung.name}`, 'index.m3u8');
+        const target = path.join(mp4Dir, `${rung.name}.mp4`);
+
+        const args = ['-hide_banner', '-y', '-i', playlist, '-c', 'copy'];
+
+        // AAC comes out of MPEG-TS with ADTS headers, which MP4 has no place
+        // for. Without this the file is written and plays silence.
+        if (hasAudio) args.push('-bsf:a', 'aac_adtstoasc');
+        if (mp4Tag) args.push('-tag:v', mp4Tag);
+
+        args.push('-movflags', '+faststart', target);
+
+        try {
+            await run(FFMPEG, args, { signal, timeoutMs: Number(process.env.AVR_REMUX_TIMEOUT_MS) || 3600 * 1000 });
+            const stat = await fs.stat(target);
+            made.push({ name: rung.name, file: target, bytes: stat.size });
+        } catch (err) {
+            console.warn(`[packager] progressive remux failed for ${rung.name}: ${err.message}`);
+        }
+    }
+
+    return made;
 }
 
 /**

@@ -53,6 +53,7 @@ export function getDb() {
     for (let attempt = 0; attempt < 5; attempt++) {
         try {
             db.exec(schema);
+            addMissingColumns(db);
             return db;
         } catch (err) {
             lastError = err;
@@ -64,6 +65,34 @@ export function getDb() {
     db.close();
     db = null;
     throw lastError;
+}
+
+/**
+ * Columns added to a table that already exists.
+ *
+ * `schema.sql` is all `CREATE TABLE IF NOT EXISTS`, which is idempotent but
+ * also inert: a column added to the file never reaches a database that was
+ * created before it. This is the smallest thing that closes that gap - an
+ * additive, nullable-column-only migration, applied at open, in the same
+ * retry loop as the schema itself.
+ *
+ * Deliberately not a migration framework. Anything that needs to *change* or
+ * *drop* a column, or backfill one, needs a versioned migration and a plan for
+ * running it, and should not be smuggled in here.
+ */
+const ADDED_COLUMNS = [
+    // Packaging output. See `server/media/jobs.js`.
+    { table: 'titles', column: 'renditions', type: 'TEXT' }
+];
+
+function addMissingColumns(database) {
+    for (const { table, column, type } of ADDED_COLUMNS) {
+        const present = database.prepare(`PRAGMA table_info(${table})`).all();
+        if (!present.length) continue;
+        if (present.some((c) => c.name === column)) continue;
+
+        database.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${type}`);
+    }
 }
 
 /** Blocking sleep - this runs during boot, before any request is served. */
@@ -212,7 +241,7 @@ const TITLE_COLUMNS = `
     projection, stereo, fisheye_fov, lens,
     duration, width, height, size_bytes,
     status, status_detail, visibility,
-    source_key, hls_key, poster_key, backdrop_key,
+    source_key, hls_key, poster_key, backdrop_key, renditions,
     created_at, updated_at, published_at
 `;
 
@@ -294,7 +323,8 @@ export const titles = {
             sourceKey: 'source_key',
             hlsKey: 'hls_key',
             posterKey: 'poster_key',
-            backdropKey: 'backdrop_key'
+            backdropKey: 'backdrop_key',
+            renditions: 'renditions'
         };
 
         const sets = [];

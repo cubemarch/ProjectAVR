@@ -64,7 +64,7 @@ npm run dev
 npm run build && npm start        # production, single process
 npm run start:cluster             # one worker per core
 npm run worker                    # a transcoding worker
-npm test                          # 416 unit + integration tests
+npm test                          # 444 unit + integration tests
 ```
 
 For live broadcasting, install FFmpeg (`brew install ffmpeg`) and build the
@@ -120,6 +120,33 @@ strong link. Uploads are packaged into an HLS ladder with a **1.6× bitrate
 multiplier for stereo** — side-by-side and over-under pack two eyes into one
 frame, so the same nominal resolution carries twice the information and looks
 soft at flat-video bitrates.
+
+Five rungs by default, **spread across the source's range rather than taken
+from the top of it**. That distinction is the difference between an adaptive
+ladder and a set of large files: the top four rungs of an 8K source run from 60
+Mbps down to 10, so a viewer who could not hold 10 Mbps had nowhere to drop to
+and simply buffered.
+
+Each rung is also remuxed to a progressive MP4 with `-c copy`, which costs no
+CPU and is what lets the surfaces that cannot speak HLS — DLNA, the M3U export,
+direct download — serve a packaged rung instead of the original file. Which
+rung a given client is offered comes from a
+[device profile](docs/DELIVERY.md#device-profiles), because an 8K H.264 rung in
+a Quest 2's quality menu is a menu item that plays black.
+
+Full detail in [docs/DELIVERY.md](docs/DELIVERY.md).
+
+### The watermark
+
+Every packaged rendition carries a burned-in brand mark. It is composited
+**once at source resolution before the ladder splits**, so one pass serves
+every rung and there is no path from upload to delivery that skips it.
+
+Stereo titles get **one mark per eye**. A single overlay on a packed SBS frame
+lands in one eye only, and a headset cannot fuse an object one eye cannot see —
+it floats at no fixed depth and gives people a headache. Immersive projections
+put the mark at bottom-centre rather than in a corner, because the corners of an
+equirectangular frame are the poles and the space behind the viewer.
 
 ### Stateless app tier
 
@@ -207,9 +234,17 @@ None of these are hidden behind an abstraction that pretends otherwise.
 | `AVR_VERIFICATION_DAYS` | `365` | How long a completed verification lasts before re-enrolment |
 | `AVR_TRANSCODE` | on | `0` to skip HLS packaging; the low-latency relay keeps working |
 | `AVR_TRANSCODE_LADDER` | `1080p@12M,540p@3.5M` | Live bitrate ladder; heights are **per eye** |
+| `AVR_LADDER_RUNGS` | `5` | Rungs per uploaded title. Each is another full encode |
+| `AVR_PACKAGE_CODECS` | `h264` | `h264,hevc` to package both. HEVC is what puts an 8K rung inside a standalone headset |
+| `AVR_WATERMARK` | on | `0` to skip burning the brand mark |
+| `AVR_WATERMARK_FILE` | `art/logo-text.png` | Mark image |
+| `AVR_WATERMARK_OPACITY` | `0.62` | 0–1 |
+| `AVR_DEVICE_PROFILES` | — | JSON overriding a headset's `maxHeight` / `maxBitrateKbps` |
+| `AVR_DLNA_PROFILE` | `quest2` | Which ceiling DLNA browses apply — a Browse request carries no User-Agent to sniff |
 
 The remaining live and transcode variables are in
-[docs/LIVE.md](docs/LIVE.md#configuration).
+[docs/LIVE.md](docs/LIVE.md#configuration); the packaging and delivery ones are
+explained in [docs/DELIVERY.md](docs/DELIVERY.md#configuration-summary).
 
 `AVR_JWT_SECRET` is enforced in production: the server refuses to start without
 it, rather than silently generating a per-node secret that would make tokens
@@ -300,7 +335,18 @@ works instead of re-downloading from zero.
 
 For players with no metadata channel, every file is also served under a
 conventional name at `/media/by-name/<id>/<Name_180x180_3dh_LR.mp4>`, so a file
-called `clip1.mp4` still announces its layout without being renamed.
+called `clip1.mp4` still announces its layout without being renamed. Each
+packaged rung gets that name regenerated at its own height, because SkyBox,
+Pigasus and Whirligig read the layout from the last path segment and from
+nowhere else.
+
+**What each player is offered.** DeoVR gets a quality menu, DLNA gets several
+`<res>` elements, and the M3U gets exactly one URL because the format has no
+notion of alternatives — so that choice is made server-side from a device
+profile. Append `?device=quest2` to any of those URLs to see what a particular
+headset would be served, and `GET /delivery/profiles.json` lists the profiles
+and reports which one was detected for you. See
+[docs/DELIVERY.md](docs/DELIVERY.md#what-each-surface-does-with-this).
 
 **WebXR needs HTTPS.** `localhost` qualifies; a LAN IP does not. `npm run dev`
 serves over HTTPS with a self-signed cert — accept the warning once on the
@@ -348,7 +394,8 @@ server/
   auth/                      scrypt, JWT, middleware, routes
   identity/                  document + face verification, broadcast grants
   storage/                   local + S3, SigV4 presigning
-  media/                     ffmpeg probing, HLS packaging, job queue
+  media/                     ffmpeg probing, HLS packaging, watermark, job queue
+  delivery/profiles.js       what each headset can actually decode
   routes/                    creator + viewer APIs
   library.js                 catalog assembly (single source of truth)
   dlna.js                    SSDP + ContentDirectory
@@ -362,7 +409,7 @@ server/
 ## Testing
 
 ```bash
-npm test                      # 416 unit + integration tests
+npm test                      # 444 unit + integration tests
 node test/smoke.mjs           # browser: browse, WebXR, shader compile
 node test/smoke-portal.mjs    # browser: register, upload, transcode, publish
 ```

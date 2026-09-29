@@ -175,6 +175,11 @@ app.use(
 /**
  * Alias presenting a file under its conventional name, so SkyBox, Pigasus and
  * Whirligig can read the layout from the last path segment.
+ *
+ * `?rendition=<name>` picks one rung of the packaged ladder. The filename in
+ * the path is decoration for the player's benefit and is never resolved against
+ * the filesystem - which is also what keeps this route from being a traversal
+ * primitive. Without it, the request means the whole title, as before.
  */
 app.get('/media/by-name/:id/:filename', async (req, res) => {
     const { items } = await buildLibrary();
@@ -182,6 +187,23 @@ app.get('/media/by-name/:id/:filename', async (req, res) => {
 
     if (!item) {
         res.status(404).send('Not found');
+        return;
+    }
+
+    const wanted = req.query.rendition ? String(req.query.rendition) : null;
+    if (wanted) {
+        const codec = req.query.codec ? String(req.query.codec) : null;
+        const rendition = (item.renditions ?? []).find(
+            (r) => r.name === wanted && (!codec || r.codec === codec)
+        );
+        const url = rendition?.mp4 || rendition?.hls;
+
+        if (!url) {
+            res.status(404).send('No such rendition');
+            return;
+        }
+
+        res.redirect(302, url);
         return;
     }
 

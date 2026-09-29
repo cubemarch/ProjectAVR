@@ -81,6 +81,14 @@ CREATE TABLE IF NOT EXISTS titles (
     poster_key      TEXT,
     backdrop_key    TEXT,
 
+    -- What packaging actually produced: a JSON array of renditions, each with
+    -- its height, bitrate, codec and storage keys. JSON rather than a child
+    -- table because nothing ever queries *across* renditions - they are read
+    -- whole, with their title, to build a quality menu, and a row per rung
+    -- would turn every catalog build into a join for data that is never
+    -- filtered on. Written once by the packager and otherwise immutable.
+    renditions      TEXT,
+
     created_at      TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at      TEXT NOT NULL DEFAULT (datetime('now')),
     published_at    TEXT

@@ -5,7 +5,8 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
-import { buildLibrary } from './library.js';
+import { buildLibrary, renditionFilename } from './library.js';
+import { profileById, selectRenditions } from './delivery/profiles.js';
 
 /**
  * Minimal UPnP/DLNA MediaServer.
@@ -21,6 +22,13 @@ import { buildLibrary } from './library.js';
  *     field DLNA offers.
  *   - `DLNA.ORG_OP=01` advertises byte-range seeking. Without it players either
  *     refuse to scrub or re-download from zero on every seek.
+ *
+ * One item carries several `<res>` elements, one per packaged rung, highest
+ * first. DIDL-Lite has allowed that from the start and it is how a DLNA client
+ * is *supposed* to be offered a choice - there is no adaptive streaming here,
+ * so the alternative is one fixed file and a player that stutters or refuses.
+ * Clients that only read the first element get the best one; clients that read
+ * them all get a quality menu.
  */
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -346,26 +354,76 @@ export class DlnaServer {
         );
     }
 
-    _itemXml(item, parentId) {
-        // The URL's final segment carries the layout tags, which is the only
-        // channel these players actually read them from.
-        const url = `${this.baseUrl}/media/by-name/${encodeURIComponent(item.id)}/${encodeURIComponent(
-            item.conventionalFilename
-        )}`;
-
+    /**
+     * One `<res>` element.
+     *
+     * `bitrate` is in **bytes** per second, not bits: the UPnP ContentDirectory
+     * spec defines it that way and a value eight times too large makes a client
+     * think every rung is beyond its link and refuse the lot.
+     */
+    _resXml(item, { url, mime, bytes, height, width, bitrateKbps }) {
         const protocolInfo =
-            `http-get:*:${item.mime || 'video/mp4'}:` +
-            `DLNA.ORG_OP=01;DLNA.ORG_CI=0;DLNA.ORG_FLAGS=01700000000000000000000000000000`;
+            `http-get:*:${mime}:` + `DLNA.ORG_OP=01;DLNA.ORG_CI=0;DLNA.ORG_FLAGS=01700000000000000000000000000000`;
 
         const attrs = [`protocolInfo="${protocolInfo}"`];
-        if (item.size) attrs.push(`size="${item.size}"`);
+        if (bytes) attrs.push(`size="${bytes}"`);
         if (item.duration) attrs.push(`duration="${didlDuration(item.duration)}"`);
-        if (item.width && item.height) attrs.push(`resolution="${item.width}x${item.height}"`);
+        if (width && height) attrs.push(`resolution="${width}x${height}"`);
+        if (bitrateKbps) attrs.push(`bitrate="${Math.round((bitrateKbps * 1000) / 8)}"`);
 
+        return `<res ${attrs.join(' ')}>${xmlEscape(url)}</res>`;
+    }
+
+    _itemXml(item, parentId) {
         // Titling with the conventional name (rather than the pretty name) is
         // deliberate: players that sniff the title instead of the URL still get
         // the right projection.
         const displayTitle = item.conventionalFilename.replace(/\.[^.]+$/, '');
+
+        // SkyBox and Pigasus both run on standalone headsets rather than on a
+        // desktop, so the ceiling that applies is a headset's. There is no
+        // User-Agent to go on - a Browse request carries none - so the profile
+        // is chosen rather than sniffed, and `AVR_DLNA_PROFILE` is how a
+        // deployment says otherwise.
+        const profile = profileById(process.env.AVR_DLNA_PROFILE || 'quest2') ?? profileById('generic');
+
+        // Progressive only. DLNA clients fetch a file and seek in it; handing
+        // one an HLS playlist gets a few kilobytes of text and an error.
+        const playable = selectRenditions(item.renditions, profile).filter((r) => r.mp4 && !r.synthetic);
+
+        const elements = playable.map((rendition) =>
+            this._resXml(item, {
+                // The layout tags have to survive into every URL, not just the
+                // first, so each rung gets the conventional name rebuilt at its
+                // own height - `Reef Dive_4K_180x180_3dh_LR.mp4` for the 2160p
+                // rung of a title whose source was 8K.
+                url: `${this.baseUrl}/media/by-name/${encodeURIComponent(item.id)}/${encodeURIComponent(
+                    renditionFilename(item, rendition)
+                )}?rendition=${encodeURIComponent(rendition.name)}&codec=${encodeURIComponent(rendition.codec)}`,
+                mime: 'video/mp4',
+                bytes: rendition.bytes,
+                height: rendition.height,
+                width: rendition.width,
+                bitrateKbps: rendition.bitrate
+            })
+        );
+
+        // Nothing packaged, or nothing remuxed: fall back to the single
+        // whole-file URL this server has always served.
+        if (!elements.length) {
+            elements.push(
+                this._resXml(item, {
+                    url: `${this.baseUrl}/media/by-name/${encodeURIComponent(item.id)}/${encodeURIComponent(
+                        item.conventionalFilename
+                    )}`,
+                    mime: item.mime || 'video/mp4',
+                    bytes: item.size,
+                    height: item.height,
+                    width: item.width,
+                    bitrateKbps: 0
+                })
+            );
+        }
 
         return (
             `<item id="item:${xmlEscape(item.id)}" parentID="${xmlEscape(parentId)}" restricted="1">` +
@@ -373,7 +431,7 @@ export class DlnaServer {
             `<upnp:class>object.item.videoItem</upnp:class>` +
             (item.synopsis ? `<dc:description>${xmlEscape(item.synopsis)}</dc:description>` : '') +
             (item.genre ? `<upnp:genre>${xmlEscape(item.genre)}</upnp:genre>` : '') +
-            `<res ${attrs.join(' ')}>${xmlEscape(url)}</res>` +
+            elements.join('') +
             `</item>`
         );
     }

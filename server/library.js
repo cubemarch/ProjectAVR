@@ -120,6 +120,58 @@ async function scanMediaDir() {
 /* --------------------------------------------------------- database source -- */
 
 /**
+ * Read the packager's rendition manifest off a row.
+ *
+ * Every delivery surface needs the same thing from it - the list of things a
+ * client could be given, with a height, a bitrate and a codec on each - so it
+ * is unpacked once, here, rather than parsed again in the DeoVR feed, the DLNA
+ * browse and the M3U export. That is the same reason `buildLibrary` exists at
+ * all: five surfaces reading one shape cannot disagree about what a title is.
+ *
+ * Titles packaged before renditions were recorded, and titles published without
+ * a transcode at all, get an empty list. Callers fall back to `src`, which is
+ * what those titles have always been served as.
+ *
+ * @returns {{renditions: Array<{name: string, height: number, width: number|null,
+ *            bitrate: number, codec: string, hls: string|null, mp4: string|null,
+ *            bytes: number|null}>, watermarked: boolean}}
+ */
+export function renditionsForRow(row) {
+    return renditionsFrom(row, getStorage());
+}
+
+function renditionsFrom(row, storage) {
+    const empty = { renditions: [], watermarked: false };
+    if (!row.renditions) return empty;
+
+    let parsed;
+    try {
+        parsed = JSON.parse(row.renditions);
+    } catch {
+        // A malformed manifest must not take the whole catalog down with it.
+        console.warn(`[library] unreadable rendition manifest on ${row.slug}`);
+        return empty;
+    }
+
+    return {
+        watermarked: !!parsed?.watermarked,
+        renditions: (parsed?.renditions ?? [])
+            .filter((r) => r && r.height)
+            .map((r) => ({
+                name: r.name ?? `${r.height}p`,
+                height: r.height,
+                width: r.width ?? null,
+                bitrate: r.bitrate ?? 0,
+                codec: r.codec ?? 'h264',
+                hls: r.hlsKey ? storage.deliveryUrl(r.hlsKey) : null,
+                mp4: r.mp4Key ? storage.deliveryUrl(r.mp4Key) : null,
+                bytes: r.bytes ?? null
+            }))
+            .sort((a, b) => b.height - a.height)
+    };
+}
+
+/**
  * Convert a database row into the shared item shape.
  *
  * `src` is minted here rather than stored, so the same row can be delivered
@@ -132,8 +184,11 @@ function fromDbRow(row) {
     // is what keeps a 8K stereo title watchable on a congested link.
     const key = row.hls_key || row.source_key;
     const isHls = !!row.hls_key;
+    const { renditions, watermarked } = renditionsFrom(row, storage);
 
     return {
+        renditions,
+        watermarked,
         id: row.slug,
         dbId: row.id,
         title: row.title,
@@ -162,6 +217,57 @@ function fromDbRow(row) {
         backdrop: row.backdrop_key ? storage.deliveryUrl(row.backdrop_key) : undefined,
         publishedAt: row.published_at
     };
+}
+
+/**
+ * The one-rendition stand-in for a title that was never packaged.
+ *
+ * Files dropped into `public/media/`, entries hand-written into
+ * `catalog.json`, and portal uploads that predate the packager or ran with
+ * `AVR_SKIP_TRANSCODE=1` all have exactly one thing to serve: whatever `src`
+ * points at. Giving them a single-entry list rather than an empty one means
+ * every delivery surface iterates renditions unconditionally and none of them
+ * needs a "what if there aren't any" branch.
+ *
+ * Note what this is *not*: it is not watermarked, and it is not adaptive. A
+ * self-hoster's own files are their own business, but a portal upload that
+ * lands here is a title that skipped the brand mark, and `watermarked` stays
+ * false so that is visible rather than assumed.
+ */
+function soleRendition(item) {
+    const isHls = /\.m3u8(\?|$)/i.test(item.src || '') || item.mime === 'application/vnd.apple.mpegurl';
+
+    return {
+        name: item.height ? `${item.height}p` : 'source',
+        height: item.height ?? 0,
+        width: item.width ?? null,
+        bitrate: 0,
+        codec: item.codec ?? 'h264',
+        hls: isHls ? item.src : null,
+        mp4: isHls ? null : item.src,
+        bytes: item.size ?? null,
+        // Not a rung of anything. Surfaces use this to tell "the only thing
+        // there is" apart from "the one I chose", and go on addressing it the
+        // way they always have rather than through a rendition URL that would
+        // only redirect back to the same file.
+        synthetic: true
+    };
+}
+
+/**
+ * The filename one rung is presented under.
+ *
+ * SkyBox, Pigasus and Whirligig read projection and stereo layout from the last
+ * path segment and from nowhere else, so every rung needs the full conventional
+ * name and not just a suffix on the title's. Regenerating it at the rung's own
+ * height is what keeps the resolution tag honest: appending `_1080p` to a name
+ * that already ends `_8K_...` produces a file claiming to be both.
+ */
+export function renditionFilename(item, rendition) {
+    return buildConventionalFilename(item.title, item.format, {
+        ext: '.mp4',
+        height: rendition?.height || item.height
+    });
 }
 
 /* ------------------------------------------------------------------- build -- */
@@ -204,6 +310,8 @@ export function buildLibrary() {
                     ...item,
                     format,
                     duration: item.duration || 0,
+                    renditions: item.renditions?.length ? item.renditions : [soleRendition(item)],
+                    watermarked: item.watermarked ?? false,
                     conventionalFilename: buildConventionalFilename(item.title, format, {
                         ext: path.extname(item.filename || item.src || '') || '.mp4',
                         height: item.height

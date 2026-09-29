@@ -36,5 +36,6 @@ npm test                                   # server and web, node --test
 | | |
 | --- | --- |
 | [`docs/LIVE.md`](docs/LIVE.md) | The live pipeline end to end, including the ingest protocol the capture app speaks |
+| [`docs/DELIVERY.md`](docs/DELIVERY.md) | The bitrate ladder, the burned-in watermark, and which renditions each headset is offered |
 | [`docs/IDENTITY.md`](docs/IDENTITY.md) | Age assurance, creator enrolment, the portal face check, and how the pasteable destination URL is issued |
 | [`docs/MONETISATION.md`](docs/MONETISATION.md) | Credits and the ledger, creator pricing, profiles, the stream setup checks and the 3D gate |
