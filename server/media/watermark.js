@@ -28,8 +28,29 @@ import { PROJECTION, STEREO } from '../../src/catalog/media-format.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..', '..');
 
-/** The wordmark, not the goggle symbol: it reads at a glance and at an angle. */
-export const WATERMARK_FILE = process.env.AVR_WATERMARK_FILE || path.join(ROOT, 'art', 'logo-text.png');
+/**
+ * The goggle symbol, not the wordmark.
+ *
+ * This used to be `logo-text.png` on the reasoning that a wordmark reads at a
+ * glance and at an angle. That is still true, and it is the cost of the change:
+ * the mark no longer states the product's name, so a viewer who does not
+ * already know the symbol learns nothing from it. It was traded away
+ * deliberately. The wordmark said **Carnal3D**, the rename to LustXR left that
+ * burned into every rendition the packager had ever produced, and a mark that
+ * is merely uninformative beats one that is wrong.
+ *
+ * It is also a different shape - 3:2 against the wordmark's 3:1 - so at the
+ * same {@link WIDTH_FRACTION} it covers about twice the height. Verified
+ * composited at 250px over a light background before switching: the
+ * transparency is real, there is no black card behind the glow, and the goggle
+ * outline survives the scale even though the detail inside it does not. If it
+ * reads heavy on real footage, `WIDTH_FRACTION` is the knob rather than the
+ * file.
+ *
+ * Swap a LustXR wordmark back in here - or a symbol-and-wordmark lockup - as
+ * soon as one exists.
+ */
+export const WATERMARK_FILE = process.env.AVR_WATERMARK_FILE || path.join(ROOT, 'art', 'logo-symbol.png');
 
 /**
  * How much of an eye's width the mark spans.

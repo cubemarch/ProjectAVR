@@ -98,7 +98,22 @@ is negotiable.
 ## The watermark
 
 Implemented in [`server/media/watermark.js`](../server/media/watermark.js).
-The source image is `art/logo-text.png`.
+The source image is `art/logo-symbol.png` — the goggle symbol.
+
+It was `art/logo-text.png`, the wordmark, and the swap cost something worth
+naming: **the mark no longer carries the product's name.** A wordmark reads at
+a glance and at an angle and a symbol does not, which is why the wordmark was
+picked originally. But that wordmark said *Carnal3D*, and after the rename to
+LustXR it was burning the wrong brand into every rendition the packager
+produced. A mark that says nothing beats a mark that is wrong. Put a LustXR
+wordmark — or a lockup of the two — back here when one exists.
+
+Two practical notes for whoever supplies that replacement. The overlay scales
+the alpha the PNG already has rather than replacing it, so **the image needs
+real transparency**; a mark on a solid card composites as a translucent box
+over the footage. And the aspect ratio matters more than it looks, because
+`WIDTH_FRACTION` fixes the width: the 3:2 symbol covers about twice the height
+of the 3:1 wordmark it replaced.
 
 ### One mark per eye, always
 
@@ -137,7 +152,7 @@ stereo disparity and appears to float at the wrong depth.
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `AVR_WATERMARK` | on | `0` to disable burning entirely |
-| `AVR_WATERMARK_FILE` | `art/logo-text.png` | Source image; any format ffmpeg reads |
+| `AVR_WATERMARK_FILE` | `art/logo-symbol.png` | Source image; any format ffmpeg reads |
 | `AVR_WATERMARK_OPACITY` | `0.62` | 0–1 |
 
 If the file is missing the title is packaged **unmarked** rather than failing,
@@ -253,7 +268,7 @@ able to see the ceiling that decided it.
 | `AVR_LADDER_RUNGS` | `5` | Rungs per title. Each is another full encode. |
 | `AVR_PACKAGE_CODECS` | `h264` | `h264,hevc` to package both; HEVC is what unlocks 8K on standalone headsets |
 | `AVR_WATERMARK` | on | `0` to disable |
-| `AVR_WATERMARK_FILE` | `art/logo-text.png` | Mark image |
+| `AVR_WATERMARK_FILE` | `art/logo-symbol.png` | Mark image |
 | `AVR_WATERMARK_OPACITY` | `0.62` | 0–1 |
 | `AVR_DEVICE_PROFILES` | — | JSON overriding any profile's `maxHeight` / `maxBitrateKbps` |
 | `AVR_DLNA_PROFILE` | `quest2` | Which ceiling DLNA browses apply, since there is no UA to read |

@@ -244,7 +244,7 @@ None of these are hidden behind an abstraction that pretends otherwise.
 | `AVR_LADDER_RUNGS` | `5` | Rungs per uploaded title. Each is another full encode |
 | `AVR_PACKAGE_CODECS` | `h264` | `h264,hevc` to package both. HEVC is what puts an 8K rung inside a standalone headset |
 | `AVR_WATERMARK` | on | `0` to skip burning the brand mark |
-| `AVR_WATERMARK_FILE` | `art/logo-text.png` | Mark image |
+| `AVR_WATERMARK_FILE` | `art/logo-symbol.png` | Mark image |
 | `AVR_WATERMARK_OPACITY` | `0.62` | 0–1 |
 | `AVR_DEVICE_PROFILES` | — | JSON overriding a headset's `maxHeight` / `maxBitrateKbps` |
 | `AVR_DLNA_PROFILE` | `quest2` | Which ceiling DLNA browses apply — a Browse request carries no User-Agent to sniff |
