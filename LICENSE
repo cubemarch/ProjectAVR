@@ -1,0 +1,95 @@
+PROPRIETARY SOFTWARE LICENCE
+
+ProjectAVR — the source code of the LustXR platform
+Copyright © 2026 David Kaplan. All rights reserved.
+
+
+1. NO LICENCE IS GRANTED
+
+This software and its accompanying documentation (the "Software") are
+proprietary and confidential. No licence, express or implied, is granted to
+any person to use, copy, modify, merge, publish, distribute, sublicense, sell,
+host, or create derivative works of the Software, in source or object form, in
+whole or in part.
+
+Being able to read this code is not permission to use it. If the repository is
+visible to you — because it is public, because you were added to it, or
+because a copy reached you by any other route — that visibility conveys no
+rights. It is not open source.
+
+
+2. WHAT REQUIRES WRITTEN PERMISSION
+
+Everything in section 1, and in particular:
+
+  (a) running the Software, or any part of it, to operate a service;
+  (b) deploying it, whether publicly, internally, or for evaluation;
+  (c) incorporating any part of it into another product;
+  (d) redistributing it, including forking, mirroring, or republishing;
+  (e) training a machine-learning model on it.
+
+Permission means a signed agreement with the copyright holder. Nothing else —
+not a pull request that was merged, not a conversation, not continued access
+to the repository — is a grant.
+
+
+3. COMMERCIAL LICENSING
+
+Commercial licences are available. Enquiries: david@kaplanstudios.com
+
+
+4. CONTRIBUTIONS
+
+By submitting a contribution you assign copyright in it to the copyright
+holder, or, where assignment is not possible, grant a perpetual, worldwide,
+irrevocable, royalty-free licence to use it without restriction. Do not submit
+material you do not have the right to assign on these terms.
+
+
+5. WHAT THIS LICENCE DOES NOT COVER
+
+  (a) THIRD-PARTY DEPENDENCIES. The packages this project depends on are
+      licensed by their own authors under their own terms, which are
+      unaffected by this licence and which continue to apply to those packages
+      wherever they are obtained. See `package.json` and the licence files in
+      `node_modules/`.
+
+  (b) SEEDED DEMO CONTENT. The demonstration titles are Creative Commons films
+      from the Blender Foundation, used under their own licences. They are
+      sample data, not part of the Software.
+
+  (c) THE WIRE PROTOCOL. The ingest protocol specified in `docs/LIVE.md` — its
+      framing, handshake, track types, discovery probe and `avr://` pairing URL
+      — may be implemented independently, in any language, by anyone, without
+      permission and without royalty. The specification is published so that
+      the ingest end can accept any conforming client; that is a deliberate
+      architectural commitment and this licence does not withdraw it. What is
+      reserved is this implementation of it, not the protocol.
+
+
+6. TRADE MARKS
+
+This licence grants no rights in the names, logos or trade dress of LustXR,
+ProjectAVR, or the copyright holder. Section 5(c) permits implementing the
+protocol; it does not permit describing the result as LustXR or ProjectAVR, or
+implying endorsement or affiliation.
+
+
+7. NO WARRANTY
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE, TITLE AND NON-INFRINGEMENT.
+
+
+8. LIMITATION OF LIABILITY
+
+IN NO EVENT SHALL THE COPYRIGHT HOLDER BE LIABLE FOR ANY CLAIM, DAMAGES OR
+OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR ITS USE.
+
+
+9. TERMINATION
+
+Any use outside a written agreement terminates whatever access you have
+immediately and automatically, and does not limit any other remedy.

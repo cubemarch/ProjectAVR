@@ -5,6 +5,7 @@ import path from 'node:path';
 import fs from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
+import { BRAND, DLNA_FRIENDLY_NAME } from '../brand.js';
 import { buildLibrary, localPathFor, MEDIA_DIR } from './library.js';
 import { getDb, sessions } from './db/index.js';
 import { getStorage, assertSafeKey } from './storage/index.js';
@@ -333,7 +334,7 @@ export function start() {
         await recorders.probeFfmpeg();
         await recorders.sweepScratch();
 
-        console.log(`\n  ProjectAVR  (pid ${process.pid})`);
+        console.log(`\n  ${BRAND}  (pid ${process.pid})`);
         console.log(`  ─────────────────────────────────────────────`);
         console.log(`  Library      ${items.length} title${items.length === 1 ? '' : 's'}`);
         console.log(`  Storage      ${storage.isRemote ? 's3 / cdn (bytes bypass this process)' : 'local disk (bytes proxied)'}`);
@@ -342,7 +343,7 @@ export function start() {
         console.log(`  Creators     http://${lan}:${PORT}/creator`);
         console.log(`  DeoVR/Play'a http://${lan}:${PORT}/deovr`);
         console.log(`  Playlist     http://${lan}:${PORT}/playlist.m3u`);
-        if (ENABLE_DLNA) console.log(`  DLNA         "ProjectAVR Library" (SkyBox, Pigasus)`);
+        if (ENABLE_DLNA) console.log(`  DLNA         "${DLNA_FRIENDLY_NAME}" (SkyBox, Pigasus)`);
         // Deliberately localhost rather than the LAN address every other line
         // uses. The monitor decodes with WebCodecs, which browsers expose only
         // in a secure context, so `http://<lan>:<port>/live` fails with an

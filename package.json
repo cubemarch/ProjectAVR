@@ -18,8 +18,9 @@
     "url": "git+https://github.com/cubemarch/ProjectAVR.git"
   },
   "keywords": [],
-  "author": "",
-  "license": "MIT",
+  "author": "David Kaplan <david@kaplanstudios.com>",
+  "license": "SEE LICENSE IN LICENSE",
+  "private": true,
   "bugs": {
     "url": "https://github.com/cubemarch/ProjectAVR/issues"
   },

@@ -6,6 +6,13 @@ publishing, and feeds that the native VR player apps can read.
 
 Built on the [PlayCanvas](https://playcanvas.com) engine.
 
+> **The product is called LustXR; the codebase is called ProjectAVR.** That is
+> deliberate and not a half-finished rename. Every string a visitor, a creator
+> or a headset can read comes from [`brand.js`](brand.js); the repository, the
+> npm package, the Docker image, the `AVR_*` environment variables and the
+> `avr://` wire identifiers keep the codebase name, because the last three are
+> a protocol contract with a client that is not built from this tree.
+
 ---
 
 ## What it is
@@ -26,8 +33,8 @@ headset players can read it:
 | --- | --- |
 | **DeoVR** | DeoVR JSON feed at `/deovr` |
 | **Play'a** | DeoVR JSON feed at `/deovr` |
-| **SkyBox VR Player** | DLNA/UPnP — appears as *ProjectAVR Library* |
-| **Pigasus VR Player** | DLNA/UPnP — appears as *ProjectAVR Library* |
+| **SkyBox VR Player** | DLNA/UPnP — appears as *LustXR Library* |
+| **Pigasus VR Player** | DLNA/UPnP — appears as *LustXR Library* |
 | **Whirligig** | M3U playlist at `/playlist.m3u`, or any direct file URL |
 
 There is no per-player code path. All five read from one `buildLibrary()` call,
@@ -272,7 +279,7 @@ probed for existence.
 **Identity.** Creators prove who they are with a government document and a face
 match before they can broadcast, and confirm their face again at every
 broadcast sign-in. No face image, template or document scan is ever stored by
-ProjectAVR — see [docs/IDENTITY.md](docs/IDENTITY.md).
+LustXR — see [docs/IDENTITY.md](docs/IDENTITY.md).
 
 ---
 
@@ -327,9 +334,10 @@ browser, or add it as a custom site. Creators get a private tokenised feed at
 unpublished titles — that is how you check a title in a headset before anyone
 else sees it.
 
-**SkyBox / Pigasus** — open the app's DLNA or UPnP section and pick *ProjectAVR
-Library*. Byte-range seeking is advertised via `DLNA.ORG_OP=01`, so scrubbing
-works instead of re-downloading from zero.
+**SkyBox / Pigasus** — open the app's DLNA or UPnP section and pick *LustXR
+Library*, which is `DLNA_FRIENDLY_NAME` in [`brand.js`](brand.js). Byte-range
+seeking is advertised via `DLNA.ORG_OP=01`, so scrubbing works instead of
+re-downloading from zero.
 
 **Whirligig** — open `http://<lan-ip>:8080/playlist.m3u` as a URL.
 
@@ -495,5 +503,22 @@ startup.
 
 ## Licence
 
-MIT. The seeded demo titles are Creative Commons films from the Blender
-Foundation.
+**Proprietary. All rights reserved.** See [LICENSE](LICENSE). Reading this
+repository is not permission to run, deploy or fork it; commercial licences are
+available on request.
+
+Three things sit outside that, and the third is deliberate rather than an
+oversight:
+
+- npm dependencies stay under their own licences.
+- The seeded demo titles are Creative Commons films from the Blender
+  Foundation — sample data, not part of the software.
+- **The ingest protocol in [docs/LIVE.md](docs/LIVE.md) may be implemented by
+  anyone, without permission or royalty.** The ingest end is specified so that
+  it accepts any conforming client rather than one particular app, and a
+  licence that forbade third-party implementations would quietly reverse that.
+  What is reserved is this implementation, not the protocol.
+
+`package.json` carries `"private": true` alongside the licence field, so an
+accidental `npm publish` fails rather than pushing the platform to the public
+registry.

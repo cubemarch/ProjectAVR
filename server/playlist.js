@@ -1,3 +1,4 @@
+import { BRAND } from '../brand.js';
 import { buildLibrary, absoluteUrl, renditionFilename } from './library.js';
 import { profileFor, preferredRendition, listProfiles } from './delivery/profiles.js';
 
@@ -36,7 +37,7 @@ export function mountPlaylist(app) {
 
         // A comment, so every player ignores it, but the one thing that makes a
         // wrong-looking playlist diagnosable: which ceiling produced it.
-        const lines = ['#EXTM3U', `# ProjectAVR - renditions selected for: ${profile.label} (${profile.id})`];
+        const lines = ['#EXTM3U', `# ${BRAND} - renditions selected for: ${profile.label} (${profile.id})`];
 
         for (const item of list) {
             const label = item.conventionalFilename.replace(/\.[^.]+$/, '');

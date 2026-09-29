@@ -1,5 +1,6 @@
 import dgram from 'node:dgram';
 
+import { BRAND } from '../../brand.js';
 import { lanAddress } from '../dlna.js';
 
 /**
@@ -28,7 +29,7 @@ export class DiscoveryBeacon {
      * @param {number} opts.ingestPort
      * @param {string} [opts.name]
      */
-    constructor({ httpPort, ingestPort, name = 'ProjectAVR' }) {
+    constructor({ httpPort, ingestPort, name = BRAND }) {
         this.httpPort = httpPort;
         this.ingestPort = ingestPort;
         this.name = name;

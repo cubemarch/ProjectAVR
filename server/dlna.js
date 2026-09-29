@@ -5,6 +5,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
+import { BRAND, DLNA_FRIENDLY_NAME } from '../brand.js';
 import { buildLibrary, renditionFilename } from './library.js';
 import { profileById, selectRenditions } from './delivery/profiles.js';
 
@@ -85,7 +86,7 @@ export class DlnaServer {
      * @param {number} opts.port - HTTP port the Express app listens on.
      * @param {string} [opts.friendlyName]
      */
-    constructor({ port, friendlyName = 'ProjectAVR Library' }) {
+    constructor({ port, friendlyName = DLNA_FRIENDLY_NAME }) {
         this.port = port;
         this.friendlyName = friendlyName;
         this.uuid = getUuid();
@@ -162,7 +163,7 @@ export class DlnaServer {
                 lines.push(
                     `LOCATION: ${this.location}`,
                     'CACHE-CONTROL: max-age=1800',
-                    `SERVER: ${os.type()}/${os.release()} UPnP/1.0 ProjectAVR/1.0`
+                    `SERVER: ${os.type()}/${os.release()} UPnP/1.0 ${BRAND}/1.0`
                 );
             }
 
@@ -195,7 +196,7 @@ export class DlnaServer {
                 `DATE: ${new Date().toUTCString()}`,
                 'EXT:',
                 `LOCATION: ${this.location}`,
-                `SERVER: ${os.type()}/${os.release()} UPnP/1.0 ProjectAVR/1.0`,
+                `SERVER: ${os.type()}/${os.release()} UPnP/1.0 ${BRAND}/1.0`,
                 `ST: ${target}`,
                 `USN: ${usn}`,
                 ''
@@ -254,8 +255,8 @@ export class DlnaServer {
   <device>
     <deviceType>${DEVICE_TYPE}</deviceType>
     <friendlyName>${xmlEscape(this.friendlyName)}</friendlyName>
-    <manufacturer>ProjectAVR</manufacturer>
-    <modelName>ProjectAVR Media Server</modelName>
+    <manufacturer>${xmlEscape(BRAND)}</manufacturer>
+    <modelName>${xmlEscape(BRAND)} Media Server</modelName>
     <modelNumber>1.0</modelNumber>
     <UDN>${this.udn}</UDN>
     <dlna:X_DLNADOC xmlns:dlna="urn:schemas-dlna-org:device-1-0">DMS-1.50</dlna:X_DLNADOC>

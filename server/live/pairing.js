@@ -13,6 +13,7 @@
  * browser, before this URL exists.
  */
 
+import { LIVE_DESTINATION_NAME } from '../../brand.js';
 import { tlsPinBase64 } from './tls.js';
 
 const LIVE_PORT = Number(process.env.AVR_LIVE_PORT || 8081);
@@ -43,7 +44,8 @@ function ingestHost(req) {
  * here than the missing field: the two call sites read `req.user.displayName`,
  * but `req.user` is a raw database row whose column is `display_name`, so the
  * name was silently `undefined` and every destination this server has ever
- * issued was called "ProjectAVR Live".
+ * issued was called after the fallback - "ProjectAVR Live" at the time, now
+ * `LIVE_DESTINATION_NAME`.
  *
  * Order: what the creator typed, then their account name, then the fallback.
  *
@@ -66,7 +68,7 @@ export function destinationName(requested, user) {
             .trim()
             .slice(0, NAME_MAX_LENGTH);
 
-    return clean(requested) || clean(user?.display_name) || 'ProjectAVR Live';
+    return clean(requested) || clean(user?.display_name) || LIVE_DESTINATION_NAME;
 }
 
 /** Matches `DestinationLimits.nameMaxLength` in the capture app. */
@@ -101,7 +103,7 @@ const NAME_MAX_LENGTH = 60;
  * @returns {{url: string, webUrl: string, host: string, port: number,
  *            key: string, name: string, tls: boolean, pin: string|null}}
  */
-export function buildPairingUrl({ req, key, name = 'ProjectAVR Live' }) {
+export function buildPairingUrl({ req, key, name = LIVE_DESTINATION_NAME }) {
     const host = ingestHost(req);
     const pin = tlsPinBase64();
 

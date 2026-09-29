@@ -1,3 +1,4 @@
+import { LIVE_DESTINATION_NAME } from '../../../brand.js';
 import { api } from '../../api/client.js';
 import { icons } from '../icons.js';
 import { formatDuration } from '../../catalog/catalog.js';
@@ -1171,7 +1172,7 @@ export class CreatorPortal {
     }
 
     _defaultDestinationName() {
-        return api.user?.displayName || 'ProjectAVR Live';
+        return api.user?.displayName || LIVE_DESTINATION_NAME;
     }
 
     /**

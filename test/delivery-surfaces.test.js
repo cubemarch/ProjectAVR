@@ -4,6 +4,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
+import { BRAND } from '../brand.js';
+
 /**
  * The five surfaces, against a real server and a real packaged title.
  *
@@ -170,7 +172,10 @@ test('the M3U picks a rendition per client and says which ceiling it used', asyn
     const forQuest = await (await fetch(`${base}/playlist.m3u`, { headers: quest2 })).text();
     const forDesktop = await (await fetch(`${base}/playlist.m3u`, { headers: pcvr })).text();
 
-    assert.match(forQuest, /# ProjectAVR - renditions selected for: Meta Quest 2/);
+    // Asserted through the constant rather than the literal: the product name
+    // is expected to change again, and a rename should not have to touch a
+    // test whose subject is which profile the playlist chose.
+    assert.match(forQuest, new RegExp(`# ${BRAND} - renditions selected for: Meta Quest 2`));
 
     // M3U carries one URL per entry and no notion of alternatives, so the
     // choice DeoVR makes in a menu has to be made here instead. The playlist

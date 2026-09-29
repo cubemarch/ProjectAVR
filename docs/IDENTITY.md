@@ -65,7 +65,7 @@ so no client has to re-derive it.
 
 ## The one rule
 
-**ProjectAVR never stores a biometric identifier.** No face image, no face
+**LustXR never stores a biometric identifier.** No face image, no face
 template, no embedding, no document scan. Not in SQLite, not in S3, not in a
 log.
 

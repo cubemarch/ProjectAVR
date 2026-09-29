@@ -1,3 +1,4 @@
+import { BRAND } from '../../brand.js';
 import { api } from '../api/client.js';
 import { icons } from './icons.js';
 import './auth-modal.css';
@@ -395,7 +396,7 @@ export class AuthModal {
         const intro = enrolling
             ? `Before you can go on air we need to know who you are. One ID check and a short face
                scan, once — the face is matched by our provider and never stored here.`
-            : `ProjectAVR is an adult platform. One document check and you are in — it takes about a
+            : `${BRAND} is an adult platform. One document check and you are in — it takes about a
                minute and you will not be asked again.`;
 
         const body = {

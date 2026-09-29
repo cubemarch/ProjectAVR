@@ -1,3 +1,4 @@
+import { BRAND } from '../../brand.js';
 import { diditProvider, diditWorkflowGaps } from './didit.js';
 import { personaProvider, personaTemplateGaps } from './persona.js';
 import { mockProvider } from './mock.js';
@@ -58,13 +59,20 @@ import { mockProvider } from './mock.js';
  * against the row, so that rewriting this text later cannot silently re-label
  * what somebody agreed to years ago. Bump the version whenever the text
  * changes in substance; existing creators are then re-prompted.
+ *
+ * A rename of the platform counts as substance, which is why 2026-09-21.1
+ * became 2026-09-28.1 with no other edit: every promise below is made *by a
+ * named party*, and a creator who agreed that "ProjectAVR never receives or
+ * stores your face image" has not yet been asked to agree that LustXR does
+ * not. Re-prompting costs one screen; the alternative is a stored consent
+ * whose recorded text names an entity the creator never saw.
  */
-export const CONSENT_VERSION = '2026-09-21.1';
+export const CONSENT_VERSION = '2026-09-28.1';
 
 export const CONSENT_TEXT = [
-    'To broadcast on ProjectAVR you must confirm your identity with a government-issued document and a photo of your face.',
-    'The check is carried out by our verification provider, not by ProjectAVR. Your document images and the biometric data derived from your face are collected, stored and processed by that provider under their retention schedule.',
-    'ProjectAVR never receives or stores your face image, a face template, or a scan of your document. We store only the provider’s decision, an opaque reference that lets us ask them to re-check your face, the issuing country and type of document, and whether you were confirmed to be over 18.',
+    `To broadcast on ${BRAND} you must confirm your identity with a government-issued document and a photo of your face.`,
+    `The check is carried out by our verification provider, not by ${BRAND}. Your document images and the biometric data derived from your face are collected, stored and processed by that provider under their retention schedule.`,
+    `${BRAND} never receives or stores your face image, a face template, or a scan of your document. We store only the provider’s decision, an opaque reference that lets us ask them to re-check your face, the issuing country and type of document, and whether you were confirmed to be over 18.`,
     'Each time you start a broadcast you will be asked to confirm your face again, in this browser, so that a stolen password alone cannot put someone else on air as you.',
     'You may withdraw consent at any time. Withdrawing deletes our reference and instructs the provider to delete what they hold; you will not be able to broadcast until you enrol again.'
 ].join('\n\n');
@@ -79,12 +87,12 @@ export const CONSENT_TEXT = [
  * it would describe an ongoing biometric relationship that a viewer does not
  * have.
  */
-export const AGE_CONSENT_VERSION = '2026-09-21.1';
+export const AGE_CONSENT_VERSION = '2026-09-28.1';
 
 export const AGE_CONSENT_TEXT = [
-    'ProjectAVR is an adult platform. Before you can watch anything you must confirm you are over 18 with a government-issued document.',
-    'The check is carried out by our verification provider, not by ProjectAVR. Your document images are collected, stored and processed by that provider under their retention schedule.',
-    'ProjectAVR never receives or stores a scan of your document or your date of birth. We store only whether the provider confirmed you are over 18, the issuing country, and when the check was done.',
+    `${BRAND} is an adult platform. Before you can watch anything you must confirm you are over 18 with a government-issued document.`,
+    `The check is carried out by our verification provider, not by ${BRAND}. Your document images are collected, stored and processed by that provider under their retention schedule.`,
+    `${BRAND} never receives or stores a scan of your document or your date of birth. We store only whether the provider confirmed you are over 18, the issuing country, and when the check was done.`,
     'This is a one-off check. Unlike creators, viewers do not enrol a photo of their face and are never asked to confirm their face again.',
     'You may ask us to delete your account at any time, which deletes our record of the check and instructs the provider to delete what they hold.'
 ].join('\n\n');

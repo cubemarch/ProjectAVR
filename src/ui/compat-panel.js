@@ -1,3 +1,4 @@
+import { DLNA_FRIENDLY_NAME } from '../../brand.js';
 import { icons } from './icons.js';
 import { buildConventionalFilename } from '../catalog/media-format.js';
 
@@ -105,7 +106,7 @@ export class CompatPanel {
     _endpoints() {
         return {
             deovr: `${this.origin}/deovr`,
-            dlna: 'ProjectAVR Library',
+            dlna: DLNA_FRIENDLY_NAME,
             m3u: `${this.origin}/playlist.m3u`
         };
     }
