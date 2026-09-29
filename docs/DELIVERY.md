@@ -105,15 +105,23 @@ naming: **the mark no longer carries the product's name.** A wordmark reads at
 a glance and at an angle and a symbol does not, which is why the wordmark was
 picked originally. But that wordmark said *Carnal3D*, and after the rename to
 LustXR it was burning the wrong brand into every rendition the packager
-produced. A mark that says nothing beats a mark that is wrong. Put a LustXR
-wordmark — or a lockup of the two — back here when one exists.
+produced. A mark that says nothing beats a mark that is wrong.
 
-Two practical notes for whoever supplies that replacement. The overlay scales
+**That constraint is gone.** `art/logo-text.png` is now a LustXR wordmark, and
+the site header draws the symbol and the wordmark side by side — see
+[`src/ui/brand-mark.js`](../src/ui/brand-mark.js). Which of the three the
+packager burns in is therefore an open product decision, not a forced one. It
+stays on the symbol until someone makes that call, because changing
+`AVR_WATERMARK_FILE` is trivial and re-packaging the whole library to match is
+not.
+
+Two practical notes for whoever changes it. The overlay scales
 the alpha the PNG already has rather than replacing it, so **the image needs
 real transparency**; a mark on a solid card composites as a translucent box
 over the footage. And the aspect ratio matters more than it looks, because
 `WIDTH_FRACTION` fixes the width: the 3:2 symbol covers about twice the height
-of the 3:1 wordmark it replaced.
+of the 3:1 wordmark it replaced. A lockup of the two would be wider still and
+would want a smaller `WIDTH_FRACTION` to land in the same footprint.
 
 ### One mark per eye, always
 

@@ -34,10 +34,17 @@ const ROOT = path.resolve(__dirname, '..', '..');
  * This used to be `logo-text.png` on the reasoning that a wordmark reads at a
  * glance and at an angle. That is still true, and it is the cost of the change:
  * the mark no longer states the product's name, so a viewer who does not
- * already know the symbol learns nothing from it. It was traded away
- * deliberately. The wordmark said **Carnal3D**, the rename to LustXR left that
+ * already know the symbol learns nothing from it. It was traded away because
+ * the wordmark then on disk said **Carnal3D**, the rename to LustXR left that
  * burned into every rendition the packager had ever produced, and a mark that
  * is merely uninformative beats one that is wrong.
+ *
+ * That reason has since expired: `art/logo-text.png` is now a LustXR wordmark,
+ * and the site draws the two side by side (`src/ui/brand-mark.js`). So the
+ * choice here is open again and is a product decision rather than a forced
+ * one - symbol, wordmark, or a lockup of both. It stays on the symbol until
+ * someone makes that call, because switching is one line and re-packaging the
+ * library is not.
  *
  * It is also a different shape - 3:2 against the wordmark's 3:1 - so at the
  * same {@link WIDTH_FRACTION} it covers about twice the height. Verified
@@ -46,9 +53,6 @@ const ROOT = path.resolve(__dirname, '..', '..');
  * outline survives the scale even though the detail inside it does not. If it
  * reads heavy on real footage, `WIDTH_FRACTION` is the knob rather than the
  * file.
- *
- * Swap a LustXR wordmark back in here - or a symbol-and-wordmark lockup - as
- * soon as one exists.
  */
 export const WATERMARK_FILE = process.env.AVR_WATERMARK_FILE || path.join(ROOT, 'art', 'logo-symbol.png');
 
