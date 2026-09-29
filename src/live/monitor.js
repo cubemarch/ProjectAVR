@@ -418,9 +418,23 @@ class Monitor {
             this.applyProjection();
         });
 
-        el('swap-eyes').addEventListener('change', (event) => {
+        const swapEyes = el('swap-eyes');
+        swapEyes.addEventListener('change', (event) => {
             this.view.setSwapEyes(event.target.checked);
         });
+
+        // And adopt whatever state the box is already in, rather than assuming
+        // it starts clear. Firefox and Chrome restore checkbox state across a
+        // soft reload, so binding only `change` leaves a box that is ticked
+        // while the view is not swapped — the control silently reporting the
+        // opposite of what is on screen.
+        //
+        // That matters more here than the usual form-restore annoyance. This
+        // checkbox exists to diagnose eye order, so a reload turning it into a
+        // liar corrupts the one measurement it is there to support. The markup
+        // also carries `autocomplete="off"` now; this line is the half that
+        // works whether or not the browser honours it.
+        this.view.setSwapEyes(swapEyes.checked);
 
         el('enter-vr').addEventListener('click', () => {
             // The XR session drives its own frame loop; pump decoded pairs
@@ -483,7 +497,7 @@ class Monitor {
 
         if (!payload.sessions.length) {
             list.innerHTML =
-                '<p class="muted">No broadcasts running. Start one from the AVR Capture app on an iPhone.</p>';
+                '<p class="muted">No broadcasts running. Start one from the VRecord app on an iPhone.</p>';
             return;
         }
 

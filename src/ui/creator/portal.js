@@ -857,7 +857,7 @@ export class CreatorPortal {
                     }
 
                     <p class="muted">
-                        Open AVR Capture on your phone. It will ask where to send the broadcast.
+                        Open VRecord on your phone. It will ask where to send the broadcast.
                         Name the destination below, choose who is watching, then scan the code that
                         appears with the app — it fills in the address and the stream key for you.
                     </p>
@@ -904,7 +904,7 @@ export class CreatorPortal {
                 }
 
                 <p class="muted">
-                    In AVR Capture, add a destination and tap Scan. Point the phone at this code.
+                    In VRecord, add a destination and tap Scan. Point the phone at this code.
                 </p>
 
                 ${this._destinationQrHtml(d)}

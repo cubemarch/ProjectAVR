@@ -131,6 +131,20 @@ offset  size  field
 20      N     payload
 ```
 
+**What `LEFT` means.** Track 0 carries the image for the **viewer's left eye** —
+the viewpoint displaced toward the viewer's left, which sees a near object
+further to the *right* against a distant background than track 1 does. Track 1
+is the right eye. This is normative and nothing downstream reinterprets it:
+`LEFT` is the left half of every side-by-side composition this server produces,
+and the left view of every headset it feeds.
+
+The mapping from a physical sensor to an eye is the **contributor's** to make
+and to get right. It depends on the device's lens geometry and on how the
+operator is holding it, neither of which the server can see, so a client must
+not assume a lens order and the server will not correct one. A client that gets
+it backwards produces inverted depth on every surface at once; there is no
+receiver-side setting that fixes it for anyone but the person who ticked it.
+
 Length-prefixed with no per-frame magic number: both transports are ordered and
 reliable, so there is nothing to resynchronise to, and four bytes of ceremony at
 60 fps × 2 eyes is not free. The handshake *does* carry a protocol name and
@@ -563,12 +577,17 @@ On ECS/Fargate:
   understands it, but the phone always sends separate eyes and the server
   composites.
 - **No LL-HLS.** See the latency note above.
-- **No recording.** Segments are deleted as they age out of the playlist. A
-  broadcast is not archived to the library.
-- **The capture app has never run on real hardware.** It builds and passes 132
-  tests against the iOS 18 SDK, and the protocol is covered from both sides, but
-  no frame from an actual sensor has been through it. The left/right eye default in
-  particular is a documented guess with a persisted toggle beside it.
+- **HLS segments are not kept.** They are deleted as they age out of the
+  playlist. Archiving is a separate path — `server/live/recording.js` extends
+  the transcode pipeline to write an MP4 — and a broadcast still does not land
+  in the library on its own.
+- **Eye order is the contributor's to establish, and no contributor has proved
+  it against hardware.** The protocol is covered from both sides and the
+  server-side chain from track byte to screen has been traced end to end with no
+  lateral inversion on any of the four surfaces (`/live`, HLS, the recorded MP4,
+  WebXR). What nothing here can check is the step before the wire: which
+  physical lens a client labels `LEFT`. Inverted depth reported against this
+  server should be diagnosed at the capture client first.
 - **Live sessions are absent from the catalog.** Folding a node-local thing into
   `buildLibrary()` would break the property that any node can answer any catalog
   request, so they have their own endpoints instead.

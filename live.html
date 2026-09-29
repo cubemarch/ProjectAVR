@@ -76,7 +76,7 @@
                     </div>
 
                     <label class="check">
-                        <input id="swap-eyes" type="checkbox" />
+                        <input id="swap-eyes" type="checkbox" autocomplete="off" />
                         Swap left / right eye
                     </label>
                 </section>
@@ -167,8 +167,18 @@
                             causes discomfort.
                         </p>
                         <p class="muted">
-                            If depth looks inverted — near objects reading as far — the eyes are swapped. Tick
-                            <em>Swap left / right eye</em> rather than re-shooting.
+                            Neither of those finds swapped eyes. <strong>Difference</strong> is symmetric — it shows
+                            the same picture whichever eye is which — and <strong>Anaglyph</strong> fuses happily into
+                            inverted depth. To check eye order, hold a finger 20–30&nbsp;cm from the lenses against a
+                            distant vertical edge and compare the two halves in <strong>Side by side</strong>: the
+                            finger should sit <em>further right</em> of that edge in the left half than in the right
+                            half. If it sits further left, the eyes are swapped.
+                        </p>
+                        <p class="muted">
+                            <em>Swap left / right eye</em> corrects that <strong>on this screen only</strong>. It is a
+                            diagnostic, not a fix: the HLS stream, the recording and every other viewer still carry the
+                            original order. Swapped eyes have to be corrected at the capture client, which owns the
+                            mapping from lens to eye.
                         </p>
                     </div>
                 </div>
