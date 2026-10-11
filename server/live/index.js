@@ -814,3 +814,8 @@ export function liveBanner() {
 }
 
 export { sessions, rooms };
+
+// Exported for the channel pages, which answer "is this creator on air right
+// now" and must describe a broadcast exactly the way `/api/live/sessions`
+// does - two shapes for one session is two things to keep in step.
+export { describe as describeSession };

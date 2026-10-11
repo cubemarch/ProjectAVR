@@ -2,6 +2,7 @@ import { api } from '../api/client.js';
 import { icons } from './icons.js';
 import { dollars } from './money.js';
 import { CheckPreview } from '../live/check-preview.js';
+import { isCreator } from '../auth/roles.js';
 
 /**
  * The profile page, for both roles.
@@ -41,8 +42,12 @@ const SECTIONS = [
     { id: 'you', label: 'You' },
     { id: 'credits', label: 'Credits' },
     { id: 'going-live', label: 'Going live', creatorOnly: true },
-    { id: 'recordings', label: 'Recordings' }
+    { id: 'recordings', label: 'Recordings' },
+    { id: 'operator', label: 'Operator', superuserOnly: true }
 ];
+
+/** How long to wait after the last keystroke before asking whether a name is free. */
+const NAME_CHECK_DELAY_MS = 350;
 
 const REASON_LABELS = {
     purchase: 'Credits purchased',
@@ -91,6 +96,30 @@ export class ProfilePage {
 
         /** What to re-apply once the check it was blocked on passes. */
         this.pendingCreatorPatch = null;
+
+        /* ------------------------------------------------------- the link -- */
+
+        /** What `/api/profile/names` last said: the names, the limit, the rules. */
+        this.names = null;
+
+        /**
+         * What is in the name field right now.
+         *
+         * Held outside the DOM because every render rebuilds the panel, and a
+         * half-typed name disappearing because a balance refreshed in the
+         * background is the kind of bug nobody can reproduce on purpose.
+         */
+        this.nameDraft = null;
+
+        /** The answer to "is this one free", or `{pending: true}` while asking. */
+        this.nameCheck = null;
+        this.nameNotice = null;
+        this.nameError = null;
+        this.nameTimer = null;
+
+        /** The runtime reserved list, for the operator tab. */
+        this.reserved = null;
+        this.reservedError = null;
     }
 
     /**
@@ -131,12 +160,21 @@ export class ProfilePage {
             // that cannot reach them is still a profile.
             this.recordings = api.isCreator ? await api.recordings.mine().catch(() => []) : [];
             this.purchased = await api.recordings.purchased().catch(() => []);
+            await this._loadNames();
             this.error = null;
         } catch (err) {
             this.error = err.message;
         }
 
         this._render();
+
+        // After the render, because the tab it fills only exists once the role
+        // is known. Guarded on both so a failure stays failed: `_loadReserved`
+        // renders, and re-fetching on every render that reported an error
+        // would be a loop.
+        if (this.section === 'operator' && this.reserved === null && !this.reservedError) {
+            await this._loadReserved();
+        }
     }
 
     /* ------------------------------------------------------------ rendering -- */
@@ -145,7 +183,10 @@ export class ProfilePage {
         if (!this.visible) return;
 
         const isCreator = this._isCreator();
-        const tabs = SECTIONS.filter((s) => !s.creatorOnly || isCreator);
+        const isOperator = this._isOperator();
+        const tabs = SECTIONS.filter(
+            (s) => (!s.creatorOnly || isCreator) && (!s.superuserOnly || isOperator)
+        );
 
         // Only once the role is known. The first paint happens before the
         // profile has been read, and dropping `going-live` on that paint would
@@ -195,8 +236,18 @@ export class ProfilePage {
 
     /** @returns {boolean} */
     _isCreator() {
-        const role = this.data?.profile?.role;
-        return role === 'creator' || role === 'admin';
+        return isCreator(this.data?.profile?.role);
+    }
+
+    /**
+     * Exactly superuser, not "admin or better".
+     *
+     * The tab and the server guard behind it read the same field, and the
+     * guard is `requireRole('superuser')` - a tab that appeared for admins
+     * would be a tab full of 403s.
+     */
+    _isOperator() {
+        return this.data?.profile?.role === 'superuser';
     }
 
     _bodyHtml() {
@@ -210,9 +261,212 @@ export class ProfilePage {
             case 'recordings':
                 return `${this._isCreator() ? this._myRecordingsHtml() : ''}${this._purchasedHtml()}`;
 
+            case 'operator':
+                return this._operatorHtml();
+
             default:
-                return this._identityHtml(this.data.profile);
+                return `${this._identityHtml(this.data.profile)}${this._namesHtml()}${this._emailsHtml()}`;
         }
+    }
+
+    /* ---------------------------------------------------------- your link -- */
+
+    /**
+     * The one address that does not change.
+     *
+     * Everything else that points at a broadcast is minted per broadcast: the
+     * session id names a socket, and the destination the capture app scans is
+     * a grant that is spent the moment it connects. This is the only thing a
+     * creator can put on a card, and the card outlives any one stream.
+     *
+     * Renaming keeps the old name working - that is what `renameChannel` does
+     * on the server - so the copy says so. Somebody deciding whether to change
+     * a link they have already given out needs to know that before they press
+     * the button, not after.
+     */
+    _namesHtml() {
+        if (!this.names) {
+            return `
+                <section class="profile-card">
+                    <h2>Your link</h2>
+                    <p class="muted">${this.nameError ? escapeHtml(this.nameError) : 'Loading…'}</p>
+                </section>`;
+        }
+
+        const { names, primary, canAddMore, limit, suggestion } = this.names;
+        const draft = this.nameDraft ?? primary ?? suggestion ?? '';
+        const extras = names.filter((n) => !n.isPrimary);
+        const several = limit === null || limit > 1;
+
+        return `
+            <section class="profile-card">
+                <h2>Your link</h2>
+
+                ${
+                    primary
+                        ? `<div class="link-row">
+                               <input class="channel-url" type="text" readonly
+                                   value="${escapeAttr(this._channelUrl(primary))}" />
+                               <button class="btn sm" data-act="copy-link"
+                                   data-value="${escapeAttr(this._channelUrl(primary))}">Copy</button>
+                           </div>
+                           <p class="muted">
+                               Share this one address. It opens your page when you are off air and
+                               your broadcast when you are on, and it does not change between them.
+                           </p>`
+                        : `<p class="muted">
+                               You do not have a link yet. Pick a name and it becomes your address
+                               on this site.
+                           </p>`
+                }
+
+                <label class="field">
+                    <span>${primary ? 'Change your name' : 'Choose your name'}</span>
+                    <div class="link-row">
+                        <span class="link-prefix">${escapeHtml(this._channelUrl(''))}</span>
+                        <input type="text" id="channel-name" maxlength="30" autocomplete="off"
+                            spellcheck="false" value="${escapeAttr(draft)}" placeholder="your-name" />
+                    </div>
+                </label>
+
+                <p class="muted" id="channel-status">${this._nameStatusHtml()}</p>
+
+                <div class="row-actions">
+                    <button class="btn btn-primary" data-act="save-name" ${this.busy ? 'disabled' : ''}>
+                        ${primary ? 'Save link' : 'Claim link'}
+                    </button>
+                    ${
+                        primary && canAddMore
+                            ? `<button class="btn sm" data-act="add-name" ${this.busy ? 'disabled' : ''}>
+                                   Add another name
+                               </button>`
+                            : ''
+                    }
+                </div>
+
+                ${
+                    primary
+                        ? `<p class="muted small">
+                               Changing it keeps the old name working, so links already out there
+                               do not break.
+                           </p>`
+                        : ''
+                }
+
+                ${
+                    extras.length
+                        ? `<h3>Also yours</h3>
+                           <p class="muted small">
+                               These point at the same channel and redirect to
+                               <strong>/${escapeHtml(primary ?? '')}</strong>.
+                           </p>
+                           <ul class="name-list">
+                               ${extras
+                                   .map(
+                                       (n) => `
+                                   <li>
+                                       <code>/${escapeHtml(n.slug)}</code>
+                                       <span>
+                                           <button class="btn ghost sm" data-act="make-primary"
+                                               data-slug="${escapeAttr(n.slug)}">Make main</button>
+                                           <button class="btn ghost sm" data-act="drop-name"
+                                               data-slug="${escapeAttr(n.slug)}">Release</button>
+                                       </span>
+                                   </li>`
+                                   )
+                                   .join('')}
+                           </ul>`
+                        : ''
+                }
+
+                ${
+                    several
+                        ? `<p class="muted small">
+                               This account may hold ${limit === null ? 'any number of' : limit} names.
+                           </p>`
+                        : ''
+                }
+
+                ${this.nameNotice ? `<p class="ok">${escapeHtml(this.nameNotice)}</p>` : ''}
+                ${this.nameError ? `<p class="error">${escapeHtml(this.nameError)}</p>` : ''}
+            </section>
+        `;
+    }
+
+    /** The status line under the name field, rebuilt without a full render. */
+    _nameStatusHtml() {
+        const check = this.nameCheck;
+        if (!check) return 'Lowercase letters, numbers and hyphens.';
+
+        if (check.pending) return 'Checking…';
+        if (check.mine) return 'That one is already yours.';
+        if (check.available) return `<span class="ok">/${escapeHtml(check.slug)} is free.</span>`;
+
+        return `<span class="error">${escapeHtml(check.error ?? 'That name is taken.')}</span>`;
+    }
+
+    /** `https://host/name`, which is what gets pasted somewhere. */
+    _channelUrl(slug) {
+        return `${window.location.origin}/${slug}`;
+    }
+
+    /**
+     * The operator console: the words nobody may take.
+     *
+     * Only the runtime list is editable here. The built-in list in
+     * `server/channels/slug.js` is code - a route name or an impersonation risk
+     * that a deploy decided on - and a console that could delete `api` from it
+     * would be a console that could take the site down from a text field.
+     */
+    _operatorHtml() {
+        return `
+            <section class="profile-card">
+                <h2>Reserved names</h2>
+                <p class="muted">
+                    Names no ordinary account may claim. The built-in list — routes, mailboxes,
+                    words that read as staff — is part of the code and is not shown here. This is
+                    what has been added since.
+                </p>
+
+                <label class="field">
+                    <span>Reserve a name</span>
+                    <input type="text" id="reserve-slug" maxlength="30" autocomplete="off"
+                        spellcheck="false" placeholder="a-name" />
+                </label>
+
+                <label class="field">
+                    <span>Why</span>
+                    <input type="text" id="reserve-reason" maxlength="200"
+                        placeholder="Held for the launch partner" />
+                </label>
+
+                <button class="btn btn-primary" data-act="reserve" ${this.busy ? 'disabled' : ''}>
+                    Reserve it
+                </button>
+
+                ${
+                    this.reserved === null
+                        ? `<p class="muted">${this.reservedError ? escapeHtml(this.reservedError) : 'Loading…'}</p>`
+                        : this.reserved.length
+                          ? `<ul class="name-list">
+                                 ${this.reserved
+                                     .map(
+                                         (r) => `
+                                     <li>
+                                         <code>/${escapeHtml(r.slug)}</code>
+                                         <span class="muted small">${escapeHtml(r.reason ?? '')}</span>
+                                         <button class="btn ghost sm" data-act="unreserve"
+                                             data-slug="${escapeAttr(r.slug)}">Release</button>
+                                     </li>`
+                                     )
+                                     .join('')}
+                             </ul>`
+                          : '<p class="muted">Nothing reserved beyond the built-in list.</p>'
+                }
+
+                ${this.reservedError && this.reserved !== null ? `<p class="error">${escapeHtml(this.reservedError)}</p>` : ''}
+            </section>
+        `;
     }
 
     _identityHtml(profile) {
@@ -256,6 +510,40 @@ export class ProfilePage {
                 </label>
 
                 <button class="btn btn-primary" data-act="save-profile" ${this.busy ? 'disabled' : ''}>Save profile</button>
+            </section>
+        `;
+    }
+
+    /**
+     * Email settings.
+     *
+     * One switch, and a plain statement of what it does not cover. The second
+     * part matters as much as the first: somebody turning marketing off has
+     * usually decided they get too much email, and if they believe this also
+     * silenced their receipts and security notices they will reach for the
+     * spam button instead - which is worse for them and for us. The server
+     * enforces the same split; see `server/mail/templates.js`.
+     */
+    _emailsHtml() {
+        const on = this.data?.emails?.marketing === true;
+
+        return `
+            <section class="profile-card">
+                <h2>Email</h2>
+
+                <label class="check">
+                    <input type="checkbox" id="marketing-emails" ${on ? 'checked' : ''} />
+                    Email me news and offers
+                </label>
+
+                <p class="muted">
+                    Off by default. Receipts, security notices and the results of identity checks
+                    are sent either way — they are part of your account, not marketing.
+                </p>
+
+                <button class="btn btn-primary" data-act="save-emails" ${this.busy ? 'disabled' : ''}>
+                    Save email settings
+                </button>
             </section>
         `;
     }
@@ -598,6 +886,7 @@ export class ProfilePage {
                         if (this.runningCheck) this._endCheck();
                         this.section = btn.dataset.section;
                         this._render();
+                        if (this.section === 'operator') await this._loadReserved();
                         break;
                     case 'pick-avatar':
                         this.mount.querySelector('#avatar-file')?.click();
@@ -607,6 +896,9 @@ export class ProfilePage {
                         break;
                     case 'save-profile':
                         await this._saveProfile();
+                        break;
+                    case 'save-emails':
+                        await this._saveEmails();
                         break;
                     case 'buy':
                         await this._buy(Number(btn.dataset.cents));
@@ -633,6 +925,27 @@ export class ProfilePage {
                     case 'unlist-recording':
                         await this._run(() => api.recordings.unlist(btn.dataset.id));
                         break;
+                    case 'copy-link':
+                        await copyToClipboard(btn, this.mount);
+                        break;
+                    case 'save-name':
+                        await this._saveName();
+                        break;
+                    case 'add-name':
+                        await this._saveName({ additional: true });
+                        break;
+                    case 'make-primary':
+                        await this._nameAction(() => api.channels.rename(btn.dataset.slug));
+                        break;
+                    case 'drop-name':
+                        await this._nameAction(() => api.channels.release(btn.dataset.slug));
+                        break;
+                    case 'reserve':
+                        await this._reserve();
+                        break;
+                    case 'unreserve':
+                        await this._unreserve(btn.dataset.slug);
+                        break;
                 }
             } catch (err) {
                 this.error = err.message;
@@ -646,6 +959,19 @@ export class ProfilePage {
                 const chosen = file.files?.[0];
                 if (!chosen) return;
                 await this._run(() => api.profile.setAvatar(chosen));
+            };
+        }
+
+        // Debounced rather than per-keystroke: the endpoint is rate-limited,
+        // and "is `d` free" is not a question anybody wanted answered on the
+        // way to typing `dana`.
+        const name = this.mount.querySelector('#channel-name');
+        if (name) {
+            name.oninput = () => {
+                this.nameDraft = name.value;
+                this.nameNotice = null;
+                clearTimeout(this.nameTimer);
+                this.nameTimer = setTimeout(() => this._checkName(), NAME_CHECK_DELAY_MS);
             };
         }
     }
@@ -726,6 +1052,19 @@ export class ProfilePage {
         const tagline = this.mount.querySelector('#tagline')?.value ?? '';
         const bio = this.mount.querySelector('#bio')?.value ?? '';
         await this._run(() => api.profile.save({ tagline, bio }));
+    }
+
+    /**
+     * Saved on its own, not folded into "Save profile".
+     *
+     * Consent to be marketed at is the one setting on this page where somebody
+     * has to be able to say what they changed. A tagline edit that silently
+     * carried an opt-in along with it would be exactly the pre-ticked box this
+     * checkbox exists to avoid.
+     */
+    async _saveEmails() {
+        const marketingEmails = this.mount.querySelector('#marketing-emails')?.checked === true;
+        await this._run(() => api.profile.save({ marketingEmails }));
     }
 
     async _buy(amountCents) {
@@ -822,6 +1161,183 @@ export class ProfilePage {
         if (pending && !this.error) await this._saveCreator(pending);
         else await this.refresh();
     }
+
+    /* ---------------------------------------------------------- your link -- */
+
+    /**
+     * Read the name list.
+     *
+     * Its failure is kept apart from `this.error` on purpose: a profile whose
+     * name list failed to load is still a profile, and the card says so where
+     * the card is rather than replacing the page with an error.
+     */
+    async _loadNames() {
+        try {
+            this.names = await api.channels.mine();
+            this.nameError = null;
+        } catch (err) {
+            this.nameError = err.message;
+        }
+    }
+
+    /** Ask whether what is in the field right now is free, and say so in place. */
+    async _checkName() {
+        const typed = (this.nameDraft ?? '').trim();
+        const line = this.mount.querySelector('#channel-status');
+
+        // Unchanged from what they already hold: nothing to ask, and asking
+        // would answer "that one is already yours" at every keystroke of a
+        // name they are only half way through editing.
+        if (!typed || typed === this.names?.primary) {
+            this.nameCheck = null;
+            if (line) line.innerHTML = this._nameStatusHtml();
+            return;
+        }
+
+        this.nameCheck = { pending: true };
+        if (line) line.innerHTML = this._nameStatusHtml();
+
+        try {
+            const answer = await api.channels.check(typed);
+
+            // The field moved on while the answer was in flight.
+            if ((this.nameDraft ?? '').trim() !== typed) return;
+
+            this.nameCheck = answer;
+        } catch (err) {
+            this.nameCheck = { available: false, error: err.message };
+        }
+
+        const current = this.mount.querySelector('#channel-status');
+        if (current) current.innerHTML = this._nameStatusHtml();
+    }
+
+    /**
+     * Claim the name in the field, or move the channel onto it.
+     *
+     * @param {{additional?: boolean}} [opts] - `additional` adds a name beside
+     *   the existing one instead of replacing it, which only an account with a
+     *   limit above one can do.
+     */
+    async _saveName({ additional = false } = {}) {
+        const typed = (this.mount.querySelector('#channel-name')?.value ?? '').trim();
+
+        if (!typed) {
+            this.nameError = 'Pick a channel name.';
+            this._render();
+            return;
+        }
+
+        if (!additional && typed === this.names?.primary) {
+            this.nameNotice = 'That is already your link.';
+            this._render();
+            return;
+        }
+
+        const primary = this.names?.primary;
+
+        await this._nameAction(() =>
+            additional || !primary ? api.channels.claim(typed, !primary) : api.channels.rename(typed)
+        );
+    }
+
+    /**
+     * Run something that changes the name list, then re-read everything.
+     *
+     * Separate from `_run` because the errors belong beside the field rather
+     * than at the top of the page, and because a successful one has to forget
+     * the draft - otherwise the field keeps showing what was typed instead of
+     * what was saved.
+     */
+    async _nameAction(work) {
+        this.busy = true;
+        this.nameError = null;
+        this.nameNotice = null;
+        this._render();
+
+        try {
+            await work();
+            this.nameDraft = null;
+            this.nameCheck = null;
+            this.nameNotice = 'Saved.';
+        } catch (err) {
+            this.nameError = err.message;
+        } finally {
+            this.busy = false;
+        }
+
+        await this.refresh();
+    }
+
+    /* ------------------------------------------------------------ operator -- */
+
+    async _loadReserved() {
+        try {
+            this.reserved = await api.reserved.list();
+            this.reservedError = null;
+        } catch (err) {
+            this.reservedError = err.message;
+        }
+
+        this._render();
+    }
+
+    async _reserve() {
+        const slug = (this.mount.querySelector('#reserve-slug')?.value ?? '').trim();
+        const reason = (this.mount.querySelector('#reserve-reason')?.value ?? '').trim();
+
+        if (!slug) {
+            this.reservedError = 'Type the name to reserve.';
+            this._render();
+            return;
+        }
+
+        await this._reservedAction(() => api.reserved.add(slug, reason));
+    }
+
+    async _unreserve(slug) {
+        await this._reservedAction(() => api.reserved.remove(slug));
+    }
+
+    async _reservedAction(work) {
+        this.busy = true;
+        this.reservedError = null;
+        this._render();
+
+        try {
+            await work();
+        } catch (err) {
+            this.reservedError = err.message;
+        } finally {
+            this.busy = false;
+        }
+
+        await this._loadReserved();
+    }
+}
+
+/**
+ * Copy, with a fallback.
+ *
+ * The async clipboard API needs a secure context, and this site is reachable
+ * over plain HTTP on a LAN - so the field stays selectable and the button says
+ * "press Ctrl-C" rather than failing silently. Same shape as the one in
+ * Studio; see `src/ui/creator/portal.js`.
+ */
+async function copyToClipboard(btn, root) {
+    const original = btn.textContent;
+
+    try {
+        await navigator.clipboard.writeText(btn.dataset.value);
+        btn.textContent = 'Copied';
+    } catch {
+        root.querySelector('.channel-url')?.select();
+        btn.textContent = 'Press Ctrl-C';
+    }
+
+    setTimeout(() => {
+        btn.textContent = original;
+    }, 2000);
 }
 
 function escapeHtml(value) {

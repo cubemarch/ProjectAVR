@@ -11,16 +11,22 @@ import { getDb, sessions } from './db/index.js';
 import { getStorage, assertSafeKey } from './storage/index.js';
 import { attachUser } from './auth/middleware.js';
 import { mountAuth } from './auth/routes.js';
+import { configureSuperuser } from './auth/superuser.js';
 import { assertSigningKeyConfigured } from './auth/tokens.js';
 import { mountIdentity } from './identity/routes.js';
+import { mountIdentityReturn } from './identity/return-page.js';
 import { assertIdentityConfigured, getProvider, identityEnforced, identityGaps } from './identity/providers.js';
+import { jurisdictionBanner } from './identity/jurisdiction.js';
 import { runIdentitySweep } from './identity/retention.js';
 import { mountCreator } from './routes/creator.js';
 import { mountViewer } from './routes/viewer.js';
 import { mountProfiles } from './routes/profiles.js';
+import { mountChannels } from './routes/channels.js';
 import { mountRecordings } from './routes/recordings.js';
 import { mountCredits } from './credits/index.js';
 import { paymentsBanner } from './credits/providers.js';
+import { mountUnsubscribe } from './mail/unsubscribe.js';
+import { mailBanner } from './mail/providers.js';
 import { mountDeoVR } from './deovr.js';
 import { mountPlaylist } from './playlist.js';
 import { mountArt } from './art.js';
@@ -109,6 +115,10 @@ app.use(attachUser);
 assertSigningKeyConfigured();
 assertIdentityConfigured();
 getDb();
+
+// After `getDb()`, because it writes to the users table, and at boot because
+// the environment is the only place this role can come from.
+configureSuperuser();
 
 /* --------------------------------------------------------------- streaming -- */
 
@@ -229,6 +239,7 @@ mountIdentity(app);
 mountViewer(app);
 mountCreator(app);
 mountProfiles(app);
+mountChannels(app);
 mountCredits(app);
 mountRecordings(app);
 mountLive(app);
@@ -257,6 +268,17 @@ app.get('/api/health', async (req, res) => {
 mountArt(app);
 mountDeoVR(app);
 mountPlaylist(app);
+
+// Where the identity provider returns the popup. Not under `/api`, and like
+// DLNA below it has to claim its path before the SPA fallback - if the
+// catch-all answers it with index.html the popup shows the front page, which
+// is the bug this page exists to fix.
+mountIdentityReturn(app);
+
+// The unsubscribe link in a marketing email. Also not under `/api`, because
+// it is a URL a mail client opens rather than something the app calls, and
+// also above the fallback for the same reason.
+mountUnsubscribe(app);
 
 // DLNA must claim its routes before the SPA fallback, or the catch-all answers
 // device discovery with index.html.
@@ -371,9 +393,19 @@ export function start() {
             console.log(`               ⚠ ${gap} is not set — that check cannot run`);
         }
 
+        // Which viewers get a document check and which get a button, said out
+        // loud for the third time on the same reasoning: a deployment with no
+        // geolocation in front of it looks, from in here, exactly like one that
+        // has it and is seeing only traffic from states with no statute.
+        console.log(`  ${jurisdictionBanner()}`);
+
         // Same reasoning, for the same reason: a payment provider that grants
         // credits without taking money looks exactly like one that works.
         console.log(`  ${paymentsBanner()}`);
+
+        // And again: a mailer that delivers nothing reports every send as a
+        // success, so the only way to notice is to be told at boot.
+        console.log(`  ${mailBanner()}`);
 
         console.log('');
     });

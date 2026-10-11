@@ -2636,6 +2636,75 @@ body.is-profile {
     accent-color: var(--accent);
 }
 
+.profile-card .ok { color: #4ade80; font-size: 13px; margin: 0; }
+.profile-card .error { color: #ff9db8; font-size: 13px; margin: 0; }
+
+/* ----------------------------------------------------------- the address -- */
+
+/* The prefix and the field read as one address, so they sit against each
+   other as a single bordered box - a separate `https://host/` label beside a
+   separate input looks like two things to fill in. */
+.link-row {
+    display: flex;
+    align-items: stretch;
+    gap: 8px;
+}
+
+.link-row .link-prefix {
+    display: flex;
+    align-items: center;
+    padding: 0 2px 0 12px;
+    background: var(--surface);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    border-right: none;
+    border-radius: 5px 0 0 5px;
+    color: var(--text-faint);
+    font-size: 14.5px;
+    white-space: nowrap;
+}
+
+.profile-card .link-row .link-prefix + input[type="text"] {
+    border-radius: 0 5px 5px 0;
+    border-left: none;
+    padding-left: 0;
+}
+
+.profile-card input.channel-url {
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 13.5px;
+    color: var(--text-dim);
+}
+
+.name-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    gap: 8px;
+}
+
+.name-list li {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 9px 12px;
+    background: var(--surface);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 5px;
+    font-size: 13.5px;
+}
+
+/* Whatever sits last on the row goes to the right edge, so the buttons line
+   up down the list however long the names and reasons are. */
+.name-list li > :last-child {
+    margin-left: auto;
+}
+
+.name-list code {
+    font-size: 13.5px;
+    color: var(--text);
+}
+
 .btn.ghost {
     background: rgba(255, 255, 255, 0.08);
     color: var(--text);

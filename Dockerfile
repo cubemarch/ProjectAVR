@@ -56,6 +56,14 @@ COPY server ./server
 COPY src ./src
 COPY public ./public
 
+# `brand.js` is the single constant the product name is drawn from, and
+# `server/index.js` imports it at module load - without it the container exits
+# before it listens. `art/` holds the mark that gets burned into every
+# rendition; a missing file there packages the title unmarked instead of
+# failing, so leaving it out is a defect that ships silently.
+COPY brand.js ./
+COPY art ./art
+
 # Persistent state: the SQLite catalog and the media library. Both default to
 # ./data inside the image, which would vanish with the container, so they are
 # moved to a single mount point.

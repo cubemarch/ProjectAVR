@@ -1,5 +1,6 @@
 import { BRAND } from '../../brand.js';
 import { api } from '../api/client.js';
+import { sleepUntilReturn } from '../api/identity-return.js';
 import { brandLockup } from './brand-mark.js';
 import { icons } from './icons.js';
 import './auth-modal.css';
@@ -13,20 +14,29 @@ import './auth-modal.css';
  * live monitor, which is why it brings its own stylesheet instead of relying
  * on the home page's.
  *
- * Five steps, which are really two questions and three answers:
+ * Six steps, which are really two questions and four answers:
  *
  *   login         who are you
  *   register      who are you going to be - as a user, or as a creator
  *   creator       the publisher agreement on its own, for Become a creator
- *   age           a document check, for a user: a birthdate and a boolean
+ *   attest        a button, for a viewer in a state with no statute
+ *   age           a document check, for a viewer in one of the twenty-seven
  *   enrol         a document *and* a face, for a creator, once, here at signup
  *
- * The split between the last two is the whole design. A user is never asked
- * for a face. A creator is asked for one exactly once at registration, and the
- * enrolment reads their birthdate off the same document, so they are never
- * sent through the age check as well - see `adultConfirmed` on the server.
- * The face check that happens *per broadcast* is a different thing again and
- * does not live here; it belongs to the Go live panel in Studio.
+ * The split between the last three is the whole design.
+ *
+ * `attest` and `age` are the same question asked at two strengths, and which
+ * one a viewer gets is the server's decision from the address the request came
+ * from - never this file's, and never a preference. `_afterAuth` reads
+ * `api.ageOwes` and does what it is told. Twenty-seven states require a real
+ * check; asking everyone else for a government document would be collecting
+ * one because we could rather than because we had to.
+ *
+ * `enrol` is a different thing again: a user is never asked for a face. A
+ * creator is asked for one exactly once at registration, and the enrolment
+ * reads their birthdate off the same document, so they are never sent through
+ * either age step afterwards - see `adultConfirmed` on the server. The face
+ * check that happens *per broadcast* belongs to the Go live panel in Studio.
  */
 export class AuthModal {
     constructor() {
@@ -34,6 +44,9 @@ export class AuthModal {
         this.mode = 'login';
         this.role = 'viewer';
         this.reason = '';
+        this.checkState = null;
+        /** The server's reading of where this request came from. @type {object|null} */
+        this.jurisdiction = null;
         this._resolve = null;
         this._terms = null;
     }
@@ -141,6 +154,22 @@ export class AuthModal {
         });
 
         el.addEventListener('click', (e) => {
+            if (e.target.closest('[data-attest="confirm"]')) {
+                this._runAttestation();
+                return;
+            }
+            if (e.target.closest('[data-attest="retry"]')) {
+                this._enterCheckStep('attest');
+                return;
+            }
+            if (e.target.closest('[data-attest="leave"]')) {
+                // Not a dismissal. Somebody who says they are under 18 must not
+                // be left looking at the page behind the dialog, and the only
+                // place this app can send them that is certainly not an adult
+                // platform is off it.
+                window.location.href = 'https://www.google.com/';
+                return;
+            }
             if (e.target.closest('[data-age="start"]')) {
                 this._runAgeCheck();
                 return;
@@ -176,6 +205,10 @@ export class AuthModal {
     /* -------------------------------------------------------------- render -- */
 
     _render(values = {}) {
+        if (this.mode === 'attest') {
+            this.el.innerHTML = this._attestHtml();
+            return;
+        }
         if (this.mode === 'age') {
             this.el.innerHTML = this._checkHtml('age');
             return;
@@ -344,6 +377,11 @@ export class AuthModal {
                        ${clausesHtml('Creator agreement', this._terms.creator)}`
                     : ''
             }
+
+            <label class="checkbox">
+                <input name="marketingEmails" type="checkbox" />
+                <span>Email me news and offers. Optional, and you can turn it off at any time.</span>
+            </label>
         `;
     }
 
@@ -382,6 +420,38 @@ export class AuthModal {
     /* ------------------------------------------------------ identity steps -- */
 
     /**
+     * The button, for a viewer whose state asks for nothing more.
+     *
+     * Deliberately not dressed up as a check. It records that a person was
+     * asked and answered, which is all it is, and the second button is a real
+     * exit rather than a dismissal - a dialog whose only negative answer closes
+     * it and reveals the catalogue underneath would make the whole screen
+     * decorative.
+     *
+     * The wording and its version both come from the server, on the same
+     * reasoning as the other two disclosures: this page cannot record agreement
+     * to text nobody has seen.
+     */
+    _attestHtml() {
+        const state = this.checkState ?? {};
+        const attestation = this.jurisdiction?.attestation;
+
+        // Retry re-enters the step rather than re-pressing the button, because
+        // the failure may have been the policy not loading at all - in which
+        // case there is no wording on screen and nothing to confirm agreement
+        // to, and pressing again would post a version we never showed.
+        const body = state.step === 'error'
+            ? `<div class="field-error">${escapeHtml(state.message ?? '')}</div>
+               <button type="button" class="btn btn-primary auth-submit" data-attest="retry">Try again</button>`
+            : `<div class="consent-text"><p>${escapeHtml(attestation?.text ?? '')
+                  .replace(/\n\n/g, '</p><p>')}</p></div>
+               <button type="button" class="btn btn-primary auth-submit" data-attest="confirm">I am 18 or over</button>
+               <button type="button" class="btn auth-submit" data-attest="leave">I am under 18</button>`;
+
+        return this._shell({ title: 'Confirm your age', body: `<div class="auth-form">${body}</div>` });
+    }
+
+    /**
      * The age check and the enrolment, which are the same three screens.
      *
      * The disclosure text comes from the server and consent is recorded
@@ -393,17 +463,28 @@ export class AuthModal {
     _checkHtml(kind) {
         const state = this.checkState ?? {};
         const enrolling = kind === 'enrol';
+        const where = this.jurisdiction;
+
+        // Named, because "we need to see your ID" with no reason reads as a
+        // choice this platform made and it is not one. A viewer who wants to
+        // check gets the citation and a link to the statute itself.
+        const because =
+            !enrolling && where?.state
+                ? ` ${escapeHtml(where.state)} law requires us to verify your age before showing you
+                    anything${where.statuteUrl ? ` (<a href="${escapeHtml(where.statuteUrl)}" target="_blank" rel="noopener noreferrer">${escapeHtml(where.citation ?? 'the statute')}</a>)` : ''}.`
+                : '';
 
         const intro = enrolling
             ? `Before you can go on air we need to know who you are. One ID check and a short face
                scan, once — the face is matched by our provider and never stored here.`
-            : `${BRAND} is an adult platform. One document check and you are in — it takes about a
-               minute and you will not be asked again.`;
+            : `${BRAND} is an adult platform.${because} One document check and you are in — it takes
+               about a minute.`;
 
         const body = {
             consent: `
                 <p class="auth-reason">${intro}</p>
                 <div class="consent-text">${escapeHtml(state.text ?? '').replace(/\n\n/g, '</p><p>')}</div>
+                ${enrolling ? '' : this._methodsHtml()}
                 <label class="checkbox">
                     <input name="checkConsent" type="checkbox" />
                     <span>${enrolling ? 'I agree to the check described above.' : 'I agree, and I am over 18.'}</span>
@@ -439,6 +520,35 @@ export class AuthModal {
         return this._shell({ title: enrolling ? 'Verify your identity' : 'Confirm your age', body: `<div class="auth-form">${body}</div>` });
     }
 
+    /**
+     * The choice of verification route, where the viewer is owed one.
+     *
+     * Florida is the only state that requires this, and it requires it as an
+     * *offer*: both a standard and an anonymous route have to be available and
+     * the viewer picks. Nothing is pre-selected, which is the point - the
+     * server refuses a start with no method rather than defaulting one, so a
+     * viewer who ignores this cannot be quietly given the route we preferred.
+     *
+     * Everywhere else there is one route and this renders nothing.
+     */
+    _methodsHtml() {
+        const where = this.jurisdiction;
+        if (!where?.requiresChoice) return '';
+
+        const options = (where.methods ?? [])
+            .map(
+                (m) => `
+                <label class="checkbox">
+                    <input name="checkMethod" type="radio" value="${escapeHtml(m.id)}" />
+                    <span>${escapeHtml(m.label)}<small>${escapeHtml(m.describe)}</small></span>
+                </label>`
+            )
+            .join('');
+
+        return `<p class="auth-reason">Choose how you would like to be verified.</p>
+                <div class="method-choice">${options}</div>`;
+    }
+
     /** Switch into an identity step, loading the disclosure it needs. */
     async _enterCheckStep(kind) {
         this.mode = kind;
@@ -447,6 +557,17 @@ export class AuthModal {
         this._render();
 
         try {
+            // Both age steps name the statute and the attest step *is* the
+            // statute's absence, so the policy is loaded before either paints.
+            // The enrolment does not depend on it and does not wait for it.
+            if (kind !== 'enrol') this.jurisdiction = await api.identity.jurisdiction();
+
+            if (kind === 'attest') {
+                this.checkState = { step: 'consent', version: this.jurisdiction?.attestation?.version };
+                this._render();
+                return;
+            }
+
             const consent = await api.identity.consent();
             this.checkState =
                 kind === 'enrol'
@@ -459,11 +580,35 @@ export class AuthModal {
         this._render();
     }
 
+    /**
+     * The button press.
+     *
+     * One round trip and no polling: there is no provider in this path and
+     * nothing to wait for. The session is re-read afterwards for the same
+     * reason the document flow re-reads it - the page behind the dialog is
+     * still holding the answer from before the press.
+     */
+    async _runAttestation() {
+        const version = this.jurisdiction?.attestation?.version;
+
+        try {
+            await api.identity.attest(version);
+            await api.restore();
+            this.close(api.user);
+        } catch (err) {
+            this.checkState = { step: 'error', version, message: err.message };
+            this._render();
+        }
+    }
+
     _runAgeCheck() {
+        const picked = this.el.querySelector('input[name="checkMethod"]:checked');
+
         return this._runCheck({
-            start: (version) => api.identity.startAge(version),
+            start: (version) => api.identity.startAge(version, picked?.value),
             poll: () => api.identity.completeAge(),
-            windowName: 'avr-age-check'
+            windowName: 'avr-age-check',
+            flow: 'age'
         });
     }
 
@@ -471,7 +616,8 @@ export class AuthModal {
         return this._runCheck({
             start: (version) => api.identity.startEnrolment(version),
             poll: () => api.identity.completeEnrolment(),
-            windowName: 'avr-enrolment'
+            windowName: 'avr-enrolment',
+            flow: 'enrol'
         });
     }
 
@@ -480,9 +626,10 @@ export class AuthModal {
      *
      * Every poll is a prompt for the server to go and ask the provider. The
      * page never reports its own verdict, and there is no branch here in which
-     * it could.
+     * it could. The return page can cut a wait short (`sleepUntilReturn`), but
+     * that only changes *when* the question below is asked, never its answer.
      */
-    async _runCheck({ start, poll, windowName }) {
+    async _runCheck({ start, poll, windowName, flow: flowName }) {
         const agreed = this.el.querySelector('input[name="checkConsent"]');
         if (agreed && !agreed.checked) {
             this.checkState = { ...this.checkState, step: 'error', message: 'You have to agree before the check can start.' };
@@ -510,7 +657,7 @@ export class AuthModal {
             for (;;) {
                 if (!this.el.classList.contains('open')) return;
 
-                await new Promise((r) => setTimeout(r, 3000));
+                await sleepUntilReturn(3000, flowName);
 
                 const result = await poll();
                 if (result.status === 'pending') continue;
@@ -570,6 +717,9 @@ export class AuthModal {
                       role: creator ? 'creator' : 'viewer',
                       tagline: data.tagline ?? '',
                       bio: data.bio ?? '',
+                      // A real boolean, because the server counts nothing else
+                      // as consent - an unticked box is absent from FormData.
+                      marketingEmails: Boolean(data.marketingEmails),
                       acceptedTerms: this._terms?.terms?.version,
                       acceptedCreatorTerms: creator ? this._terms?.creator?.version : undefined
                   })
@@ -598,9 +748,15 @@ export class AuthModal {
      * Where an account goes next, which depends only on what it still owes.
      *
      * A creator owes an enrolment; passing it establishes their age too, so
-     * they are never sent to the age check afterwards. Anyone else owes the
-     * age check. An account that owes neither is simply signed in - somebody
-     * who verified last year is not asked again on every visit.
+     * they are never sent to the age check afterwards. Everyone else owes
+     * whatever the server says they owe, which is a document check in the
+     * twenty-seven states with a statute and a button everywhere else. An
+     * account that owes neither is simply signed in - somebody who verified
+     * last year is not asked again on every visit.
+     *
+     * The branch is on `api.ageOwes` rather than on a flag of our own because
+     * only the server knows where the request came from, and the answer
+     * changes when the viewer travels.
      */
     async _afterAuth(user) {
         if (api.isCreator && !api.enrolled) {
@@ -608,8 +764,9 @@ export class AuthModal {
             return;
         }
 
-        if (!api.ageVerified) {
-            await this._enterCheckStep('age');
+        const owes = api.ageOwes;
+        if (owes) {
+            await this._enterCheckStep(owes === 'attestation' ? 'attest' : 'age');
             return;
         }
 

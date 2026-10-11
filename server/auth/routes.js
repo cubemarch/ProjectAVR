@@ -8,13 +8,16 @@ import {
     TERMS_VERSION,
     CREATOR_TERMS_VERSION
 } from './agreements.js';
-import { adultConfirmed } from '../identity/age.js';
+import { adultConfirmed, ageGate } from '../identity/age.js';
+import { publicPolicy } from '../identity/jurisdiction.js';
 import { hashPassword, verifyPassword, needsRehash, getDummyHash } from './passwords.js';
 import { issueAccessToken, issueRefreshToken, rotateRefreshToken, revokeRefreshToken, accessTokenTtlSeconds, refreshTtlDays } from './tokens.js';
 import { requireAuth, loadFullUser, rateLimit } from './middleware.js';
+import { isOperatorEmail } from './superuser.js';
 import { revokeBroadcastGrants } from '../identity/broadcast.js';
 import { revokePortalUnlocks } from '../identity/portal.js';
 import { readiness } from '../live/readiness.js';
+import { notify } from '../mail/index.js';
 import { getDb } from '../db/index.js';
 
 /**
@@ -67,6 +70,12 @@ function validateRegistration(body) {
     const tagline = String(body?.tagline ?? '').trim();
     const bio = String(body?.bio ?? '').trim();
 
+    // Marketing consent. Absent means no - a form that omits the field has not
+    // asked the question, and an unanswered question is not agreement. Only an
+    // explicit `true` counts, so a client sending `"false"`, `0` or `"on"` does
+    // not accidentally opt somebody in.
+    const marketingEmails = body?.marketingEmails === true;
+
     if (!EMAIL_RE.test(email) || email.length > 254) errors.push('A valid email address is required.');
     if (password.length < 10) errors.push('Password must be at least 10 characters.');
     if (password.length > 256) errors.push('Password must be at most 256 characters.');
@@ -82,7 +91,7 @@ function validateRegistration(body) {
         errors.push('The creator agreement must be accepted.');
     }
 
-    return { errors, email, password, displayName, wantsCreator, tagline, bio };
+    return { errors, email, password, displayName, wantsCreator, tagline, bio, marketingEmails };
 }
 
 /**
@@ -102,7 +111,8 @@ export function mountAuth(app) {
     });
 
     router.post('/register', rateLimit({ windowMs: 60_000, max: 5 }), async (req, res) => {
-        const { errors, email, password, displayName, wantsCreator, tagline, bio } = validateRegistration(req.body);
+        const { errors, email, password, displayName, wantsCreator, tagline, bio, marketingEmails } =
+            validateRegistration(req.body);
 
         if (errors.length) {
             res.status(400).json({ error: errors[0], errors });
@@ -118,12 +128,28 @@ export function mountAuth(app) {
         }
 
         // The very first account becomes an admin so a fresh install is usable
-        // without a seeding step.
-        const role = users.count() === 0 ? 'admin' : wantsCreator ? 'creator' : 'viewer';
+        // without a seeding step. The operator's own address, named in the
+        // environment, outranks that: `configureSuperuser` only runs at boot,
+        // so without this the promotion would wait for a restart nobody knows
+        // to perform. The environment is still the only place the role can
+        // come from - this reads it, it does not accept one.
+        const role = isOperatorEmail(email)
+            ? 'superuser'
+            : users.count() === 0
+              ? 'admin'
+              : wantsCreator
+                ? 'creator'
+                : 'viewer';
 
         let user;
         try {
-            user = users.create({ email, passwordHash: await hashPassword(password), displayName, role });
+            user = users.create({
+                email,
+                passwordHash: await hashPassword(password),
+                displayName,
+                role,
+                marketingEmails
+            });
         } catch (err) {
             // UNIQUE violation from a concurrent registration of the same email.
             if (String(err.message).includes('UNIQUE')) {
@@ -150,6 +176,11 @@ export function mountAuth(app) {
 
         await establishSession(res, user, req.get('user-agent'));
 
+        // Not awaited, and deliberately after the session is established: the
+        // account is created either way, and `notify` never throws. See
+        // `server/mail/index.js`.
+        notify('welcome', user, { displayName: user.display_name, creator: role === 'creator' });
+
         // The account exists and is signed in, and can see nothing. Saying so
         // in the registration response rather than letting the first catalogue
         // request 403 is the difference between a next step and a dead end.
@@ -164,6 +195,7 @@ export function mountAuth(app) {
             verification: verificationFor(user),
             ageAssurance: ageFor(user),
             adultConfirmed: adultConfirmed(user),
+            ...gateFor(req, user),
             ...(await tokenPayload(user))
         });
     });
@@ -203,6 +235,7 @@ export function mountAuth(app) {
             verification: verificationFor(user),
             ageAssurance: ageFor(user),
             adultConfirmed: adultConfirmed(user),
+            ...gateFor(req, user),
             ...(await tokenPayload(user))
         });
     });
@@ -232,6 +265,7 @@ export function mountAuth(app) {
             verification: verificationFor(user),
             ageAssurance: ageFor(user),
             adultConfirmed: adultConfirmed(user),
+            ...gateFor(req, user),
             ...(await tokenPayload(user))
         });
     });
@@ -266,6 +300,10 @@ export function mountAuth(app) {
         revokePortalUnlocks(req.user.id);
         readiness.reset(req.user.id);
 
+        // The point of this one is that it reaches the account holder even
+        // when the person who pressed the button is not them.
+        notify('sessions-revoked', req.user);
+
         clearSessionCookies(res);
         res.status(204).end();
     });
@@ -278,6 +316,7 @@ export function mountAuth(app) {
             verification: verificationFor(req.user),
             ageAssurance: ageFor(req.user),
             adultConfirmed: adultConfirmed(req.user),
+            ...gateFor(req, req.user),
             agreements: agreements.forUser(req.user.id)
         });
     });
@@ -329,6 +368,8 @@ export function mountAuth(app) {
             ip: req.ip
         });
 
+        notify('creator-enabled', updated, { displayName: updated.display_name });
+
         res.json({
             user: users.publicView(updated),
             verification: verificationFor(updated),
@@ -361,6 +402,32 @@ function verificationFor(user) {
  */
 function ageFor(user) {
     return ageAssurances.publicView(ageAssurances.byUser(user.id));
+}
+
+/**
+ * Which gate this account faces *from here*, carried on every session payload.
+ *
+ * `ageAssurance` above is an account-level fact and does not answer the
+ * question the client actually has, which is whether to show the catalogue to
+ * this person on this request. Those two come apart in both directions: a
+ * viewer in Oregon needs no document at all, and a viewer in Tennessee with a
+ * perfectly current assurance is out of session an hour after taking it.
+ *
+ * Sent with the session rather than fetched separately because the alternative
+ * is a second round trip before the first paint, on every page load, for an
+ * answer the server already had in hand.
+ *
+ * `ageGate` reads `req.user`, which these handlers do not always populate -
+ * sign-up and login resolve the account themselves - so it is passed a request
+ * shaped the way the gate expects rather than the raw one.
+ */
+function gateFor(req, user) {
+    const gate = ageGate({ headers: req.headers, user });
+
+    return {
+        jurisdiction: publicPolicy(gate.policy),
+        ageGate: { ok: gate.ok, owes: gate.owes, reason: gate.reason, sessionExpiresAt: gate.sessionExpiresAt }
+    };
 }
 
 async function establishSession(res, user, userAgent) {

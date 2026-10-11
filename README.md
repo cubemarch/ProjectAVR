@@ -220,6 +220,7 @@ None of these are hidden behind an abstraction that pretends otherwise.
 | `PORT` | `8080` | HTTP port |
 | `AVR_DB` | `data/projectavr.db` | SQLite path |
 | `AVR_JWT_SECRET` | dev file | **Required in production.** Must be ≥32 chars and identical on every node |
+| `AVR_SUPERUSER_EMAIL` | unset | The account that runs the deployment, promoted to `superuser` at boot and at signup. Clearing it demotes whoever held the role |
 | `AVR_STORAGE` | `local` | `s3` to hand delivery to object storage |
 | `S3_HOST`, `S3_REGION`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY` | — | Required when `AVR_STORAGE=s3` |
 | `S3_PATH_PREFIX` | — | For path-style endpoints, e.g. `/my-bucket` (MinIO) |
@@ -261,11 +262,17 @@ minted by one node fail on another.
 
 ## Accounts
 
-Three roles, ranked so `requireRole('creator')` also admits admins:
+Four roles, ranked so `requireRole('creator')` also admits everyone above it.
+The ladder lives in [`src/auth/roles.js`](src/auth/roles.js) and is shared by
+the server and the browser, so a guard on one and a hidden button on the other
+cannot disagree about who counts:
 
 - **viewer** — browse, play, resume position and My List synced across devices
 - **creator** — everything above, plus Creator Studio
 - **admin** — everything, and can act on any title
+- **superuser** — the operator of the deployment: reserves channel names,
+  claims reserved ones, and holds several names for one channel. Set by
+  `AVR_SUPERUSER_EMAIL` and promoted at boot. There is no route that grants it
 
 **Security posture.** Passwords are scrypt with cost parameters stored inside
 each hash, so they can be raised later and existing hashes upgrade on next

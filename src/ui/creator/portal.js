@@ -1,5 +1,6 @@
 import { LIVE_DESTINATION_NAME } from '../../../brand.js';
 import { api } from '../../api/client.js';
+import { sleepUntilReturn } from '../../api/identity-return.js';
 import { brandLockup } from '../brand-mark.js';
 import { icons } from '../icons.js';
 import { formatDuration } from '../../catalog/catalog.js';
@@ -65,6 +66,9 @@ export class CreatorPortal {
         this.room = null;
         this.roomViewer = null;
         this.roomClosedBecause = null;
+
+        /** The creator's `/<name>`, which is the link they give an audience. */
+        this.channelName = null;
     }
 
     async open(view = 'dashboard') {
@@ -168,7 +172,16 @@ export class CreatorPortal {
             this.pricing = null;
         }
 
-        if (this.visible && this.view === 'dashboard') this._render();
+        // The permanent address, read here rather than in its own pass: the Go
+        // live panel shows it beside the throwaway one, and one failed request
+        // should not be able to leave the two disagreeing about whether the
+        // creator has a name.
+        this.channelName = await api.channels
+            .mine()
+            .then((names) => names.primary)
+            .catch(() => null);
+
+        if (this.visible && (this.view === 'dashboard' || this.view === 'broadcast')) this._render();
     }
 
     async refresh() {
@@ -859,7 +872,7 @@ export class CreatorPortal {
                     }
 
                     <p class="muted">
-                        Open VRecord on your phone. It will ask where to send the broadcast.
+                        Open your capture app on your phone. It will ask where to send the broadcast.
                         Name the destination below, choose who is watching, then scan the code that
                         appears with the app — it fills in the address and the stream key for you.
                     </p>
@@ -882,6 +895,8 @@ export class CreatorPortal {
                         minutes — so create it when you are ready to start rather than in advance.
                     </p>
                 </section>
+
+                ${this._channelLinkHtml()}
             `;
         }
 
@@ -906,7 +921,7 @@ export class CreatorPortal {
                 }
 
                 <p class="muted">
-                    In VRecord, add a destination and tap Scan. Point the phone at this code.
+                    In your capture app, add a destination and scan this code with it.
                 </p>
 
                 ${this._destinationQrHtml(d)}
@@ -945,6 +960,49 @@ export class CreatorPortal {
                 }
 
                 <button class="btn btn-secondary sm" data-action="new-destination">Create another</button>
+            </section>
+
+            ${this._channelLinkHtml()}
+        `;
+    }
+
+    /**
+     * The permanent address, next to the throwaway one.
+     *
+     * These two links sit together because the expensive mistake is confusing
+     * them. The destination link above authorises a broadcast: it is a
+     * credential, it is good once, and a creator who pastes it into a bio has
+     * handed somebody their camera. This one is public, it never changes, and
+     * it is the one that belongs on a card. Putting them on separate screens
+     * would mean the only place they are ever compared is in somebody's memory.
+     */
+    _channelLinkHtml() {
+        const slug = this.channelName;
+
+        return `
+            <section class="panel">
+                <h3 class="section-title">Your viewers' link</h3>
+
+                ${
+                    slug
+                        ? `<div class="destination-row">
+                               <input class="destination-url" type="text" readonly
+                                      value="${escapeAttr(channelUrl(slug))}" spellcheck="false"
+                                      onfocus="this.select()">
+                               <button class="btn btn-primary" data-action="copy-destination"
+                                       data-value="${escapeAttr(channelUrl(slug))}">Copy</button>
+                           </div>
+                           <p class="muted small">
+                               Share this one, not the destination link above. It is public, it
+                               does not change between broadcasts, and it opens whatever you are
+                               streaming the moment you go on air.
+                           </p>`
+                        : `<p class="muted">
+                               You have not chosen a channel name yet, so there is no permanent
+                               address to give out. Pick one under
+                               <strong>Your link</strong> on your profile.
+                           </p>`
+                }
             </section>
         `;
     }
@@ -1525,7 +1583,15 @@ export class CreatorPortal {
             await navigator.clipboard.writeText(value);
             btn.textContent = 'Copied';
         } catch {
-            this.body.querySelector('.destination-url')?.select();
+            // The row this button is in, not the first one on the panel -
+            // there are two now, and selecting the broadcast credential
+            // because somebody asked for their public link would be the wrong
+            // forty characters to hand them to press Ctrl-C on.
+            const scoped =
+                btn.closest('.destination-row')?.querySelector('.destination-url') ??
+                this.body.querySelector('.destination-url');
+
+            scoped?.select();
             btn.textContent = 'Press Ctrl-C';
         }
 
@@ -1573,7 +1639,7 @@ export class CreatorPortal {
             for (;;) {
                 if (!this.visible) return;
 
-                await sleep(3000);
+                await sleepUntilReturn(3000, 'enrol');
 
                 const verification = await api.identity.completeEnrolment();
                 if (verification.status === 'pending') continue;
@@ -1912,3 +1978,10 @@ function escapeHtml(str) {
 }
 
 const escapeAttr = escapeHtml;
+
+// The audience link. Built from the current origin rather than a configured
+// base, so a creator reading it off a laptop on the local network copies a URL
+// that works from that laptop.
+function channelUrl(slug) {
+    return `${window.location.origin}/${slug}`;
+}

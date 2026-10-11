@@ -76,13 +76,31 @@ export function getDb() {
  * additive, nullable-column-only migration, applied at open, in the same
  * retry loop as the schema itself.
  *
+ * `NOT NULL` is permitted alongside a constant `DEFAULT`, and only there.
+ * SQLite accepts that form because the default is what every existing row
+ * gets, so the statement is still a single rewrite-free addition with no
+ * backfill to plan and no window in which the column is half-populated. A
+ * `NOT NULL` with no default is rejected by SQLite itself.
+ *
  * Deliberately not a migration framework. Anything that needs to *change* or
- * *drop* a column, or backfill one, needs a versioned migration and a plan for
- * running it, and should not be smuggled in here.
+ * *drop* a column, or backfill one from another, needs a versioned migration
+ * and a plan for running it, and should not be smuggled in here.
  */
 const ADDED_COLUMNS = [
     // Packaging output. See `server/media/jobs.js`.
-    { table: 'titles', column: 'renditions', type: 'TEXT' }
+    { table: 'titles', column: 'renditions', type: 'TEXT' },
+
+    // Marketing consent. Off for every account that predates the checkbox,
+    // which is the only defensible reading of an account that was never asked.
+    { table: 'users', column: 'marketing_emails', type: 'INTEGER NOT NULL DEFAULT 0' },
+
+    // Which method satisfied the state statute, and which state's. Null for
+    // every check that predates the jurisdiction layer, which is honest: those
+    // ran before the server knew where the viewer was, so there is no answer to
+    // backfill. They still read as valid assurances - the gate asks whether a
+    // current check exists, not which state it was taken under.
+    { table: 'age_assurances', column: 'method', type: 'TEXT' },
+    { table: 'age_assurances', column: 'jurisdiction', type: 'TEXT' }
 ];
 
 function addMissingColumns(database) {
@@ -128,18 +146,19 @@ const nowIso = () => new Date().toISOString().replace('T', ' ').slice(0, 19);
 
 export const users = {
     /**
-     * @param {{email: string, passwordHash: string, displayName: string, role?: string}} input
+     * @param {{email: string, passwordHash: string, displayName: string,
+     *          role?: string, marketingEmails?: boolean}} input
      * @returns {object} The created user row.
      */
-    create({ email, passwordHash, displayName, role = 'viewer' }) {
+    create({ email, passwordHash, displayName, role = 'viewer', marketingEmails = false }) {
         const id = newId();
 
         getDb()
             .prepare(
-                `INSERT INTO users (id, email, password_hash, display_name, role, feed_token)
-                 VALUES (?, ?, ?, ?, ?, ?)`
+                `INSERT INTO users (id, email, password_hash, display_name, role, feed_token, marketing_emails)
+                 VALUES (?, ?, ?, ?, ?, ?, ?)`
             )
-            .run(id, email.trim(), passwordHash, displayName.trim(), role, newToken());
+            .run(id, email.trim(), passwordHash, displayName.trim(), role, newToken(), marketingEmails ? 1 : 0);
 
         return this.byId(id);
     },
@@ -152,8 +171,33 @@ export const users = {
         return getDb().prepare('SELECT * FROM users WHERE email = ?').get(String(email).trim()) ?? null;
     },
 
+    /**
+     * The same lookup, ignoring case.
+     *
+     * Addresses are stored as the account typed them, so an exact match is
+     * right for sign-in (where the account supplies both sides) and wrong for
+     * anything matching against a value written somewhere else - a config
+     * variable, a support ticket, an invoice.
+     */
+    byEmailInsensitive(email) {
+        return (
+            getDb()
+                .prepare('SELECT * FROM users WHERE email = ? COLLATE NOCASE')
+                .get(String(email).trim()) ?? null
+        );
+    },
+
     byFeedToken(token) {
         return getDb().prepare('SELECT * FROM users WHERE feed_token = ? AND disabled = 0').get(token) ?? null;
+    },
+
+    /**
+     * Everybody holding one exact role. Not ranked - `withRole('admin')` does
+     * not include superusers, because the callers that want this want the set
+     * to reconcile, not the set to admit.
+     */
+    withRole(role) {
+        return getDb().prepare('SELECT * FROM users WHERE role = ?').all(role);
     },
 
     setRole(id, role) {
@@ -165,6 +209,23 @@ export const users = {
         const token = newToken();
         getDb().prepare("UPDATE users SET feed_token = ?, updated_at = datetime('now') WHERE id = ?").run(token, id);
         return token;
+    },
+
+    /**
+     * Opt in or out of marketing email.
+     *
+     * Reachable from the settings page and, without a session, from the
+     * unsubscribe link in a marketing email. Nothing else may call it: an
+     * opt-in has to come from the person, and a code path that sets this to 1
+     * as a side effect of something else is the thing that turns a mailing
+     * list into a complaint.
+     */
+    setMarketingEmails(id, on) {
+        getDb()
+            .prepare("UPDATE users SET marketing_emails = ?, updated_at = datetime('now') WHERE id = ?")
+            .run(on ? 1 : 0, id);
+
+        return this.byId(id);
     },
 
     count() {
@@ -180,6 +241,7 @@ export const users = {
             displayName: user.display_name,
             role: user.role,
             feedToken: user.feed_token,
+            marketingEmails: Boolean(user.marketing_emails),
             createdAt: user.created_at
         };
     }
@@ -694,15 +756,16 @@ export const ageAssurances = {
 
     /**
      * @param {{userId: string, provider: string, inquiryId: string,
-     *          consentVersion: string, consentIp?: string}} input
+     *          consentVersion: string, consentIp?: string,
+     *          method?: string|null, jurisdiction?: string|null}} input
      */
-    start({ userId, provider, inquiryId, consentVersion, consentIp }) {
+    start({ userId, provider, inquiryId, consentVersion, consentIp, method, jurisdiction }) {
         getDb()
             .prepare(
                 `INSERT INTO age_assurances
                      (user_id, provider, provider_inquiry_id, status,
-                      consent_version, consent_at, consent_ip)
-                 VALUES (?, ?, ?, 'pending', ?, datetime('now'), ?)
+                      consent_version, consent_at, consent_ip, method, jurisdiction)
+                 VALUES (?, ?, ?, 'pending', ?, datetime('now'), ?, ?, ?)
                  ON CONFLICT (user_id) DO UPDATE SET
                      provider            = excluded.provider,
                      provider_inquiry_id = excluded.provider_inquiry_id,
@@ -711,9 +774,19 @@ export const ageAssurances = {
                      consent_version     = excluded.consent_version,
                      consent_at          = excluded.consent_at,
                      consent_ip          = excluded.consent_ip,
+                     method              = excluded.method,
+                     jurisdiction        = excluded.jurisdiction,
                      updated_at          = datetime('now')`
             )
-            .run(userId, provider, inquiryId, consentVersion, consentIp ?? null);
+            .run(
+                userId,
+                provider,
+                inquiryId,
+                consentVersion,
+                consentIp ?? null,
+                method ?? null,
+                jurisdiction ?? null
+            );
 
         return this.byUser(userId);
     },
@@ -772,9 +845,73 @@ export const ageAssurances = {
             status: this.isCurrent(row) ? 'verified' : row.status === 'verified' ? 'expired' : row.status,
             adultConfirmed: Boolean(row.adult_confirmed),
             documentCountry: row.document_country,
+            method: row.method ?? null,
             verifiedAt: row.verified_at,
             expiresAt: row.expires_at,
             declineReason: row.decline_reason
+        };
+    }
+};
+
+/* -------------------------------------------------------- age attestation -- */
+
+/**
+ * "I am 18", pressed in a state that asks for nothing more.
+ *
+ * Kept apart from {@link ageAssurances} at every level - its own table, its own
+ * accessor, its own reader - so that no caller can pick one up believing it is
+ * the other. See the comment over `age_attestations` in `schema.sql`.
+ */
+export const ageAttestations = {
+    byUser(userId) {
+        return getDb().prepare('SELECT * FROM age_attestations WHERE user_id = ?').get(userId) ?? null;
+    },
+
+    /**
+     * @param {{userId: string, version: string, region?: string|null,
+     *          country?: string|null, resolvedBy?: string|null,
+     *          ip?: string|null, expiresAt?: string|null}} input
+     */
+    record({ userId, version, region, country, resolvedBy, ip, expiresAt }) {
+        getDb()
+            .prepare(
+                `INSERT INTO age_attestations
+                     (user_id, region, country, resolved_by, version, attested_at, attested_ip, expires_at)
+                 VALUES (?, ?, ?, ?, ?, datetime('now'), ?, ?)
+                 ON CONFLICT (user_id) DO UPDATE SET
+                     region      = excluded.region,
+                     country     = excluded.country,
+                     resolved_by = excluded.resolved_by,
+                     version     = excluded.version,
+                     attested_at = excluded.attested_at,
+                     attested_ip = excluded.attested_ip,
+                     expires_at  = excluded.expires_at`
+            )
+            .run(userId, region ?? null, country ?? null, resolvedBy ?? null, version, ip ?? null, expiresAt ?? null);
+
+        return this.byUser(userId);
+    },
+
+    /** Evaluated rather than trusted, for the same reason as every other gate here. */
+    isCurrent(row) {
+        if (!row) return false;
+        if (!row.expires_at) return true;
+        return new Date(row.expires_at).getTime() > Date.now();
+    },
+
+    forget(userId) {
+        getDb().prepare('DELETE FROM age_attestations WHERE user_id = ?').run(userId);
+    },
+
+    publicView(row) {
+        if (!row) return { status: 'none' };
+
+        return {
+            status: this.isCurrent(row) ? 'attested' : 'expired',
+            region: row.region,
+            version: row.version,
+            attestedAt: row.attested_at,
+            expiresAt: row.expires_at
         };
     }
 };
@@ -1732,4 +1869,276 @@ export const recordingSales = {
     }
 };
 
+/* ----------------------------------------------------------------- email -- */
+
+/**
+ * The delivery log. See the comment on `email_messages` in `schema.sql` for
+ * what it is for and why the body is not in it.
+ */
+export const emailMessages = {
+    /**
+     * @param {{userId?: string|null, kind: string, category: string,
+     *          recipient: string, subject: string, provider: string,
+     *          status?: string, detail?: string|null}} input
+     * @returns {object} the row, so the caller can settle it by id
+     */
+    open({ userId = null, kind, category, recipient, subject, provider, status = 'queued', detail = null }) {
+        const id = newId();
+
+        getDb()
+            .prepare(
+                `INSERT INTO email_messages
+                     (id, user_id, kind, category, recipient, subject, provider, status, detail, settled_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CASE WHEN ? = 'queued' THEN NULL ELSE datetime('now') END)`
+            )
+            .run(
+                id,
+                userId,
+                kind,
+                category,
+                recipient,
+                subject.slice(0, 200),
+                provider,
+                status,
+                detail ? String(detail).slice(0, 500) : null,
+                status
+            );
+
+        return this.byId(id);
+    },
+
+    byId(id) {
+        return getDb().prepare('SELECT * FROM email_messages WHERE id = ?').get(id) ?? null;
+    },
+
+    /** @param {'sent'|'failed'|'suppressed'} status */
+    settle(id, status, { providerRef = null, detail = null } = {}) {
+        getDb()
+            .prepare(
+                `UPDATE email_messages
+                    SET status = ?, provider_ref = ?, detail = ?, settled_at = datetime('now')
+                  WHERE id = ?`
+            )
+            .run(status, providerRef, detail ? String(detail).slice(0, 500) : null, id);
+
+        return this.byId(id);
+    },
+
+    forUser(userId, limit = 50) {
+        return getDb()
+            .prepare('SELECT * FROM email_messages WHERE user_id = ? ORDER BY created_at DESC LIMIT ?')
+            .all(userId, Math.min(Number(limit) || 50, 200));
+    },
+
+    /**
+     * Everyone who has said yes to marketing and still has a usable account.
+     *
+     * The opt-in is the `WHERE`, not a filter applied afterwards by whoever is
+     * sending. A broadcast that reads the whole table and remembers to skip
+     * people is one refactor away from not skipping them.
+     */
+    marketingAudience() {
+        return getDb()
+            .prepare('SELECT * FROM users WHERE marketing_emails = 1 AND disabled = 0 ORDER BY created_at')
+            .all();
+    }
+};
+
 export { nowIso };
+
+/* --------------------------------------------------------- channel names -- */
+
+/**
+ * The names a channel answers to.
+ *
+ * One of them is primary and is what the site builds links from; the rest are
+ * aliases that resolve to the same channel. Who may hold more than one is
+ * decided in `server/channels/index.js` - this layer only enforces that a name
+ * belongs to at most one account and that an account has at most one primary.
+ *
+ * Every slug reaching these methods is expected to be already lowercased and
+ * shape-checked by `validateSlug`. Nothing here re-validates, because a second
+ * validator that disagrees with the first is worse than one.
+ */
+export const channelSlugs = {
+    /** @returns {{userId: string, slug: string, isPrimary: boolean}|null} */
+    resolve(slug) {
+        const row = getDb()
+            .prepare('SELECT slug, user_id, is_primary FROM channel_slugs WHERE slug = ?')
+            .get(String(slug ?? '').toLowerCase());
+
+        return row ? { userId: row.user_id, slug: row.slug, isPrimary: row.is_primary === 1 } : null;
+    },
+
+    /** Every name this channel answers to, primary first. */
+    forUser(userId) {
+        return getDb()
+            .prepare(
+                `SELECT slug, is_primary, created_at
+                   FROM channel_slugs
+                  WHERE user_id = ?
+                  ORDER BY is_primary DESC, created_at ASC`
+            )
+            .all(userId)
+            .map((row) => ({
+                slug: row.slug,
+                isPrimary: row.is_primary === 1,
+                createdAt: row.created_at
+            }));
+    },
+
+    /** The name to build links out of, or null for a channel with no name yet. */
+    primaryFor(userId) {
+        const row = getDb()
+            .prepare('SELECT slug FROM channel_slugs WHERE user_id = ? AND is_primary = 1')
+            .get(userId);
+
+        return row?.slug ?? null;
+    },
+
+    /**
+     * Take a name.
+     *
+     * Returns false rather than throwing when the name is gone, because losing
+     * a race for a name is an ordinary outcome that the form above has to
+     * render, not an exceptional one. Any other constraint failure is a bug and
+     * is allowed to propagate.
+     *
+     * @param {{userId: string, slug: string, primary?: boolean}} opts
+     */
+    claim({ userId, slug, primary = false }) {
+        const db = getDb();
+        const name = String(slug).toLowerCase();
+
+        try {
+            if (primary) {
+                // Demote first: the partial unique index would otherwise reject
+                // the insert, and SQLite has no deferred constraints to lean on.
+                db.prepare('UPDATE channel_slugs SET is_primary = 0 WHERE user_id = ?').run(userId);
+            }
+
+            db.prepare(
+                'INSERT INTO channel_slugs (slug, user_id, is_primary) VALUES (?, ?, ?)'
+            ).run(name, userId, primary ? 1 : 0);
+
+            return true;
+        } catch (err) {
+            if (/UNIQUE|constraint/i.test(err.message)) return false;
+            throw err;
+        }
+    },
+
+    /**
+     * Give a name up.
+     *
+     * Refuses to remove the last one. A channel with no name is unreachable at
+     * the only address its audience knows, and there is no UI anywhere that
+     * asks for that - so it is prevented here rather than guarded at each call
+     * site that might one day exist.
+     */
+    release({ userId, slug }) {
+        const db = getDb();
+        const name = String(slug).toLowerCase();
+
+        const held = this.forUser(userId);
+        if (held.length <= 1) return { ok: false, code: 'last_name' };
+
+        const row = held.find((s) => s.slug === name);
+        if (!row) return { ok: false, code: 'not_found' };
+
+        db.prepare('DELETE FROM channel_slugs WHERE slug = ? AND user_id = ?').run(name, userId);
+
+        // Releasing the primary promotes the oldest survivor, so the invariant
+        // "every channel has exactly one primary" holds without the caller
+        // having to think about it.
+        if (row.isPrimary) {
+            const next = this.forUser(userId)[0];
+            if (next) {
+                db.prepare('UPDATE channel_slugs SET is_primary = 1 WHERE slug = ?').run(next.slug);
+            }
+        }
+
+        return { ok: true };
+    },
+
+    /** Promote one of a channel's existing names to be the canonical one. */
+    setPrimary({ userId, slug }) {
+        const db = getDb();
+        const name = String(slug).toLowerCase();
+
+        const owned = db
+            .prepare('SELECT 1 FROM channel_slugs WHERE slug = ? AND user_id = ?')
+            .get(name, userId);
+
+        if (!owned) return false;
+
+        db.prepare('UPDATE channel_slugs SET is_primary = 0 WHERE user_id = ?').run(userId);
+        db.prepare('UPDATE channel_slugs SET is_primary = 1 WHERE slug = ?').run(name);
+
+        return true;
+    }
+};
+
+/* -------------------------------------------------------- reserved names -- */
+
+/**
+ * Names a superuser has taken out of circulation at runtime.
+ *
+ * Layered over the built-in list in `server/channels/slug.js`, never replacing
+ * it: the built-in list contains the router's own paths and must not be
+ * editable by anybody, including a superuser who is one typo away from
+ * releasing `api`.
+ */
+export const reservedSlugs = {
+    /** @returns {string[]} Just the words, for `validateSlug`'s `extraReserved`. */
+    all() {
+        return getDb()
+            .prepare('SELECT slug FROM reserved_slugs ORDER BY slug')
+            .all()
+            .map((row) => row.slug);
+    },
+
+    /** The same list with its provenance, for the console that manages it. */
+    list() {
+        return getDb()
+            .prepare(
+                `SELECT r.slug, r.reason, r.created_at, u.display_name AS reserved_by
+                   FROM reserved_slugs r
+              LEFT JOIN users u ON u.id = r.reserved_by
+                  ORDER BY r.created_at DESC`
+            )
+            .all()
+            .map((row) => ({
+                slug: row.slug,
+                reason: row.reason,
+                reservedBy: row.reserved_by,
+                createdAt: row.created_at
+            }));
+    },
+
+    /**
+     * Reserve a name.
+     *
+     * Idempotent: reserving a reserved name succeeds and changes nothing, so a
+     * double-submitted form is not an error to render.
+     */
+    add({ slug, reservedBy = null, reason = null }) {
+        getDb()
+            .prepare(
+                `INSERT INTO reserved_slugs (slug, reserved_by, reason) VALUES (?, ?, ?)
+                 ON CONFLICT (slug) DO NOTHING`
+            )
+            .run(String(slug).toLowerCase(), reservedBy, reason ? String(reason).slice(0, 200) : null);
+
+        return true;
+    },
+
+    /** Release one. Cannot touch the built-in list, which is not in this table. */
+    remove(slug) {
+        return (
+            getDb()
+                .prepare('DELETE FROM reserved_slugs WHERE slug = ?')
+                .run(String(slug).toLowerCase()).changes > 0
+        );
+    }
+};

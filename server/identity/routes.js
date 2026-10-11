@@ -1,7 +1,8 @@
 import express from 'express';
 
-import { verifications, ageAssurances, challenges, identityEvents } from '../db/index.js';
+import { verifications, ageAssurances, ageAttestations, challenges, identityEvents, users } from '../db/index.js';
 import { requireAuth, requireRole, loadFullUser, rateLimit } from '../auth/middleware.js';
+import { notify } from '../mail/index.js';
 import {
     getProvider,
     identityEnforced,
@@ -13,7 +14,14 @@ import {
     CHALLENGE_TTL_SECONDS,
     VERIFICATION_DAYS
 } from './providers.js';
-import { pullAgeVerdict, adultConfirmed } from './age.js';
+import { pullAgeVerdict, adultConfirmed, ageGate } from './age.js';
+import {
+    jurisdictionFor,
+    publicPolicy,
+    ATTESTATION_VERSION,
+    ATTESTATION_DAYS
+} from './jurisdiction.js';
+import { IDENTITY_RETURN_PATH } from './return-page.js';
 import { mintPortalUnlock, readPortalUnlock, revokePortalUnlocks } from './portal.js';
 import { buildPairingUrl, destinationName } from '../live/pairing.js';
 import { rooms } from '../live/rooms.js';
@@ -61,6 +69,87 @@ import {
  * the length of one sign-in is not worth a second transport and a second set of
  * reconnection semantics to avoid.
  */
+
+/**
+ * Where the provider should send the browser when it has finished with it.
+ *
+ * The client proposes the origin, because in development it is the only party
+ * that knows it: the page is served by Vite on another port over https while
+ * this server sees a proxied plain-http request, so deriving the origin from
+ * the request would aim the popup somewhere it cannot reach.
+ *
+ * What the client does not get to propose is where on that origin. This value
+ * is handed to the identity provider as the address to navigate to once the
+ * document has been photographed, so an unchecked one is an open redirect that
+ * arrives from the provider's own domain - which is the ideal place to put a
+ * page asking somebody to re-enter their password. The host therefore has to
+ * be the host that asked, the path is ours, and the flow name is the route's
+ * own rather than anything that came in with the request.
+ *
+ * An unusable proposal is dropped rather than refused. No callback means the
+ * provider leaves the popup on its own completion screen - worse, but it is
+ * what happened before this page existed and not worth failing a check over.
+ *
+ * @param {import('express').Request} req
+ * @param {'age'|'enrol'} flow
+ * @returns {string|null}
+ */
+function returnUrlFor(req, flow) {
+    const proposed = req.body?.redirectUrl;
+    if (typeof proposed !== 'string') return null;
+
+    let url;
+    try {
+        url = new URL(proposed);
+    } catch {
+        return null;
+    }
+
+    if (url.protocol !== 'https:' && url.protocol !== 'http:') return null;
+    if (url.host !== req.get('host') && url.host !== publicHost()) return null;
+
+    return `${url.origin}${IDENTITY_RETURN_PATH}?flow=${flow}`;
+}
+
+/** The host `AVR_PUBLIC_URL` names, for deployments behind a proxy that rewrites Host. */
+function publicHost() {
+    try {
+        return new URL(process.env.AVR_PUBLIC_URL).host;
+    } catch {
+        return null;
+    }
+}
+
+/**
+ * Which verification route the viewer picked, or null if they still have to.
+ *
+ * Only Florida makes this a real question. Its statute requires that both a
+ * standard and an anonymous route be *available to the viewer's choosing*, so
+ * there is no defensible default there: picking one on their behalf is exactly
+ * the thing the provision prohibits. Everywhere else one method is offered,
+ * nobody is being denied a choice they were promised, and an absent `method`
+ * means the one on offer.
+ *
+ * A method the state does not permit is rejected rather than coerced to the
+ * default. It can only arrive from a client that is out of date or lying, and
+ * silently substituting a different check would record a `method` the viewer
+ * never chose.
+ *
+ * @param {import('express').Request} req
+ * @param {import('./jurisdiction.js').Policy} policy
+ * @returns {string|null}
+ */
+function chosenMethod(req, policy) {
+    const asked = typeof req.body?.method === 'string' ? req.body.method : null;
+
+    if (asked) return policy.methods.includes(asked) ? asked : null;
+    if (policy.requiresChoice) return null;
+
+    // The attest tier lists only `attestation`, which is not something the
+    // document flow can run; a viewer who asks for the stronger check there
+    // gets the ordinary one.
+    return policy.methods.find((m) => m !== 'attestation') ?? 'government_id';
+}
 
 /**
  * Refuse a check the server is not configured to run, before calling anybody.
@@ -181,14 +270,21 @@ async function pullEnrolmentVerdict(userId, row) {
             : null;
 
     const updated = verifications.resolve(userId, { ...verdict, expiresAt });
+    const passed = verdict.status === 'verified';
 
     identityEvents.record({
         userId,
         kind: 'enrolment_result',
-        outcome: verdict.status === 'verified' ? 'ok' : 'failed',
+        outcome: passed ? 'ok' : 'failed',
         providerRef: row.provider_inquiry_id,
         detail: verdict.declineReason
     });
+
+    notify(
+        passed ? 'identity-verified' : 'identity-declined',
+        users.byId(userId),
+        passed ? { expiresAt } : { reason: verdict.declineReason ?? null }
+    );
 
     return updated;
 }
@@ -230,10 +326,21 @@ export function mountIdentity(app) {
         const pending = challenges.pendingForUser(req.user.id);
         const unlock = readPortalUnlock(req, req.user.id);
 
+        const gate = ageGate(req);
+
         res.json({
             verification: verifications.publicView(row),
             ageAssurance: ageAssurances.publicView(age),
             adultConfirmed: adultConfirmed(req.user),
+            attestation: ageAttestations.publicView(ageAttestations.byUser(req.user.id)),
+
+            // What this account owes *from where it is asking*, which is the
+            // only form of the question the portal can act on. `adultConfirmed`
+            // above is the account-level fact and does not answer it: in
+            // Tennessee it is true for fifty-nine minutes longer than the gate.
+            jurisdiction: publicPolicy(gate.policy),
+            ageGate: { ok: gate.ok, owes: gate.owes, reason: gate.reason, sessionExpiresAt: gate.sessionExpiresAt },
+
             challenge: challengeView(pending),
             portalUnlocked: Boolean(unlock),
             portalUnlockExpiresAt: unlock?.expires_at ?? null,
@@ -244,6 +351,74 @@ export function mountIdentity(app) {
         });
     });
 
+    /* ----------------------------------------------------------- jurisdiction -- */
+
+    /**
+     * Which gate this visitor gets, and the statute that says so.
+     *
+     * Unauthenticated on purpose. The client has to know whether to render a
+     * button or a document flow *before* it knows who it is talking to - the
+     * sign-up dialog needs it on the first paint - and the answer depends only
+     * on where the request came from, which is not a secret from the person it
+     * came from.
+     *
+     * Not cacheable by anything shared: the response is a function of the
+     * viewer's address, and one cached copy served to the next viewer is how a
+     * Texan gets California's gate.
+     */
+    router.get('/jurisdiction', (req, res) => {
+        res.set('Cache-Control', 'private, no-store');
+        res.json(publicPolicy(jurisdictionFor(req)));
+    });
+
+    /**
+     * "I am 18", in a state that asks for nothing more.
+     *
+     * Refused outright where a statute requires a real check, rather than
+     * recorded-and-ignored. A row saying a Texan self-declared is not evidence
+     * of anything except that we were asked to break the law and the only safe
+     * thing to do with the request is to not have it succeed.
+     */
+    router.post('/attest', requireAuth, loadFullUser, rateLimit({ windowMs: 3600_000, max: 20 }), (req, res) => {
+        const policy = jurisdictionFor(req);
+
+        if (policy.tier !== 'attest') {
+            res.status(403).json({
+                error: 'age_assurance_required',
+                reason: 'verification_required',
+                jurisdiction: publicPolicy(policy)
+            });
+            return;
+        }
+
+        if (req.body?.confirmed !== true || req.body?.version !== ATTESTATION_VERSION) {
+            res.status(400).json({
+                error: 'confirmation of the current wording is required',
+                version: ATTESTATION_VERSION
+            });
+            return;
+        }
+
+        const row = ageAttestations.record({
+            userId: req.user.id,
+            version: ATTESTATION_VERSION,
+            region: policy.region,
+            country: policy.country,
+            resolvedBy: policy.resolvedBy,
+            ip: req.ip,
+            expiresAt: new Date(Date.now() + ATTESTATION_DAYS * 86_400_000).toISOString()
+        });
+
+        identityEvents.record({
+            userId: req.user.id,
+            kind: 'age_attested',
+            outcome: 'ok',
+            detail: `${policy.country ?? '??'}-${policy.region ?? '??'} via ${policy.resolvedBy}`
+        });
+
+        res.status(201).json({ attestation: ageAttestations.publicView(row) });
+    });
+
     /* ----------------------------------------------------------- age assurance -- */
 
     /**
@@ -252,6 +427,12 @@ export function mountIdentity(app) {
      * Open to any signed-in account, creator or not, and not gated on a role:
      * this is the check that has to happen before the catalogue is visible, and
      * a viewer is exactly who it is for.
+     *
+     * Open in a no-statute state too, even though nothing there requires it.
+     * A document check is strictly stronger than the button, somebody who
+     * crosses into Tennessee next week will need one anyway, and refusing to
+     * let a willing viewer take the stronger option would be a rule with no
+     * beneficiary.
      */
     router.post('/age', requireAuth, loadFullUser, rateLimit({ windowMs: 3600_000, max: 10 }), async (req, res) => {
         if (req.body?.consent !== true || req.body?.consentVersion !== AGE_CONSENT_VERSION) {
@@ -262,8 +443,27 @@ export function mountIdentity(app) {
             return;
         }
 
+        const policy = jurisdictionFor(req);
+        const method = chosenMethod(req, policy);
+
+        // Florida requires that a standard *and* an anonymous route are both
+        // offered and that the viewer picks. Defaulting one for them would
+        // satisfy the letter of "we offered two" and none of its purpose, so
+        // the request is refused until a choice arrives.
+        if (!method) {
+            res.status(400).json({
+                error: 'choose_verification_method',
+                jurisdiction: publicPolicy(policy)
+            });
+            return;
+        }
+
         const existing = ageAssurances.byUser(req.user.id);
-        if (ageAssurances.isCurrent(existing)) {
+
+        // `ageGate` rather than `isCurrent`: in Tennessee a current assurance
+        // whose hour has run out is not a reason to skip the check, it is the
+        // reason to run it again.
+        if (ageAssurances.isCurrent(existing) && ageGate(req).ok) {
             res.json({ status: 'verified', ageAssurance: ageAssurances.publicView(existing) });
             return;
         }
@@ -274,7 +474,8 @@ export function mountIdentity(app) {
         try {
             handoff = await getProvider().startAgeCheck({
                 userId: req.user.id,
-                redirectUrl: typeof req.body?.redirectUrl === 'string' ? req.body.redirectUrl : null
+                redirectUrl: returnUrlFor(req, 'age'),
+                anonymous: method === 'anonymous'
             });
         } catch (err) {
             console.error('[identity] age check could not be started:', err.message);
@@ -288,7 +489,9 @@ export function mountIdentity(app) {
             provider: getProvider().name,
             inquiryId: handoff.inquiryId,
             consentVersion: AGE_CONSENT_VERSION,
-            consentIp: req.ip
+            consentIp: req.ip,
+            method,
+            jurisdiction: policy.region
         });
 
         identityEvents.record({ userId: req.user.id, kind: 'age_started', outcome: 'ok', providerRef: handoff.inquiryId });
@@ -352,7 +555,7 @@ export function mountIdentity(app) {
             try {
                 handoff = await getProvider().startEnrolment({
                     userId: req.user.id,
-                    redirectUrl: typeof req.body?.redirectUrl === 'string' ? req.body.redirectUrl : null
+                    redirectUrl: returnUrlFor(req, 'enrol')
                 });
             } catch (err) {
                 console.error('[identity] enrolment could not be started:', err.message);
@@ -1056,9 +1259,12 @@ export function mountIdentity(app) {
         if (!row) {
             // No enrolment to redact, but an age check may still have left a
             // row behind - a viewer who never became a creator has one and
-            // nothing else, and "delete what you hold" has to include it.
+            // nothing else, and "delete what you hold" has to include it. So
+            // does the attestation, which is the only row most viewers have.
             ageAssurances.forget(req.user.id);
+            ageAttestations.forget(req.user.id);
             revokePortalUnlocks(req.user.id);
+            notify('identity-forgotten', req.user);
             res.status(204).end();
             return;
         }
@@ -1076,9 +1282,14 @@ export function mountIdentity(app) {
 
         verifications.forget(req.user.id);
         ageAssurances.forget(req.user.id);
+        ageAttestations.forget(req.user.id);
         revokeBroadcastGrants(req.user.id);
         revokePortalUnlocks(req.user.id);
         identityEvents.record({ userId: req.user.id, kind: 'purged', outcome: 'ok' });
+
+        // A deletion is one of the things somebody may later need to show was
+        // asked for and acted on, and the acknowledgement is the evidence.
+        notify('identity-forgotten', req.user);
 
         res.status(204).end();
     });

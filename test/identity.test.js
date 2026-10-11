@@ -26,6 +26,7 @@ process.env.AVR_IDENTITY_PROVIDER = 'mock';
 
 const { app } = await import('../server/index.js');
 const { TERMS_VERSION, CREATOR_TERMS_VERSION } = await import('../server/auth/agreements.js');
+const { IDENTITY_RETURN_PATH } = await import('../server/identity/return-page.js');
 const { mockControls } = await import('../server/identity/mock.js');
 const { getDb } = await import('../server/db/index.js');
 const { validateHello } = await import('../server/live/ingest.js');
@@ -1603,4 +1604,113 @@ test('a room is not a thing another creator can read', async () => {
     const stranger = await verifiedCreator();
     const theirs = await stranger.fetch(`/api/live/rooms/${res.body.room.id}`);
     assert.equal(theirs.status, 404, 'a room id is somebody else\'s screen');
+});
+
+/* ----------------------------------------------- the popup's way back -- */
+
+/**
+ * The check runs in a window the page opened, and something has to happen to
+ * that window when the provider has finished with it. Two things are worth
+ * pinning down: that the page it lands on closes itself rather than being the
+ * whole site in a 480x720 box, and that the address the provider is given is
+ * ours - it is the one value in this flow a caller proposes and the provider
+ * will navigate a browser to.
+ */
+
+test('the return page closes itself instead of loading the app', async () => {
+    const res = await fetch(`${base}${IDENTITY_RETURN_PATH}`);
+    const html = await res.text();
+
+    assert.equal(res.status, 200);
+    assert.match(res.headers.get('content-type') ?? '', /text\/html/);
+    assert.equal(res.headers.get('cache-control'), 'no-store');
+
+    assert.match(html, /window\.close\(\)/);
+
+    // No bundle, so no second copy of the site in the popup.
+    assert.doesNotMatch(html, /<script[^>]+src=/i);
+
+    // And a way out for the browsers that refuse to close a window they did
+    // not open, and for the phones that turn the popup into a tab.
+    assert.match(html, /close this window/i);
+});
+
+test('the return page reports no verdict, because anyone can ask for it', async () => {
+    // No session, no query, any query: the same document either way. It is
+    // reached by following a redirect, so nothing it could say would be
+    // evidence of anything, and the server never reads it.
+    const plain = await (await fetch(`${base}${IDENTITY_RETURN_PATH}`)).text();
+    const claimed = await (
+        await fetch(`${base}${IDENTITY_RETURN_PATH}?flow=age&status=verified&userId=someone`)
+    ).text();
+
+    assert.equal(plain, claimed);
+    assert.doesNotMatch(plain, /verified|approved|passed/i);
+});
+
+test('the address the provider is given is our return page, on the host that asked', async () => {
+    const agent = makeAgent();
+    await agent.register('viewer');
+
+    const started = await agent.fetch('/api/identity/age', {
+        method: 'POST',
+        body: JSON.stringify({
+            consent: true,
+            consentVersion: consent.age.version,
+            redirectUrl: `${base}${IDENTITY_RETURN_PATH}?flow=age`
+        })
+    });
+    assert.equal(started.status, 201, JSON.stringify(started.body));
+
+    assert.equal(mock.lastHandoff('age').redirectUrl, `${base}${IDENTITY_RETURN_PATH}?flow=age`);
+});
+
+test('the flow name comes from the route, not from whatever was asked for', async () => {
+    const agent = makeAgent();
+    await agent.register('creator');
+
+    await agent.fetch('/api/identity/enrol', {
+        method: 'POST',
+        body: JSON.stringify({
+            consent: true,
+            consentVersion: consent.version,
+            // Anything else on the proposed URL is discarded, including a
+            // path of its own choosing.
+            redirectUrl: `${base}/somewhere/else?flow=age&next=/admin`
+        })
+    });
+
+    assert.equal(mock.lastHandoff('enrolment').redirectUrl, `${base}${IDENTITY_RETURN_PATH}?flow=enrol`);
+});
+
+test('the provider is never given an address on somebody else’s host', async () => {
+    const elsewhere = [
+        'https://phish.example/identity/return',
+        `https://phish.example${IDENTITY_RETURN_PATH}?flow=age`,
+        'javascript:alert(1)',
+        '//phish.example/identity/return',
+        '/identity/return?flow=age',
+        `https://127.0.0.1.phish.example${IDENTITY_RETURN_PATH}`
+    ];
+
+    for (const redirectUrl of elsewhere) {
+        mock.reset();
+
+        const agent = makeAgent();
+        await agent.register('viewer');
+
+        const started = await agent.fetch('/api/identity/age', {
+            method: 'POST',
+            body: JSON.stringify({ consent: true, consentVersion: consent.age.version, redirectUrl })
+        });
+
+        // The check still starts. A callback we will not honour is not a
+        // reason to refuse somebody their age check.
+        assert.equal(started.status, 201, JSON.stringify(started.body));
+        assert.equal(
+            mock.lastHandoff('age').redirectUrl,
+            null,
+            `${redirectUrl} was passed to the provider`
+        );
+    }
 });

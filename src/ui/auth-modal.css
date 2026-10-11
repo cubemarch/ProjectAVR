@@ -193,6 +193,28 @@
     accent-color: var(--auth-accent);
 }
 
+/* ---------------------------------------------------- verification route -- */
+
+/* Florida requires that both a standard and an anonymous check be offered and
+   that the viewer picks, so the two have to read as equals. Boxed, equally
+   weighted, and nothing pre-selected - a highlighted "recommended" option
+   would be choosing on their behalf, which is the thing the statute forbids. */
+.auth-backdrop .method-choice {
+    display: grid;
+    gap: 8px;
+    padding: 12px;
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    border-radius: 10px;
+}
+
+.auth-backdrop .method-choice label.checkbox small {
+    display: block;
+    margin-top: 2px;
+    color: var(--auth-dim);
+    font-size: 0.82rem;
+    line-height: 1.45;
+}
+
 /* --------------------------------------------------------- role selector -- */
 
 /* Two cards rather than a checkbox: what a creator account is differs enough

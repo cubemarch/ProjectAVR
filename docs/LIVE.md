@@ -306,6 +306,13 @@ iPhone app, in its own repository; pair it from its Destinations screen using
 | `GET /api/live/checks/preview` | The creator's own live broadcast, for the setup check to decode and show them. `{preview: null}` until a camera connects; `attributed: false` on the shared stream key |
 | `POST /api/live/checks/:kind` | Record a `standard` or `spatial` setup confirmation. 409 `no_broadcast` with nothing live, 409 `not_stereo` for a `spatial` check over one eye |
 | `GET /api/creators/live` | Who is on air and who is ready, for the home page. Public sessions only. |
+| `GET /api/channels/:slug` | Public. Who is at `/<name>`, their `canonical` name, and whatever is live on the channel. A private broadcast reads as offline |
+| `GET /api/profile/names` | The names this account holds, its limit, and what its role may do |
+| `GET /api/profile/names/available?name=` | Whether a name is free, while it is still being typed. Authenticated and rate-limited |
+| `POST /api/profile/names` | Claim one. 409 `slug_taken` or `name_limit` |
+| `PATCH /api/profile/names` | Change the canonical name. The old one keeps working |
+| `DELETE /api/profile/names/:slug` | Give one up. 409 `last_name` on the only one |
+| `GET POST /api/superuser/reserved`, `DELETE /api/superuser/reserved/:slug` | The editable half of the reserved list. Superuser only |
 | `GET /live/transcode` | FFmpeg version, encoder, ladder, per-session state |
 | `GET /live/hls/:id/master.m3u8` | The HLS ladder |
 | `ws://…/live/ws/:id` | The relay. Media and `BILLING`/`CHAT`/`PRIVATE` down; chat and talkback up |
@@ -374,6 +381,42 @@ for one broadcast and a few minutes. The session then carries a `userId`, so it
 is attributable to a person. See [IDENTITY.md](IDENTITY.md), which also records
 why this is not a durable API key.
 
+### `/<name>` is the link, because nothing else can be
+
+Everything else that identifies a broadcast here is temporary by construction.
+A session id names a socket on this process and is minted fresh every time
+somebody goes on air. A broadcast grant is behind a face check, good for one
+broadcast, and spent on the connection it opened. Neither is something a
+creator can print.
+
+What they can print is a channel name: `/<name>`, at the root of the site,
+resolved by `GET /api/channels/:slug`. Off air it opens the channel's page; on
+air it goes straight to the broadcast. **A broadcast the creator has made
+private reads as offline here**, the same way it is absent from
+`/api/live/sessions` — the relay's admission secret is the control, and this is
+about not advertising the target.
+
+The root namespace is shared with every route the server has, so names are
+refused unless provably safe — shape rules, a long built-in reserved list, and
+a confusable-glyph fold so `adm1n` and `adrnin` are `admin`. The list is in
+[`server/channels/slug.js`](../server/channels/slug.js), grouped by *why*, and
+the route group has a test asserting it still matches the router. **Adding a
+top-level route means adding it to that list in the same commit**; a name
+issued before the route exists is still issued afterwards. The same list holds
+this tier's compliance vocabulary — `age`, `2257`, `takedown`, `appeal` — so
+`/2257` can only ever be the records page.
+
+Renaming keeps the old name working. The previous name stays as an alias and
+the lookup reports `canonical`, so the page can correct its own address without
+breaking a link somebody saved. That is why one name per creator is not as
+tight as it sounds: the limit counts names chosen, not the trail behind them.
+
+A superuser — one account, set by `AVR_SUPERUSER_EMAIL` and promoted at boot,
+or at signup when the variable was set before the account existed — may hold
+several names and may claim reserved ones. There is deliberately no route that
+grants the role: an endpoint that can hand it out is an endpoint that can be
+made to hand it out.
+
 ### One vocabulary across all three products
 
 The portal, the capture app and the link between them name the same things the
@@ -407,6 +450,14 @@ than a slip: `broadcast_grants`, `mintBroadcastGrant`, `grantId`. The server-sid
 name carries the properties that matter on that side — minted, spent once,
 expiring — where "stream key" names the field the creator types into. Neither
 word belongs on the other's screen.
+
+**Your link** is the other address on the Go live panel, and the two are
+deliberately not called the same thing. The destination link is a credential
+that lasts minutes and must not be shared; the viewers' link is `/<name>`,
+public and permanent. They sit next to each other on one screen because the
+expensive mistake is confusing them. **Name** in the table above is the
+capture app's label for a saved destination and is a third thing again — it
+never leaves the phone.
 
 ### Encrypting the contribution link
 

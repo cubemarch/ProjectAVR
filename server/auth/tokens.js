@@ -68,6 +68,21 @@ function getSecret() {
     return cachedSecret;
 }
 
+/**
+ * A key for signing something that is not a session token.
+ *
+ * One secret, many uses, separated by label - so an unsubscribe link cannot
+ * be replayed as anything else and a change of `AVR_JWT_SECRET` revokes every
+ * derived signature at once. Callers pass a label that names the use, and two
+ * uses must never share one.
+ *
+ * @param {string} label
+ * @returns {Buffer}
+ */
+export function deriveKey(label) {
+    return crypto.createHmac('sha256', getSecret()).update(`avr-derive:${label}`).digest();
+}
+
 function developmentSecret() {
     const file = path.join(process.cwd(), 'data', '.dev-jwt-secret');
 

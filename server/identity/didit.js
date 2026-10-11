@@ -28,6 +28,16 @@
  *   AVR_DIDIT_FACEAUTH_WORKFLOW_ID  Biometric Authentication: liveness + face match
  *   AVR_DIDIT_AGE_WORKFLOW_ID       document OCR only - no liveness, no face match
  *
+ * A fourth is optional and only Florida needs it:
+ *
+ *   AVR_DIDIT_AGE_ANON_WORKFLOW_ID  the same check under a retain-nothing policy
+ *
+ * Fla. Stat. § 501.1737 requires that an anonymous route be offered alongside
+ * the standard one, performed by an independent third party that keeps nothing.
+ * Unset, the anonymous choice falls back to the ordinary age workflow and says
+ * so in the log - which is the honest failure, because the viewer picked
+ * "anonymous" and would otherwise be told they got it.
+ *
  * The age workflow is separate rather than a reuse of the enrolment one because
  * the difference between them is the point: it must not capture a selfie. Every
  * account holder passes through it, and enrolling a face for a viewer who will
@@ -49,7 +59,8 @@ function config() {
         apiKey,
         enrolWorkflow: process.env.AVR_DIDIT_ENROL_WORKFLOW_ID || null,
         faceWorkflow: process.env.AVR_DIDIT_FACEAUTH_WORKFLOW_ID || null,
-        ageWorkflow: process.env.AVR_DIDIT_AGE_WORKFLOW_ID || null
+        ageWorkflow: process.env.AVR_DIDIT_AGE_WORKFLOW_ID || null,
+        ageAnonWorkflow: process.env.AVR_DIDIT_AGE_ANON_WORKFLOW_ID || null
     };
 }
 
@@ -442,11 +453,26 @@ export function diditProvider() {
          * later has something to name. It does not put a face on file, because
          * the workflow never captures one.
          */
-        async startAgeCheck({ userId, redirectUrl = null }) {
-            const { ageWorkflow } = config();
+        async startAgeCheck({ userId, redirectUrl = null, anonymous = false }) {
+            const { ageWorkflow, ageAnonWorkflow } = config();
             if (!ageWorkflow) throw new Error('AVR_DIDIT_AGE_WORKFLOW_ID is not set');
 
-            return createSession({ workflowId: ageWorkflow, userId, redirectUrl });
+            if (anonymous && !ageAnonWorkflow) {
+                // Loud, because a Florida viewer chose the anonymous route and
+                // is about to be given the ordinary one. The check still runs
+                // and the viewer is still verified; what is missing is the
+                // retain-nothing promise the statute attaches to that choice.
+                console.warn(
+                    '[identity] anonymous age verification was requested but ' +
+                        'AVR_DIDIT_AGE_ANON_WORKFLOW_ID is not set; running the standard age workflow'
+                );
+            }
+
+            return createSession({
+                workflowId: (anonymous && ageAnonWorkflow) || ageWorkflow,
+                userId,
+                redirectUrl
+            });
         },
 
         async fetchAgeCheck(inquiryId) {

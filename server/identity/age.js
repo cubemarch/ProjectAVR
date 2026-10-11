@@ -1,16 +1,26 @@
-import { ageAssurances, identityEvents, verifications } from '../db/index.js';
+import { ageAssurances, ageAttestations, identityEvents, users, verifications } from '../db/index.js';
+import { notify } from '../mail/index.js';
 import { getProvider, identityEnforced, AGE_ASSURANCE_DAYS } from './providers.js';
+import { atLeast } from '../../src/auth/roles.js';
+import { assuranceSatisfies, attestationSatisfies, jurisdictionFor, publicPolicy } from './jurisdiction.js';
 
 /**
  * Age assurance for every account, not just creators.
  *
- * An adult platform has to know that the person watching is an adult, and the
- * only answer that survives contact with a regulator is a document check. This
- * is the weaker of the two identity flows on purpose - it reads a birthdate off
- * a document and keeps a boolean. No selfie is captured, nothing is enrolled,
- * and a viewer is never asked to confirm their face. Creators pass through this
- * *and* the enrolment in `verifications`, because the two answer different
- * questions and collapsing them would mean face-binding every viewer.
+ * An adult platform has to know that the person watching is an adult. In
+ * twenty-seven states the only answer that survives contact with a regulator is
+ * a document check, so that is what those viewers get: the weaker of the two
+ * identity flows, which reads a birthdate off a document and keeps a boolean.
+ * No selfie is captured, nothing is enrolled, and a viewer is never asked to
+ * confirm their face. Creators pass through this *and* the enrolment in
+ * `verifications`, because the two answer different questions and collapsing
+ * them would mean face-binding every viewer.
+ *
+ * Everywhere else a viewer gets a button, because no statute asks for more and
+ * demanding a government document from somebody no law requires us to check is
+ * a privacy cost we would be imposing on our own initiative. Which of the two
+ * a given request owes is {@link import('./jurisdiction.js')}'s decision, not
+ * this file's.
  */
 
 /** Verdicts come from the provider; a client saying "I passed" means nothing. */
@@ -25,14 +35,25 @@ export async function pullAgeVerdict(userId, row) {
             : null;
 
     const updated = ageAssurances.resolve(userId, { ...verdict, expiresAt });
+    const passed = ageAssurances.isCurrent(updated);
 
     identityEvents.record({
         userId,
         kind: 'age_result',
-        outcome: ageAssurances.isCurrent(updated) ? 'ok' : 'failed',
+        outcome: passed ? 'ok' : 'failed',
         providerRef: row.provider_inquiry_id,
         detail: verdict.declineReason
     });
+
+    // Both outcomes are worth an email. A pass is the thing they were waiting
+    // for; a decline is the one they will otherwise sit staring at a spinner
+    // over, because the browser that started the check may be long closed by
+    // the time the provider makes up its mind.
+    notify(
+        passed ? 'age-verified' : 'age-declined',
+        users.byId(userId),
+        passed ? { expiresAt } : { reason: verdict.declineReason ?? null }
+    );
 
     return updated;
 }
@@ -67,6 +88,51 @@ export function adultConfirmed(user) {
 }
 
 /**
+ * What this request owes before it may see anything, and why.
+ *
+ * The region is resolved per request rather than read off the account, and
+ * that is deliberate: people travel. An account that attested in Oregon and
+ * then opens the site from Dallas is a Texas request, and Texas wants a
+ * document. Caching the answer on the user row would be one database column
+ * and a standing compliance hole.
+ *
+ * @param {import('express').Request} req
+ * @returns {{ok: boolean, owes: 'verification'|'attestation'|null, reason: string|null,
+ *            policy: import('./jurisdiction.js').Policy, sessionExpiresAt: string|null}}
+ */
+export function ageGate(req) {
+    const policy = jurisdictionFor(req);
+    const user = req.user ?? null;
+
+    if (policy.tier === 'attest') {
+        // A document check is strictly more than this state asked for, so a
+        // viewer who has one is through. The reverse never holds; see
+        // `attestationSatisfies`.
+        if (adultConfirmed(user)) return { ok: true, owes: null, reason: null, policy, sessionExpiresAt: null };
+
+        const attested = attestationSatisfies(policy, user ? ageAttestations.byUser(user.id) : null);
+
+        return attested.ok
+            ? { ok: true, owes: null, reason: null, policy, sessionExpiresAt: null }
+            : { ok: false, owes: 'attestation', reason: attested.reason, policy, sessionExpiresAt: null };
+    }
+
+    if (!adultConfirmed(user)) {
+        return { ok: false, owes: 'verification', reason: 'no_assurance', policy, sessionExpiresAt: null };
+    }
+
+    // Tennessee is the only state that makes this more than a formality: the
+    // verified session may not outlive sixty minutes, so a check that was good
+    // an hour ago is not good now. Everywhere else `sessionMinutes` is null and
+    // this returns ok without looking at the clock.
+    const session = assuranceSatisfies(policy, ageAssurances.byUser(user.id));
+
+    return session.ok
+        ? { ok: true, owes: null, reason: null, policy, sessionExpiresAt: session.expiresAt }
+        : { ok: false, owes: 'verification', reason: session.reason, policy, sessionExpiresAt: session.expiresAt };
+}
+
+/**
  * Gate for anything that shows the catalogue.
  *
  * Unlike {@link import('./broadcast.js').requireVerifiedCreator}, this one
@@ -78,6 +144,11 @@ export function adultConfirmed(user) {
  *
  * `assertIdentityConfigured()` is what makes that safe: enforcement cannot be
  * switched on while the mock is the provider.
+ *
+ * The 403 carries the whole policy rather than a bare error code, because the
+ * client has to render a different gate for each tier and a second round trip
+ * to find out which one would be a round trip in front of every refused
+ * request.
  */
 export function requireAgeAssurance(req, res, next) {
     if (!identityEnforced()) {
@@ -87,18 +158,24 @@ export function requireAgeAssurance(req, res, next) {
 
     // An admin who cannot see the catalogue cannot moderate it, and an admin
     // account is created deliberately rather than signed up for.
-    if (req.user?.role === 'admin') {
+    if (atLeast(req.user?.role, 'admin')) {
         next();
         return;
     }
 
-    if (!adultConfirmed(req.user)) {
-        res.status(403).json({
-            error: 'age_assurance_required',
-            ageAssurance: ageAssurances.publicView(ageAssurances.byUser(req.user.id))
-        });
+    const gate = ageGate(req);
+    if (gate.ok) {
+        next();
         return;
     }
 
-    next();
+    res.status(403).json({
+        // Two codes rather than one, because they want opposite things from
+        // the client: a document flow, or a button. A client that treated them
+        // the same would send a Californian to a provider.
+        error: gate.owes === 'attestation' ? 'age_attestation_required' : 'age_assurance_required',
+        reason: gate.reason,
+        jurisdiction: publicPolicy(gate.policy),
+        ageAssurance: ageAssurances.publicView(ageAssurances.byUser(req.user.id))
+    });
 }

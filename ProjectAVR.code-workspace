@@ -5,6 +5,15 @@
 		},
 		{
 			"path": "../ProjectVRecord"
+		},
+		{
+			"path": "../ProjectVRecordAndroid"
+		},
+		{
+			"path": "../ProjectQuestJam"
+		},
+		{
+			"path": "../ProjectModelSims"
 		}
 	],
 	"settings": {}

@@ -497,7 +497,7 @@ class Monitor {
 
         if (!payload.sessions.length) {
             list.innerHTML =
-                '<p class="muted">No broadcasts running. Start one from the VRecord app on an iPhone.</p>';
+                '<p class="muted">No broadcasts running. Start one from a capture app.</p>';
             return;
         }
 

@@ -1,3 +1,7 @@
+// Aliased: the class below has its own `isCreator` getter, and a bare call to
+// the imported one inside the class would read as that getter calling itself.
+import { isCreator as canPublish } from '../auth/roles.js';
+
 /**
  * API client and session state.
  *
@@ -10,6 +14,8 @@
  * single refresh promise, so a page that fires six requests at once after the
  * token expires performs one refresh rather than six.
  */
+
+import { identityReturnUrl } from './identity-return.js';
 
 const PORTAL_UNLOCK_KEY = 'avr_portal_unlock';
 
@@ -52,14 +58,14 @@ class ApiClient extends EventTarget {
     }
 
     get isCreator() {
-        return this.user?.role === 'creator' || this.user?.role === 'admin';
+        return canPublish(this.user?.role);
     }
 
     _emit(name, detail) {
         this.dispatchEvent(new CustomEvent(name, { detail }));
     }
 
-    _setSession({ user, accessToken, ageAssurance, verification, adultConfirmed }) {
+    _setSession({ user, accessToken, ageAssurance, verification, adultConfirmed, jurisdiction, ageGate }) {
         this.user = user ?? null;
         this.accessToken = accessToken ?? null;
 
@@ -69,6 +75,12 @@ class ApiClient extends EventTarget {
         this.ageAssurance = user ? (ageAssurance ?? null) : null;
         this.verification = user ? (verification ?? null) : null;
         this.adultConfirmed = user ? Boolean(adultConfirmed) : false;
+
+        // Where this request came from and what that state's law asks for.
+        // Kept even when signed out, because the gate the dialog has to render
+        // is a property of the address, not of the account.
+        this.jurisdiction = jurisdiction ?? this.jurisdiction ?? null;
+        this.ageGate = user ? (ageGate ?? null) : null;
 
         this._emit('session', this.user);
         return this.user;
@@ -84,6 +96,28 @@ class ApiClient extends EventTarget {
      */
     get ageVerified() {
         return this.adultConfirmed || this.ageAssurance?.status === 'verified';
+    }
+
+    /**
+     * Has this account done what *this* jurisdiction asks?
+     *
+     * Not the same question as {@link ageVerified}, and the gap between them is
+     * the whole point of the jurisdiction layer. In a state with no statute
+     * this is true after one button press and `ageVerified` is still false. In
+     * Tennessee it goes false an hour after a check that `ageVerified` will go
+     * on calling verified for two years.
+     *
+     * The server's answer, not the client's. A page that computed this itself
+     * from the policy would be a second implementation of the gate, and the
+     * two would disagree the first time one of them was edited.
+     */
+    get ageSatisfied() {
+        return this.ageGate ? this.ageGate.ok === true : this.ageVerified;
+    }
+
+    /** What the dialog has to put in front of them: a document flow, or a button. */
+    get ageOwes() {
+        return this.ageGate?.owes ?? (this.ageVerified ? null : 'verification');
     }
 
     /** Whether this creator has a face on file at all. */
@@ -216,7 +250,7 @@ class ApiClient extends EventTarget {
 
     /**
      * @param {{email: string, password: string, displayName: string, role: string,
-     *          tagline?: string, bio?: string,
+     *          tagline?: string, bio?: string, marketingEmails?: boolean,
      *          acceptedTerms: string, acceptedCreatorTerms?: string}} input
      */
     async register(input) {
@@ -302,11 +336,31 @@ class ApiClient extends EventTarget {
         consent: () => this.get('/api/identity/consent'),
         status: () => this.get('/api/identity/status'),
 
-        startAge: (consentVersion) =>
+        /**
+         * Which gate this visitor gets, and the statute that says so.
+         *
+         * Cached on the client for the life of the page: it is a function of
+         * the viewer's address, which does not change between two paints, and
+         * the dialog asks for it on every open.
+         */
+        jurisdiction: async () => {
+            this.jurisdiction ??= await this.get('/api/identity/jurisdiction');
+            return this.jurisdiction;
+        },
+
+        /** The "I am 18" button, in a state that asks for nothing more. */
+        attest: (version) => this.post('/api/identity/attest', { confirmed: true, version }),
+
+        /**
+         * @param {string} consentVersion
+         * @param {string} [method] which route the viewer picked; Florida requires a choice
+         */
+        startAge: (consentVersion, method) =>
             this.post('/api/identity/age', {
                 consent: true,
                 consentVersion,
-                redirectUrl: `${location.origin}${location.pathname}`
+                method,
+                redirectUrl: identityReturnUrl('age')
             }),
         completeAge: () => this.post('/api/identity/age/complete').then((d) => d.ageAssurance),
 
@@ -314,7 +368,7 @@ class ApiClient extends EventTarget {
             this.post('/api/identity/enrol', {
                 consent: true,
                 consentVersion,
-                redirectUrl: `${location.origin}${location.pathname}`
+                redirectUrl: identityReturnUrl('enrol')
             }),
         /**
          * Stores the unlock the server sends with a passing verdict, on the
@@ -493,6 +547,41 @@ class ApiClient extends EventTarget {
             const token = this.accessToken ? `?access_token=${encodeURIComponent(this.accessToken)}` : '';
             return `/api/recordings/${encodeURIComponent(id)}/file${token}`;
         }
+    };
+
+    /* ----------------------------------------------------------- channels -- */
+
+    /**
+     * `/<name>`: the one address for a channel that does not change.
+     *
+     * Session ids are minted per broadcast and a broadcast grant is spent on
+     * the connection it opens, so neither can be the link a creator shares.
+     * This is what can.
+     */
+    channels = {
+        /** Public. Resolves a name to its channel and whatever is live on it. */
+        lookup: (slug) => this.get(`/api/channels/${encodeURIComponent(slug)}`),
+
+        /** The names this account holds, the limit, and what it may do. */
+        mine: () => this.get('/api/profile/names'),
+
+        check: (name) => this.get(`/api/profile/names/available?name=${encodeURIComponent(name)}`),
+
+        claim: (slug, primary) => this.post('/api/profile/names', { slug, primary }),
+
+        /** Change the canonical name. The previous one keeps working. */
+        rename: (slug) => this.patch('/api/profile/names', { slug }),
+
+        release: (slug) => this.del(`/api/profile/names/${encodeURIComponent(slug)}`)
+    };
+
+    /** Reserved names. Superuser only; every call here is a 403 for anybody else. */
+    reserved = {
+        list: () => this.get('/api/superuser/reserved').then((d) => d.reserved),
+
+        add: (slug, reason) => this.post('/api/superuser/reserved', { slug, reason }),
+
+        remove: (slug) => this.del(`/api/superuser/reserved/${encodeURIComponent(slug)}`)
     };
 
     /* ------------------------------------------------------------- profiles -- */

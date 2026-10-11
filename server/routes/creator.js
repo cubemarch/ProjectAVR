@@ -7,6 +7,7 @@ import crypto from 'node:crypto';
 
 import { titles, uploads, analytics, users } from '../db/index.js';
 import { requireAuth, requireRole, loadFullUser } from '../auth/middleware.js';
+import { atLeast } from '../../src/auth/roles.js';
 import { getStorage, buildKey } from '../storage/index.js';
 import { enqueueProcessing, queueStats } from '../media/jobs.js';
 import { invalidateCatalog } from '../library.js';
@@ -129,7 +130,7 @@ function ownedTitle(req, res) {
         return null;
     }
 
-    if (title.creator_id !== req.user.id && req.user.role !== 'admin') {
+    if (title.creator_id !== req.user.id && !atLeast(req.user.role, 'admin')) {
         // 404 rather than 403: a creator should not be able to probe for the
         // existence of other people's ids.
         res.status(404).json({ error: 'Title not found.' });

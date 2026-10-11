@@ -36,7 +36,17 @@ const state = {
     /** @type {Map<string, {kind: string, userId: string, subjectId: string|null}>} */
     inquiries: new Map(),
     /** @type {string[]} Subject ids the provider was told to forget. */
-    forgotten: []
+    forgotten: [],
+    /**
+     * Where the last check was told to send the browser afterwards.
+     *
+     * A real provider navigates the popup here when it is done, which makes
+     * this the one value a caller can aim somewhere of its choosing. Recorded
+     * so a test can check what the server decided to pass on.
+     *
+     * @type {{kind: string, redirectUrl: string|null}[]}
+     */
+    handoffs: []
 };
 
 function nextId(prefix) {
@@ -50,9 +60,10 @@ export function mockProvider() {
         name: 'mock',
         isMock: true,
 
-        async startEnrolment({ userId }) {
+        async startEnrolment({ userId, redirectUrl = null }) {
             const inquiryId = nextId('mock_enrol');
             state.inquiries.set(inquiryId, { kind: 'enrolment', userId, subjectId: null });
+            state.handoffs.push({ kind: 'enrolment', redirectUrl });
             return { inquiryId, clientUrl: `https://example.invalid/mock/${inquiryId}`, clientToken: null };
         },
 
@@ -82,9 +93,15 @@ export function mockProvider() {
             return { ...state.face };
         },
 
-        async startAgeCheck({ userId }) {
+        async startAgeCheck({ userId, redirectUrl = null, anonymous = false }) {
             const inquiryId = nextId('mock_age');
-            state.inquiries.set(inquiryId, { kind: 'age', userId, subjectId: null });
+            state.inquiries.set(inquiryId, { kind: 'age', userId, subjectId: null, anonymous });
+
+            // Recorded on the handoff so a test can assert that the Florida
+            // choice actually reached the provider, rather than that the
+            // server accepted the word and ran the same flow either way.
+            state.handoffs.push({ kind: 'age', redirectUrl, anonymous });
+
             return { inquiryId, clientUrl: `https://example.invalid/mock/${inquiryId}`, clientToken: null };
         },
 
@@ -116,12 +133,18 @@ export function mockControls() {
         forgotten() {
             return [...state.forgotten];
         },
+        /** The most recent handoff, or the most recent of one kind. */
+        lastHandoff(kind = null) {
+            const all = kind ? state.handoffs.filter((h) => h.kind === kind) : state.handoffs;
+            return all.at(-1) ?? null;
+        },
         reset() {
             state.enrolment = { ...DEFAULT_ENROLMENT };
             state.face = { ...DEFAULT_FACE };
             state.age = { ...DEFAULT_AGE };
             state.inquiries.clear();
             state.forgotten.length = 0;
+            state.handoffs.length = 0;
         }
     };
 }

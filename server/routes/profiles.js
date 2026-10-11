@@ -2,13 +2,22 @@ import express from 'express';
 import crypto from 'node:crypto';
 import { Readable } from 'node:stream';
 
-import { profiles, creatorSettings, users } from '../db/index.js';
-import { requireAuth, requireRole, rateLimit } from '../auth/middleware.js';
+import { profiles, creatorSettings, users, channelSlugs, reservedSlugs } from '../db/index.js';
+import { requireAuth, requireRole, rateLimit, loadFullUser } from '../auth/middleware.js';
 import { getStorage } from '../storage/index.js';
 import { readiness } from '../live/readiness.js';
 import { sessions } from '../live/sessions.js';
 import { rooms } from '../live/rooms.js';
 import { accountView } from '../credits/index.js';
+import { isCreator } from '../../src/auth/roles.js';
+import { validateSlug } from '../channels/slug.js';
+import {
+    claimName,
+    mayClaimReserved,
+    namesFor,
+    releaseName,
+    renameChannel
+} from '../channels/index.js';
 
 /**
  * Profile pages, for both roles.
@@ -134,10 +143,15 @@ export function mountProfiles(app) {
 
         const body = {
             profile: profileView(user, profiles.ensure(user.id)),
-            credits: accountView(user.id)
+            credits: accountView(user.id),
+
+            // Not on `profileView`: that shape is also how somebody else's
+            // profile is returned, and what mail this account has agreed to
+            // is nobody else's business.
+            emails: { marketing: Boolean(user.marketing_emails) }
         };
 
-        if (user.role === 'creator' || user.role === 'admin') {
+        if (isCreator(user.role)) {
             body.creator = settingsView(creatorSettings.ensure(user.id));
             body.streamChecks = readiness.stateOf(user.id);
         }
@@ -161,13 +175,30 @@ export function mountProfiles(app) {
             else patch[key] = value || null;
         }
 
+        // Marketing consent lives on the account rather than the profile, so
+        // it is applied separately below rather than folded into the patch.
+        // Only a real boolean counts: a client that sends a string has not
+        // been clear about which way the box was ticked, and the safe reading
+        // of "not clear" is not "yes".
+        const marketing = req.body?.marketingEmails;
+        if (marketing !== undefined && typeof marketing !== 'boolean') {
+            errors.push('marketingEmails must be true or false');
+        }
+
         if (errors.length) {
             res.status(400).json({ error: errors.join(' ') });
             return;
         }
 
+        if (typeof marketing === 'boolean') users.setMarketingEmails(req.auth.sub, marketing);
+
         const row = profiles.update(req.auth.sub, patch);
-        res.json({ profile: profileView(users.byId(req.auth.sub), row) });
+        const user = users.byId(req.auth.sub);
+
+        res.json({
+            profile: profileView(user, row),
+            emails: { marketing: Boolean(user.marketing_emails) }
+        });
     });
 
     /* ------------------------------------------------------------ avatars -- */
@@ -215,6 +246,104 @@ export function mountProfiles(app) {
         if (previous) await getStorage().remove(previous).catch(() => {});
 
         res.json({ profile: profileView(users.byId(req.auth.sub), row) });
+    });
+
+    /* ------------------------------------------------------ channel names -- */
+
+    /**
+     * The address this account is found at, `/<name>`.
+     *
+     * Not creator-gated. A viewer who later becomes a creator should not
+     * discover on their first broadcast that the name they wanted went to
+     * somebody who got there first, and a name is also just how an account is
+     * addressed - the channel page it resolves to simply says "not live" until
+     * there is something to show.
+     */
+    router.get('/names', requireAuth, loadFullUser, (req, res) => {
+        res.set('Cache-Control', 'no-store');
+        res.json(namesFor(req.user));
+    });
+
+    /**
+     * Can I have this one?
+     *
+     * Answers while the field is still being typed in, so the rules are
+     * explained where they are being broken rather than after a failed submit.
+     * Authenticated and rate-limited: the honest reading of an endpoint that
+     * says yes or no about an arbitrary string is that it enumerates the
+     * namespace, and there is no reason a signed-out client needs to.
+     */
+    router.get(
+        '/names/available',
+        requireAuth,
+        loadFullUser,
+        rateLimit({ windowMs: 60_000, max: 60 }),
+        (req, res) => {
+            const check = validateSlug(req.query?.name, {
+                extraReserved: reservedSlugs.all(),
+                allowReserved: mayClaimReserved(req.user.role)
+            });
+
+            res.set('Cache-Control', 'no-store');
+
+            if (!check.ok) {
+                res.json({ available: false, code: check.code, error: check.error });
+                return;
+            }
+
+            const held = channelSlugs.resolve(check.slug);
+
+            res.json({
+                slug: check.slug,
+                available: !held || held.userId === req.user.id,
+                // So the field can say "that is already yours" rather than
+                // "taken", which reads as somebody else's.
+                mine: held?.userId === req.user.id
+            });
+        }
+    );
+
+    /** Take an additional name. Most accounts may hold exactly one. */
+    router.post('/names', requireAuth, loadFullUser, express.json({ limit: '4kb' }), (req, res) => {
+        const result = claimName({ user: req.user, slug: req.body?.slug, primary: req.body?.primary });
+
+        if (!result.ok) {
+            res.status(result.code === 'slug_taken' || result.code === 'name_limit' ? 409 : 400).json(result);
+            return;
+        }
+
+        // `result.primary` is a boolean and `namesFor().primary` is a slug, so
+        // only the slug goes out - one field name, one meaning.
+        res.status(201).json({ claimed: result.slug, ...namesFor(req.user) });
+    });
+
+    /**
+     * Change the canonical name.
+     *
+     * The old one keeps working - see `renameChannel`. This is the endpoint the
+     * profile's name field posts to, because changing a name in place is what
+     * a text field with a save button means to the person using it.
+     */
+    router.patch('/names', requireAuth, loadFullUser, express.json({ limit: '4kb' }), (req, res) => {
+        const result = renameChannel({ user: req.user, slug: req.body?.slug });
+
+        if (!result.ok) {
+            res.status(result.code === 'slug_taken' ? 409 : 400).json(result);
+            return;
+        }
+
+        res.json({ claimed: result.slug, ...namesFor(req.user) });
+    });
+
+    router.delete('/names/:slug', requireAuth, loadFullUser, (req, res) => {
+        const result = releaseName({ user: req.user, slug: req.params.slug });
+
+        if (!result.ok) {
+            res.status(result.code === 'last_name' ? 409 : 404).json(result);
+            return;
+        }
+
+        res.json(namesFor(req.user));
     });
 
     /* ----------------------------------------------------- creator pricing -- */
@@ -337,7 +466,7 @@ export function mountProfiles(app) {
     app.get('/api/creators/:id', (req, res) => {
         const user = users.byId(req.params.id);
 
-        if (!user || (user.role !== 'creator' && user.role !== 'admin')) {
+        if (!user || !isCreator(user.role)) {
             res.status(404).json({ error: 'no such creator' });
             return;
         }

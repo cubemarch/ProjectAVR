@@ -7,11 +7,20 @@ Three checks, answering three different questions:
 
 | Check | Who | When | Question it answers |
 | --- | --- | --- | --- |
-| **Age assurance** | every account | once, at registration | Is this person over 18, on a genuine government document? |
+| **Age assurance** | every account in a state that requires it | once, at registration | Is this person over 18, on a genuine government document? |
 | **Enrolment** | creators | once, at registration | Is this a real person holding that document, and what does their face look like? |
 | **Portal face check** | creators | before going on air, once per browser session | Is the person at this keyboard the one who enrolled? |
 
-They are deliberately not one check. A viewer proves an age with a document and
+Plus one thing that is not a check: in the states with no age-verification
+statute, a viewer is shown a single **I am 18 or over** button instead of the
+age assurance. Which of the two a given request gets is decided from where the
+request came from, on every request — see
+[`docs/STATE-AGE-LAWS.md`](STATE-AGE-LAWS.md), which is where the twenty-seven
+states, the fail-closed resolution rules, and the operator obligations live.
+An attestation is recorded in its own table and `adultConfirmed()` never reads
+it; a button press is not evidence of anything a statute asks for.
+
+The three checks are deliberately not one check. A viewer proves an age with a document and
 is never seen again — no selfie is taken and no face is enrolled, because
 enrolling a face template for someone who will never be matched against it is
 collection with no purpose, and the thing GDPR Article 9 exists to discourage.
@@ -59,7 +68,12 @@ and that the table is still empty.
 
 Every response that establishes a session (`register`, `login`, `refresh`,
 `/me`, `/api/identity/status`) carries `adultConfirmed` alongside the two rows,
-so no client has to re-derive it.
+so no client has to re-derive it — and, next to it, `jurisdiction` and `ageGate`,
+which answer the different question of whether *this* request's state is
+satisfied. The two come apart in both directions: an account in Oregon that
+pressed the button has `ageGate.ok` true and `adultConfirmed` false, and one in
+Tennessee an hour after a document check has `adultConfirmed` true and
+`ageGate.ok` false.
 
 ---
 
@@ -606,8 +620,10 @@ All under `/api/identity`, all requiring a normal access token.
 | Method | Path | Caller | Purpose |
 | --- | --- | --- | --- |
 | `GET` | `/consent` | either | Both disclosures — enrolment and age — with versions |
-| `GET` | `/status` | browser | Verification, age, unlock state + any pending challenge |
-| `POST` | `/age` | browser | Record consent, open the document-only inquiry |
+| `GET` | `/jurisdiction` | anyone | Which gate this request gets, and the statute behind it. No auth; `private, no-store` |
+| `GET` | `/status` | browser | Verification, age, attestation, jurisdiction, unlock state + any pending challenge |
+| `POST` | `/attest` | browser | "I am 18 or over", where no statute asks for more. **403** where one does |
+| `POST` | `/age` | browser | Record consent, open the document-only inquiry. **400** in Florida without a chosen method |
 | `POST` | `/age/complete` | browser | Fetch and apply the age verdict |
 | `POST` | `/enrol` | browser | Record consent, open a provider inquiry |
 | `POST` | `/enrol/complete` | browser | Fetch and apply the enrolment verdict; returns an unlock if it clears |

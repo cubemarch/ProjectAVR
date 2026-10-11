@@ -1,5 +1,6 @@
 import * as pc from 'playcanvas';
 import { brandLockup } from './brand-mark.js';
+import { isCreator } from '../auth/roles.js';
 import { icons } from './icons.js';
 import { formatDuration, pickHero, searchCatalog } from '../catalog/catalog.js';
 import {
@@ -529,7 +530,7 @@ export class BrowseUI extends pc.EventHandler {
                     </div>
                     <button data-account="profile">Profile &amp; credits</button>
                     ${
-                        user.role === 'creator' || user.role === 'admin'
+                        isCreator(user.role)
                             ? `<button data-account="studio">Creator Studio</button>`
                             : `<button data-account="become-creator">Become a creator</button>`
                     }
@@ -1057,6 +1058,8 @@ export class BrowseUI extends pc.EventHandler {
     }
 
     closeDetails() {
+        const wasOpen = this.modalEl.classList.contains('open');
+
         // A recording plays inside this modal, and a hidden element with a
         // paused-looking dialog over it would go on making noise. Emptying the
         // source is what actually releases the connection, not just the sound.
@@ -1070,6 +1073,10 @@ export class BrowseUI extends pc.EventHandler {
         this.modalEl.classList.remove('open');
         this._modalItem = null;
         document.body.style.overflow = '';
+
+        // Only on a real close: Escape fires this on every keypress with
+        // nothing open, and the listener turns it into a URL change.
+        if (wasOpen) this.fire('detailsClosed');
     }
 
     /** Persist resume position for the continue-watching indicator. */

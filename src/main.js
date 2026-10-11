@@ -33,6 +33,17 @@ import { ProfilePage } from './ui/profile.js';
 
 const MODE = { BROWSE: 'browse', FLAT: 'flat', RENDERED: 'rendered' };
 
+/**
+ * Paths this document owns. Everything else at the root is a channel name.
+ *
+ * The same rule lives on the server, in the `routes` group of
+ * `server/channels/slug.js`, which is what stops a name here being issued in
+ * the first place. Both have to change when a route is added - this one so the
+ * page does not look the route up as a channel, that one so nobody is holding
+ * the name by the time it exists.
+ */
+const APP_PATHS = new Set(['/', '/index.html', '/creator', '/profile']);
+
 async function boot() {
     const canvas = document.getElementById('render-canvas');
     const browseMount = document.getElementById('browse-root');
@@ -326,13 +337,76 @@ async function boot() {
             .catch(() => {});
     });
 
-    window.addEventListener('popstate', () => {
+    /* ------------------------------------------------------------ routing -- */
+
+    /**
+     * Open a channel by the name in the URL.
+     *
+     * The address a creator actually hands out. When they are on air it goes
+     * to the broadcast; when they are not it opens their page, which is where
+     * the prices are - the same two outcomes as clicking them on the home
+     * page, because it has to mean the same thing however somebody arrived.
+     */
+    async function openChannel(slug) {
+        let found;
+
+        try {
+            found = await api.channels.lookup(slug);
+        } catch {
+            toast(`There is no channel at /${slug}.`);
+            history.replaceState({}, '', '/');
+            return;
+        }
+
+        if (found.live?.sessionId) {
+            location.href = `/live/${encodeURIComponent(found.live.sessionId)}`;
+            return;
+        }
+
+        // An alias resolves to the canonical name. Replacing rather than
+        // pushing: the old link worked, and a back button that walks through
+        // the redirect is a back button that cannot leave.
+        if (found.canonical && found.canonical !== slug) {
+            history.replaceState({ channel: found.canonical }, '', `/${found.canonical}`);
+        }
+
+        browse.openCreatorDetails({ ...found.channel, status: 'ready', live: null });
+    }
+
+    /**
+     * Is this path a channel name, or one of the app's own pages?
+     *
+     * The shape test is the client half of `validateSlug`; the reserved list
+     * is the server's business, because a name that got past it there is a
+     * name that exists. Anything this does not recognise falls through to the
+     * catalogue, which is what the SPA did before names existed.
+     */
+    function channelSlugFrom(pathname) {
+        if (APP_PATHS.has(pathname)) return null;
+
+        const match = /^\/([a-z0-9][a-z0-9-]{1,28}[a-z0-9])\/?$/.exec(pathname.toLowerCase());
+        return match ? match[1] : null;
+    }
+
+    function route() {
         if (location.pathname === '/creator') openStudio();
         else portal.close();
 
         if (location.pathname === '/profile') profile.open();
         else profile.close();
+
+        const slug = channelSlugFrom(location.pathname);
+        if (slug) openChannel(slug);
+        else browse.closeDetails();
+    }
+
+    // Closing the channel card puts the URL back, so the address bar and what
+    // is on screen do not disagree.
+    browse.on('detailsClosed', () => {
+        if (channelSlugFrom(location.pathname)) history.replaceState({}, '', '/');
     });
+
+    window.addEventListener('popstate', route);
 
     api.addEventListener('session', (e) => {
         browse.renderAccount(e.detail);
@@ -397,8 +471,7 @@ async function boot() {
 
     app.start();
 
-    if (location.pathname === '/creator') openStudio();
-    if (location.pathname === '/profile') profile.open();
+    route();
 
     // Deep link: /?play=<id> jumps straight into a title, which is how the
     // compatibility panel's QR codes get you into the right video.

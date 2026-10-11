@@ -21,6 +21,16 @@ CREATE TABLE IF NOT EXISTS users (
     -- players have no login flow, so the URL itself has to carry identity.
     feed_token      TEXT NOT NULL UNIQUE,
 
+    -- Consent to marketing email, and only marketing email. 0 unless the
+    -- person ticked a box, because the regimes that care about this treat an
+    -- unticked box and a pre-ticked one as the same non-answer.
+    --
+    -- Nothing transactional consults it. A receipt, a security notice or the
+    -- result of an identity check is sent to an account that opted out of
+    -- marketing exactly as it is to one that opted in - see
+    -- `server/mail/templates.js`.
+    marketing_emails INTEGER NOT NULL DEFAULT 0,
+
     disabled        INTEGER NOT NULL DEFAULT 0,
     created_at      TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
@@ -394,6 +404,19 @@ CREATE TABLE IF NOT EXISTS age_assurances (
     consent_at          TEXT,
     consent_ip          TEXT,
 
+    -- Which of the methods in `server/identity/state-laws.js` the viewer chose.
+    -- Only Florida makes this a choice the viewer gets to make, and only
+    -- Florida makes recording it load-bearing: the statute requires that both a
+    -- standard and an anonymous route were *offered*, so the row has to be able
+    -- to show which one was taken.
+    method              TEXT,
+
+    -- The state whose statute this check was run under, as a bare USPS code.
+    -- Kept for the audit trail, not for the gate - the gate resolves the region
+    -- again on every request, because a viewer moves and a stored region would
+    -- quietly carry Oregon's answer into Texas.
+    jurisdiction        TEXT,
+
     verified_at         TEXT,
     expires_at          TEXT,
 
@@ -402,6 +425,44 @@ CREATE TABLE IF NOT EXISTS age_assurances (
 );
 
 CREATE INDEX IF NOT EXISTS idx_age_assurances_status ON age_assurances (status, expires_at);
+
+/* --------------------------------------------------------- age attestation -- */
+--
+-- "I am 18", pressed by a viewer in a state with no statute requiring more.
+--
+-- A separate table from `age_assurances` rather than a status on it, and the
+-- separation is the point. These two rows answer questions of completely
+-- different strength - one says a government document was read by a third
+-- party, the other says a person clicked a button - and the single worst
+-- failure this subsystem could have is a read that cannot tell them apart.
+-- Putting them in one table means every future reader has to remember to check
+-- a discriminator column, and the reader that forgets is the one that admits a
+-- self-declared adult to Texas.
+--
+-- `adultConfirmed()` deliberately does not look at this table at all.
+--
+-- Nothing identifying is here. The IP is the same consent-receipt field the
+-- other two disclosures keep, for the same reason: evidence of who was asked,
+-- when, and under which wording.
+CREATE TABLE IF NOT EXISTS age_attestations (
+    user_id             TEXT PRIMARY KEY REFERENCES users (id) ON DELETE CASCADE,
+
+    -- The region the server resolved when the button was pressed, and how it
+    -- resolved it. Both are evidence: if a state later argues it was covered
+    -- all along, the answer to "why did you not check this person" is this row.
+    region              TEXT,
+    country             TEXT,
+    resolved_by         TEXT,
+
+    version             TEXT NOT NULL,
+    attested_at         TEXT NOT NULL DEFAULT (datetime('now')),
+    attested_ip         TEXT,
+    expires_at          TEXT,
+
+    created_at          TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_age_attestations_expiry ON age_attestations (expires_at);
 
 /* ------------------------------------------------------------ portal unlock -- */
 --
@@ -714,3 +775,130 @@ CREATE TABLE IF NOT EXISTS recording_sales (
 );
 
 CREATE INDEX IF NOT EXISTS idx_recording_sales_buyer ON recording_sales (buyer_id, created_at DESC);
+
+-- Every email this server decided to send, whether it went out or not.
+--
+-- The point is answering "did they get told?" months later, when the question
+-- is a support ticket or a dispute about a charge. A transport's own dashboard
+-- cannot answer it: it knows what was handed to it, not what this server chose
+-- not to hand over, and the interesting cases are usually the second kind - an
+-- address that bounced, a provider that was down, a marketing send skipped
+-- because the account had opted out.
+--
+-- So a row is written for the attempt, before the transport is called, and
+-- updated with what happened. `status` is one of:
+--
+--   queued      the row exists, the transport has not answered yet
+--   sent        the transport accepted it
+--   failed      the transport refused or could not be reached
+--   suppressed  this server declined to send it (opted out, no address)
+--
+-- The body is not stored. It is reproducible from the template and the row's
+-- `kind`, and an email log that accumulates the contents of every receipt is a
+-- second copy of the ledger with none of its protections.
+CREATE TABLE IF NOT EXISTS email_messages (
+    id              TEXT PRIMARY KEY,
+    user_id         TEXT REFERENCES users (id) ON DELETE SET NULL,
+
+    -- The template that produced it, e.g. 'welcome'. See server/mail/templates.js.
+    kind            TEXT NOT NULL,
+
+    -- 'transactional' | 'security' | 'marketing'. Copied from the template at
+    -- send time so that reclassifying one later does not rewrite history.
+    category        TEXT NOT NULL,
+
+    -- Kept even after the account is deleted and `user_id` goes null: a
+    -- deletion request is one of the things somebody may later have to prove
+    -- was acknowledged, and the acknowledgement went to this address.
+    recipient       TEXT NOT NULL,
+    subject         TEXT NOT NULL,
+
+    status          TEXT NOT NULL DEFAULT 'queued',
+
+    -- Which transport, and its id for the message, so a row here can be found
+    -- in the provider's own logs.
+    provider        TEXT NOT NULL,
+    provider_ref    TEXT,
+
+    -- Why it failed, or why it was suppressed. Truncated, never the body.
+    detail          TEXT,
+
+    created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+    settled_at      TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_email_user ON email_messages (user_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_email_kind ON email_messages (kind, created_at DESC);
+
+/* ============================================================================
+ *
+ *  Channel names: the address a creator is found at.
+ *
+ * ========================================================================= */
+
+/* -------------------------------------------------------- channel names -- */
+--
+-- The address a creator is found at: `/<name>`, at the root of the site.
+--
+-- A table rather than a column on `users` because a channel may answer to more
+-- than one name. A creator who renames keeps the old name pointing at the same
+-- channel instead of breaking every link anybody ever saved, and the platform's
+-- own channels hold several deliberately. Exactly one row per user carries
+-- `is_primary`, and that is the one the site builds links from; the rest
+-- redirect to it.
+--
+-- Who may hold more than one is a policy question answered in
+-- `server/channels/index.js`, not here. The schema's job is to make several
+-- possible and to make collisions impossible.
+--
+-- The slug is the primary key, lowercased by the caller before it ever gets
+-- here. That is what makes two creators claiming one name a constraint
+-- violation rather than a race.
+CREATE TABLE IF NOT EXISTS channel_slugs (
+    slug            TEXT PRIMARY KEY,
+    user_id         TEXT NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+
+    -- 1 on the canonical name, 0 on an alias. Enforced one-per-user by
+    -- `idx_channel_slugs_primary` below.
+    is_primary      INTEGER NOT NULL DEFAULT 0,
+
+    created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_channel_slugs_user ON channel_slugs (user_id);
+
+-- One primary per user, in the database rather than in the code that writes it.
+-- A partial unique index is the only form that expresses "at most one row where
+-- this flag is set" without forbidding the many rows where it is not.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_channel_slugs_primary
+    ON channel_slugs (user_id) WHERE is_primary = 1;
+
+/* ------------------------------------------------------- reserved names -- */
+--
+-- Names a superuser has taken out of circulation, on top of the built-in list
+-- in `server/channels/slug.js`.
+--
+-- Two lists rather than one because they answer to different things. The
+-- built-in list is a property of the code - it contains every route this server
+-- mounts, and it has to change in the same commit the router does, which means
+-- it belongs in the repository and under test. This one is a property of the
+-- moment: a name being squatted, a trademark complaint, a performer's stage
+-- name being impersonated. Those cannot wait for a deploy and must not
+-- require one.
+--
+-- Nothing here is ever matched literally. Both lists are compared on the
+-- confusable skeleton described in `slug.js`, so reserving `acme` also reserves
+-- `4cm3` and `acrne`.
+CREATE TABLE IF NOT EXISTS reserved_slugs (
+    slug            TEXT PRIMARY KEY,
+
+    -- Who reserved it, kept so the list can be audited rather than just obeyed.
+    -- ON DELETE SET NULL: the reservation outlives the account that made it.
+    reserved_by     TEXT REFERENCES users (id) ON DELETE SET NULL,
+
+    -- Free text for the next person to read. A reserved name with no reason is
+    -- a name nobody will ever dare release.
+    reason          TEXT,
+
+    created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+);

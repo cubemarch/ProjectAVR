@@ -1,5 +1,6 @@
 import { verifyAccessToken } from './tokens.js';
 import { users } from '../db/index.js';
+import { atLeast } from '../../src/auth/roles.js';
 
 /**
  * Request authentication.
@@ -9,8 +10,6 @@ import { users } from '../db/index.js';
  * on it. Only routes that genuinely need the full user record pay for a lookup,
  * via `loadFullUser`.
  */
-
-const ROLE_RANK = { viewer: 0, creator: 1, admin: 2 };
 
 function bearerFrom(req) {
     const header = req.headers.authorization;
@@ -46,18 +45,16 @@ export function requireAuth(req, res, next) {
  * Require a minimum role. Roles are ranked, so `requireRole('creator')` also
  * admits admins without every route having to list them.
  *
- * @param {'viewer'|'creator'|'admin'} minimum
+ * @param {'viewer'|'creator'|'admin'|'superuser'} minimum
  */
 export function requireRole(minimum) {
-    const needed = ROLE_RANK[minimum];
-
     return (req, res, next) => {
         if (!req.auth) {
             res.status(401).json({ error: 'authentication required' });
             return;
         }
 
-        if ((ROLE_RANK[req.auth.role] ?? -1) < needed) {
+        if (!atLeast(req.auth.role, minimum)) {
             res.status(403).json({ error: `requires ${minimum} role` });
             return;
         }

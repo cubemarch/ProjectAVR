@@ -164,11 +164,20 @@ second panel.
 | `PUT /api/profile/avatar` | Raw image bytes |
 | `DELETE /api/profile/avatar` | |
 | `PATCH /api/profile/creator` | Pricing, 3D switches, recording policy |
+| `GET /api/profile/names` | The channel names this account holds, and its limit |
 | `GET /api/creators/live` | Who is on air and who is ready |
 | `GET /api/creators/:id` | A creator's public page |
+| `GET /api/channels/:slug` | Public. The channel at `/<name>`, and whatever is live on it |
 
 Over-long text is a `400`, not a silent truncation. Saving something other than
 what was typed is a worse outcome than refusing.
+
+**Your link** is the one field on this page that is also an address. A channel
+name claims `/<name>` at the root of the site, and it is the only permanent way
+to point at a creator — a session id is minted per broadcast, and a broadcast
+grant is spent on the connection it opened. Changing it keeps the old name
+working. The rules, the reserved list and the superuser's multi-name case are
+in [LIVE.md](LIVE.md#name-is-the-link-because-nothing-else-can-be).
 
 Pricing lives here, and no face check stands in front of it — nor in front of
 Studio at all. The face check exists to prove who is about to go on air, so it

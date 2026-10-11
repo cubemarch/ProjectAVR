@@ -42,7 +42,12 @@ function config() {
         apiKey,
         enrolTemplate: process.env.AVR_PERSONA_ENROL_TEMPLATE_ID || null,
         faceTemplate: process.env.AVR_PERSONA_FACEAUTH_TEMPLATE_ID || null,
-        ageTemplate: process.env.AVR_PERSONA_AGE_TEMPLATE_ID || null
+        ageTemplate: process.env.AVR_PERSONA_AGE_TEMPLATE_ID || null,
+
+        // Optional, and only Florida needs it: Fla. Stat. § 501.1737 requires
+        // an anonymous route be offered beside the standard one. Unset, the
+        // anonymous choice runs the ordinary template and warns.
+        ageAnonTemplate: process.env.AVR_PERSONA_AGE_ANON_TEMPLATE_ID || null
     };
 }
 
@@ -277,14 +282,21 @@ export function personaProvider() {
          * cannot be used as one - there is nothing here to face-check against
          * later, by construction.
          */
-        async startAgeCheck({ userId, redirectUrl = null }) {
-            const { ageTemplate } = config();
+        async startAgeCheck({ userId, redirectUrl = null, anonymous = false }) {
+            const { ageTemplate, ageAnonTemplate } = config();
             if (!ageTemplate) throw new Error('AVR_PERSONA_AGE_TEMPLATE_ID is not set');
+
+            if (anonymous && !ageAnonTemplate) {
+                console.warn(
+                    '[identity] anonymous age verification was requested but ' +
+                        'AVR_PERSONA_AGE_ANON_TEMPLATE_ID is not set; running the standard age template'
+                );
+            }
 
             const inquiry = await call('POST', '/inquiries', {
                 data: {
                     attributes: {
-                        inquiryTemplateId: ageTemplate,
+                        inquiryTemplateId: (anonymous && ageAnonTemplate) || ageTemplate,
                         referenceId: userId,
                         ...(redirectUrl ? { redirectUri: redirectUrl } : {})
                     }

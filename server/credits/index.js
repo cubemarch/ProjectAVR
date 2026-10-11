@@ -1,7 +1,8 @@
 import express from 'express';
 
-import { credits, purchases } from '../db/index.js';
+import { credits, purchases, users } from '../db/index.js';
 import { requireAuth, rateLimit } from '../auth/middleware.js';
+import { notify } from '../mail/index.js';
 import {
     CREDIT_TIERS,
     CUSTOM_MAX_CENTS,
@@ -23,6 +24,11 @@ import {
  * See `docs/MONETISATION.md` for the model, and `db/schema.sql` for why every
  * amount here is an integer number of cents.
  */
+
+/** Cents as a person reads them. Only for display - nothing here computes on it. */
+function money(cents) {
+    return `$${(Math.trunc(cents) / 100).toFixed(2)}`;
+}
 
 /** What a ledger row looks like on a statement. */
 function entryView(row) {
@@ -162,6 +168,16 @@ export function mountCredits(app) {
                 });
 
                 const paid = purchases.settle(purchase.id, 'paid', { providerRef: charge.providerRef });
+
+                // A receipt, which is not optional and is not marketing: it is
+                // the only record of the charge the buyer holds outside this
+                // server, and it is what a card dispute is answered with.
+                notify('credits-purchased', users.byId(req.auth.sub), {
+                    amount: money(amount.amountCents),
+                    credits: granted.toLocaleString('en-US'),
+                    balance: posted.balance.toLocaleString('en-US'),
+                    reference: paid.id
+                });
 
                 res.status(201).json({
                     purchase: purchaseView(paid),
