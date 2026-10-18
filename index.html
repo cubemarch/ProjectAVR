@@ -10,6 +10,32 @@
             content="Live 2D and 3D broadcasts from creators, watched in a browser or a headset, with private 1:1 sessions and a recordings marketplace."
         />
         <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%237c5cff'/%3E%3Ctext x='16' y='23' font-family='Helvetica,Arial' font-size='19' font-weight='bold' fill='%23fff' text-anchor='middle'%3EL%3C/text%3E%3C/svg%3E" />
+
+        <!-- Google Analytics (GA4). The measurement id is not a secret - it is
+             visible in the page source of every site that uses one - so it is
+             written here rather than threaded through the build as an env var.
+
+             Only the production hosts load the remote tag. `gtag` itself is
+             always defined, so calls from anywhere in the app are harmless
+             no-ops in development: they queue onto `dataLayer` and nothing
+             reaches Google until gtag.js is present to drain it. Without this
+             guard every `npm run dev` and every headless test run would file
+             real hits against the property. -->
+        <script>
+            window.dataLayer = window.dataLayer || [];
+            function gtag() {
+                window.dataLayer.push(arguments);
+            }
+            gtag('js', new Date());
+            gtag('config', 'G-HK6Q0JBGTC');
+
+            if (location.hostname === 'lustxr.com' || location.hostname === 'www.lustxr.com') {
+                const tag = document.createElement('script');
+                tag.async = true;
+                tag.src = 'https://www.googletagmanager.com/gtag/js?id=G-HK6Q0JBGTC';
+                document.head.appendChild(tag);
+            }
+        </script>
     </head>
     <body>
         <!-- Browse experience (DOM). -->
