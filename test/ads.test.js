@@ -61,6 +61,38 @@ test('every mobile creative fits the narrowest phone', () => {
     assert.ok(NATIVE_STRIP.width <= 320, 'the native unit fits a phone too');
 });
 
+test('no zone id is used twice', () => {
+    // The renderer writes the zone id to the `<ins>` as a DOM id, and the
+    // network's loader looks the element back up by it when it drains the
+    // queue. Two slots sharing an id is therefore not two ads: it is one ad
+    // and one permanently empty box, with nothing in the markup to say so.
+    const ids = [];
+
+    for (const p of AD_PLACEMENTS) {
+        for (const tier of ['desktop', 'mobile']) {
+            if (p[tier].zone !== null) ids.push(p[tier].zone);
+        }
+    }
+    ids.push(...NATIVE_STRIP.zones);
+
+    assert.equal(new Set(ids).size, ids.length, `a zone id repeats in ${ids.join(', ')}`);
+});
+
+test('a desktop unit is never wider than the narrowest width it is served at', () => {
+    // The invariant behind `desktopMinWidth`. A creative wider than its own
+    // floor is clipped by the slot's `overflow: hidden` at every width
+    // between the two — which produces no error, no scrollbar and no visible
+    // symptom except on the devices in that band.
+    for (const p of AD_PLACEMENTS) {
+        const floor = p.desktopMinWidth || MOBILE_BREAKPOINT_PX;
+
+        assert.ok(
+            p.desktop.width <= floor,
+            `${p.id} serves a ${p.desktop.width}px unit from ${floor}px up`
+        );
+    }
+});
+
 test('a zone id is a positive integer or it is not a zone', () => {
     assert.equal(cleanZone(1129394), 1129394);
     assert.equal(cleanZone('1129394'), 1129394, 'a pasted string still works');
@@ -88,44 +120,122 @@ test('the viewport decides which size is asked for', () => {
     assert.equal(pickSize(p, MOBILE_BREAKPOINT_PX - 1).zone, 2);
 });
 
-/* ---------------------------------------------------------- rendering -- */
+test('a placement with a wide creative sets its own floor', () => {
+    const billboard = AD_PLACEMENTS.find((p) => p.id === 'mid-billboard');
+    assert.equal(billboard.desktopMinWidth, 940);
 
-test('the live leaderboard renders its zone and reserves its height', () => {
-    const html = adSlotHtml('top-leaderboard', { viewportWidth: DESKTOP });
+    // A tablet is well above the default breakpoint and still gets the mobile
+    // unit here, because 908px of creative does not fit an 820px screen.
+    assert.equal(pickSize(billboard, TABLET).zone, billboard.mobile.zone);
 
-    assert.match(html, /id="1129394"/, 'the dashboard zone id');
-    assert.match(html, /data-width="728"/);
-    assert.match(html, /data-height="90"/);
-    assert.match(html, /--ad-w:728px/, 'the width is reserved in CSS too');
-    assert.match(html, /--ad-h:90px/);
-    assert.match(html, /class="adsbyjuicy"/, 'fillAdSlots selects on this');
-    assert.match(html, />Advertisement</, 'and it says what it is');
+    assert.equal(pickSize(billboard, 939).zone, billboard.mobile.zone);
+    assert.equal(pickSize(billboard, 940).zone, billboard.desktop.zone);
+
+    // And the floor is this placement's alone — the leaderboards still turn
+    // over at the default, so raising one did not quietly raise them all.
+    const top = AD_PLACEMENTS.find((p) => p.id === 'top-leaderboard');
+    assert.equal(pickSize(top, TABLET).zone, top.desktop.zone);
 });
 
-test('a placement with no zone for this viewport renders nothing at all', () => {
-    // The top leaderboard has a desktop zone and no mobile one. On a phone it
-    // must be absent rather than empty: an "Advertisement" label over a blank
-    // 300x100 box is worse than no ad, and is indistinguishable from an ad
-    // that is configured but failing to fill.
-    const phone = adSlotHtml('top-leaderboard', { viewportWidth: PHONE });
+/* ---------------------------------------------------------- rendering -- */
 
-    assert.equal(phone, '', 'no markup, no label, no reserved space');
-    assert.doesNotMatch(phone, /Advertisement/);
+test('every placement emits its own zone at each viewport', () => {
+    // Table-driven because the mistake this catches is a transposed paste:
+    // six ids off one dashboard page, differing in their last two digits,
+    // going into six slots. A swapped pair still renders a perfectly valid
+    // ad — the wrong size, in the wrong place, looking like a CSS bug.
+    const expected = [
+        ['top-leaderboard', DESKTOP, 1129394, 728, 90],
+        ['top-leaderboard', PHONE, 1129396, 300, 100],
+        ['mid-billboard', DESKTOP, 1129400, 908, 258],
+        ['mid-billboard', PHONE, 1129401, 300, 250],
+        ['footer-leaderboard', DESKTOP, 1129397, 728, 90],
+        ['footer-leaderboard', PHONE, 1129398, 300, 100]
+    ];
+
+    for (const [id, viewportWidth, zone, w, h] of expected) {
+        const where = `${id} at ${viewportWidth}px`;
+        const html = adSlotHtml(id, { viewportWidth });
+
+        assert.match(html, new RegExp(`id="${zone}"`), `${where}: zone id`);
+        assert.match(html, new RegExp(`data-width="${w}"`), `${where}: width`);
+        assert.match(html, new RegExp(`data-height="${h}"`), `${where}: height`);
+
+        // The same numbers again as custom properties. These are what reserve
+        // the space before the creative lands, so a slot carrying the right
+        // zone and the wrong reservation still shifts the page when it fills.
+        assert.match(html, new RegExp(`--ad-w:${w}px`), `${where}: width reserved`);
+        assert.match(html, new RegExp(`--ad-h:${h}px`), `${where}: height reserved`);
+
+        assert.match(html, /class="adsbyjuicy"/, `${where}: fillAdSlots selects on this`);
+        assert.match(html, />Advertisement</, `${where}: and it says what it is`);
+    }
+});
+
+test('an unconfigured placement renders nothing at all', () => {
+    // Against a synthetic placement, because every real one now has an id.
+    // This is the property the whole module is built around, so it does not
+    // get to lapse just because the live configuration stopped exercising it:
+    // a label over a blank box is worse than no ad, and is indistinguishable
+    // from a zone that is configured and failing to fill.
+    const placements = [
+        {
+            id: 'not-yet-sold',
+            label: 'A placement waiting for an id',
+            desktop: { zone: null, width: 728, height: 90 },
+            mobile: { zone: null, width: 300, height: 100 }
+        }
+    ];
+
+    for (const viewportWidth of [DESKTOP, TABLET, PHONE]) {
+        const html = adSlotHtml('not-yet-sold', { viewportWidth, placements });
+
+        assert.equal(html, '', `${viewportWidth}px: no markup, no label, no reserved space`);
+        assert.doesNotMatch(html, /Advertisement/);
+    }
+});
+
+test('one tier configured does not render the other', () => {
+    // The state the top leaderboard was in for most of 2026-10-18: a desktop
+    // zone and no mobile one. Phones got nothing, rather than a 728px
+    // creative clipped into a 390px column and billed as an impression.
+    const placements = [
+        {
+            id: 'half-sold',
+            label: 'Desktop only',
+            desktop: { zone: 1129394, width: 728, height: 90 },
+            mobile: { zone: null, width: 300, height: 100 }
+        }
+    ];
+
+    assert.match(adSlotHtml('half-sold', { viewportWidth: DESKTOP, placements }), /id="1129394"/);
+    assert.equal(adSlotHtml('half-sold', { viewportWidth: PHONE, placements }), '');
 });
 
 test('an unknown placement id is empty rather than throwing', () => {
     assert.equal(adSlotHtml('no-such-slot', { viewportWidth: DESKTOP }), '');
 });
 
-test('the unconfigured placements stay silent until they have ids', () => {
-    for (const id of ['mid-billboard', 'footer-leaderboard']) {
-        assert.equal(adSlotHtml(id, { viewportWidth: DESKTOP }), '', `${id} desktop`);
-        assert.equal(adSlotHtml(id, { viewportWidth: PHONE }), '', `${id} mobile`);
-    }
+test('the native strip draws one unit per configured zone', () => {
+    const html = nativeStripHtml();
+
+    assert.match(html, /class="ad-strip"/);
+    assert.match(html, /id="1129402"/);
+    assert.match(html, /--ad-w:108px/);
+    assert.match(html, /--ad-h:140px/);
+    assert.equal(
+        html.match(/class="adsbyjuicy"/g).length,
+        NATIVE_STRIP.zones.length,
+        'one unit per zone, no more'
+    );
 });
 
-test('the native strip is absent while it has no zones', () => {
-    assert.equal(nativeStripHtml(), '', 'an empty strip is no strip');
+test('an empty strip is no strip', () => {
+    const empty = { zones: [], width: 108, height: 140 };
+    const junk = { zones: [null, 0, 'abc'], width: 108, height: 140 };
+
+    assert.equal(nativeStripHtml(empty), '', 'no zones, no wrapper');
+    assert.equal(nativeStripHtml(junk), '', 'and nothing a bad paste left behind');
 });
 
 /* -------------------------------------------------------------- gates -- */

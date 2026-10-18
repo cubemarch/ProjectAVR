@@ -28,10 +28,11 @@
  * advertiser is charged for, which makes it invalid traffic — the category
  * publisher accounts are closed over, not a rounding error in a dashboard.
  *
- * **It does not load with nothing configured.** Every placement ships with
- * `zone: null`. If no zone anywhere has an id, `jads.js` is never requested
- * and no markup is emitted, so this whole subsystem costs a deployed site
- * exactly nothing until somebody pastes an id into `zones.js`.
+ * **It does not load with nothing configured.** If no zone anywhere has an
+ * id, `jads.js` is never requested and no markup is emitted, so this whole
+ * subsystem cost a deployed site exactly nothing in the window between it
+ * being written and the first id being pasted into `zones.js`, and costs
+ * nothing again if the ids are ever taken back out.
  *
  * **It loads once.** `_scriptPromise` is the guard. `_renderAffiliates()` runs
  * again on every refresh and re-writes the slot markup each time, and without
@@ -44,9 +45,11 @@
  * JuicyAds dashboard emits as a copy-paste block: the `jads.js` script, an
  * `<ins>` carrying the zone id and its dimensions, and a push onto the
  * `adsbyjuicy` queue. It is reconstructed rather than pasted because pasting
- * it once per placement puts the script tag in the page five times.
+ * the block once per slot puts the loader in the page once per slot.
  *
- * Checked against a real generated tag (zone 1129394, 2026-10-18):
+ * Checked against all seven generated tags (zones 1129394, 1129396, 1129397,
+ * 1129398, 1129400, 1129401 and 1129402, 2026-10-18), which differ from each
+ * other only in the id and the two dimensions:
  *
  *     <script type="text/javascript" data-cfasync="false" async
  *             src="https://poweredby.jads.co/js/jads.js"></script>
@@ -109,11 +112,19 @@ export function cleanZone(zone) {
  * without a DOM and so a caller rendering a template string does not have to
  * be in a browser.
  *
+ * `MOBILE_BREAKPOINT_PX` is the floor for most placements but not all of
+ * them: it was picked for a 728px leaderboard, and a placement with a wider
+ * desktop creative sets its own `desktopMinWidth`. Serving a unit into a
+ * container narrower than itself clips it — the slot's `overflow: hidden`
+ * takes the right edge off rather than letting the page scroll sideways —
+ * so the floor has to track the creative, not the other way round.
+ *
  * @param {object} placement
  * @param {number} viewportWidth
  */
 export function pickSize(placement, viewportWidth) {
-    return viewportWidth < MOBILE_BREAKPOINT_PX ? placement.mobile : placement.desktop;
+    const floor = placement.desktopMinWidth || MOBILE_BREAKPOINT_PX;
+    return viewportWidth < floor ? placement.mobile : placement.desktop;
 }
 
 /** @returns {number} the current viewport width, or a desktop default off-DOM. */
@@ -163,12 +174,17 @@ export function adsEnabled() {
  * entirely avoidable when the size is known in advance, which for a fixed ad
  * size it always is.
  *
+ * `placements` is a seam, for the same reason `viewportWidth` is one. Every
+ * real placement currently has a zone id, so the live configuration no longer
+ * exercises the empty-zone path at all — and that path is the whole safety
+ * property of this module. Passing a synthetic list is how it stays tested.
+ *
  * @param {string} placementId
- * @param {{viewportWidth?: number}} [opts]
+ * @param {{viewportWidth?: number, placements?: object[]}} [opts]
  * @returns {string}
  */
-export function adSlotHtml(placementId, { viewportWidth = viewport() } = {}) {
-    const placement = AD_PLACEMENTS.find((p) => p.id === placementId);
+export function adSlotHtml(placementId, { viewportWidth = viewport(), placements = AD_PLACEMENTS } = {}) {
+    const placement = placements.find((p) => p.id === placementId);
     if (!placement) return '';
 
     const size = pickSize(placement, viewportWidth);
@@ -185,13 +201,18 @@ export function adSlotHtml(placementId, { viewportWidth = viewport() } = {}) {
  * configured zones centre as a pair instead of leaving a gap where the third
  * would be.
  *
+ * Takes the strip as a parameter for the same reason `adSlotHtml` takes a
+ * placement list: the configured strip is no longer empty, so "an empty strip
+ * draws nothing" has to be checked against one that is.
+ *
+ * @param {{zones: number[], width: number, height: number}} [strip]
  * @returns {string}
  */
-export function nativeStripHtml() {
-    const units = NATIVE_STRIP.zones
+export function nativeStripHtml(strip = NATIVE_STRIP) {
+    const units = strip.zones
         .map((z) => cleanZone(z))
         .filter(Boolean)
-        .map((zone) => slotHtml(zone, NATIVE_STRIP.width, NATIVE_STRIP.height, 'ad-slot-native'))
+        .map((zone) => slotHtml(zone, strip.width, strip.height, 'ad-slot-native'))
         .join('');
 
     return units ? `<div class="ad-strip">${units}</div>` : '';

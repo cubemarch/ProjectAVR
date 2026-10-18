@@ -8,11 +8,15 @@
  *
  * ## Nothing renders until a zone id is real
  *
- * Every placement ships with `zone: null`, and a placement with no zone id
- * **draws nothing at all** — not a box, not a label, not reserved space. That
- * is deliberate and it is the property that makes this file safe to deploy
- * before the account has any zones in it: the page is byte-for-byte what it
- * was, and `jads.js` is never even fetched.
+ * A placement with no zone id **draws nothing at all** — not a box, not a
+ * label, not reserved space. That is the property that made this file safe to
+ * deploy with one zone out of six live: the page was byte-for-byte what it had
+ * been, and with nothing configured anywhere `jads.js` is never even fetched.
+ *
+ * Every placement below has an id as of 2026-10-18, so nothing exercises that
+ * path in production today. It is pinned in `test/ads.test.js` against
+ * synthetic placements instead, because it is the behaviour a seventh
+ * placement added next month will depend on.
  *
  * The alternative — shipping placeholders that reserve space and say
  * "Advertisement" over an empty rectangle — is worse than having no ads. It
@@ -42,12 +46,17 @@
  */
 
 /**
- * The breakpoint at which a placement switches to its mobile size.
+ * The default width below which a placement switches to its mobile size.
  *
- * 760px rather than a round 768: the widest desktop unit used here is the
- * 728px leaderboard, and it needs the page gutter (`4vw`) to fit either side
- * of it before it is worth serving. Below this, the mobile creative is both
- * the honest fit and the one advertisers bid on for phone traffic.
+ * 760px rather than a round 768: it was chosen for the 728px leaderboard,
+ * which needs a little room either side of it before it is worth serving.
+ * Below this, the mobile creative is both the honest fit and the one
+ * advertisers bid on for phone traffic.
+ *
+ * This is a default, not a universal rule. A placement whose desktop creative
+ * is wider than 760px declares its own `desktopMinWidth`, because a unit
+ * served into a container narrower than itself is clipped rather than scaled
+ * — see the billboard below.
  */
 export const MOBILE_BREAKPOINT_PX = 760;
 
@@ -58,40 +67,49 @@ export const MOBILE_BREAKPOINT_PX = 760;
  * renaming it in three places; the ids are deliberately boring for that
  * reason.
  *
+ * A zone id appears exactly once across this whole file. The renderer writes
+ * it to the `<ins>` as a DOM id and the loader looks the element back up by
+ * it, so the same id in two placements would leave the second one permanently
+ * empty — silently, since both would still be valid markup. `test/ads.test.js`
+ * pins the uniqueness rather than leaving it to review.
+ *
  * @typedef {{zone: number|null, width: number, height: number}} AdSize
- * @typedef {{id: string, label: string, desktop: AdSize, mobile: AdSize}} AdPlacement
+ * @typedef {{id: string, label: string, desktopMinWidth?: number,
+ *            desktop: AdSize, mobile: AdSize}} AdPlacement
  * @type {AdPlacement[]}
  */
 export const AD_PLACEMENTS = [
     {
         id: 'top-leaderboard',
         label: 'Above the partner section',
-
-        // The only live zone as of 2026-10-18. Taken from the dashboard tag
-        // `<ins id="1129394" data-width="728" data-height="90">`.
         desktop: { zone: 1129394, width: 728, height: 90 },
-
-        // No mobile counterpart exists yet, so **phones see no ad here**. That
-        // is the deliberate choice over serving the 728 wide unit to a 390pt
-        // screen: a fixed-size creative in a narrower box is clipped, not
-        // shrunk, and scaling it with a CSS transform misrepresents the
-        // creative to the advertiser paying for the impression.
-        //
-        // Create a 300x100 Mobile Medium zone in the dashboard and paste the
-        // id here; nothing else needs to change.
-        mobile: { zone: null, width: 300, height: 100 }
+        mobile: { zone: 1129396, width: 300, height: 100 }
     },
     {
         id: 'mid-billboard',
         label: 'Between the performer row and the on-demand row',
-        desktop: { zone: null, width: 900, height: 250 },
-        mobile: { zone: null, width: 300, height: 250 }
+
+        // 908x258, not the round 900x250 this placement was sketched at —
+        // that is the size the dashboard actually offers, and the numbers
+        // here have to match the zone exactly or the reserved space is the
+        // wrong shape.
+        //
+        // It is also the one unit too wide for the default breakpoint. A
+        // tablet at 820px would otherwise be served 908px of creative into an
+        // 820px box and have the right 88px of it cut off by the slot's
+        // `overflow: hidden` — no broken layout, no scrollbar, just an
+        // advertiser billed for an ad nobody saw the end of. Below 940 (the
+        // creative plus a little room either side) this serves the 300x250
+        // instead, which is the right unit for a tablet anyway.
+        desktopMinWidth: 940,
+        desktop: { zone: 1129400, width: 908, height: 258 },
+        mobile: { zone: 1129401, width: 300, height: 250 }
     },
     {
         id: 'footer-leaderboard',
         label: 'Below the last content row',
-        desktop: { zone: null, width: 728, height: 90 },
-        mobile: { zone: null, width: 300, height: 100 }
+        desktop: { zone: 1129397, width: 728, height: 90 },
+        mobile: { zone: 1129398, width: 300, height: 100 }
     }
 ];
 
@@ -104,15 +122,16 @@ export const AD_PLACEMENTS = [
  * here is a row of cards.
  *
  * One zone id per unit. An empty list draws no strip; a list of two draws two.
- * Three is the most that fits beside the 300px cards this site already uses
- * without the strip looking like a different website.
+ * The format is designed to be tiled — 108x140 is a thumbnail, and a single
+ * one of them centred in a 1440px page reads as a stray image rather than as
+ * a row. Adding the second and third is appending two ids to this array.
  *
  * @type {{zones: number[], width: number, height: number}}
  */
 export const NATIVE_STRIP = {
-    zones: [],
-    width: 300,
-    height: 300
+    zones: [1129402],
+    width: 108,
+    height: 140
 };
 
 /**

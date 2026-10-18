@@ -3548,10 +3548,14 @@ body.is-profile {
 /*
  * The native strip.
  *
- * Wraps rather than scrolls. Three 300px units need 940px with the gaps, so
- * on anything narrower they reflow to two and then to one, which is the
- * behaviour that keeps a native unit looking like part of the grid instead of
- * like a banner that fell off the side.
+ * Wraps rather than scrolls, so however many units are configured reflow onto
+ * as many lines as they need instead of one of them falling off the side.
+ *
+ * The units are thumbnails — 108x140 is the native size the dashboard offers
+ * — and `width: auto` lets each slot shrink-wrap so the row centres as a
+ * group. It also means a slot narrower than its own "Advertisement" label is
+ * widened by the label rather than clipping it, which matters: the label is
+ * the disclosure, and at this size it is wider than the ad.
  */
 .ad-strip {
     display: flex;

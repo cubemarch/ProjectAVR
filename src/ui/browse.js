@@ -74,8 +74,6 @@ export class BrowseUI extends pc.EventHandler {
                     <div id="affiliate-groups"></div>
                     <div id="star-bio" class="star-bio" role="tooltip" hidden></div>
                 </section>
-                ${nativeStripHtml()}
-                ${adSlotHtml('footer-leaderboard')}
                 ${AFFILIATES_ONLY ? '' : this._ownContentHtml()}
             </main>
             ${AFFILIATES_ONLY ? '' : this._modalHtml()}
@@ -89,13 +87,18 @@ export class BrowseUI extends pc.EventHandler {
         this.billboardEl = this.mount.querySelector('#billboard-slot');
         this.affiliatesEl = this.mount.querySelector('#affiliates');
 
+        // Not queried: `_renderFootAds` creates it. Cleared here because the
+        // line above has just replaced the whole mount, so anything a previous
+        // pass built is now detached.
+        this.footAdsEl = null;
+
         this._renderAffiliates();
 
-        // Again here, because `_renderAffiliates` returns early when no partner
-        // answered — and the leaderboards are children of `<main>`, not of the
-        // affiliate section, precisely so that a partner outage does not take
-        // the ad inventory down with it. `fillAdSlots` marks what it has
-        // registered, so the two calls do not double-count an impression.
+        // Again here, because `_renderAffiliates` returns immediately when
+        // there is no affiliate section at all — and the top leaderboard is a
+        // child of `<main>`, above that section, so it is drawn and fillable
+        // either way. `fillAdSlots` marks what it has registered, so the two
+        // calls do not double-count an impression.
         fillAdSlots(this.mount);
 
         // Everything below needs markup that affiliate-only mode did not emit.
@@ -344,38 +347,112 @@ export class BrowseUI extends pc.EventHandler {
 
         const rows = this.affiliateRows ?? [];
         this.affiliatesEl.hidden = rows.length === 0;
-        if (this.affiliatesEl.hidden) return;
 
-        // Grouped by kind, in the order `AFFILIATE_GROUPS` declares, and a
-        // group with no programs in it is not drawn at all. That is what lets
-        // a live-cams deal be a single entry in the registry later on. `pitch`
-        // has no entry there because it is a banner rather than a row, so it
-        // falls out of this loop and is drawn separately below.
-        const groups = AFFILIATE_GROUPS.map((group) => {
-            const inGroup = rows.filter((row) => row.program.kind === group.kind);
-            if (!inGroup.length) return '';
+        if (!this.affiliatesEl.hidden) {
+            // Grouped by kind, in the order `AFFILIATE_GROUPS` declares, and a
+            // group with no programs in it is not drawn at all. That is what
+            // lets a live-cams deal be a single entry in the registry later
+            // on. `pitch` has no entry there because it is a banner rather
+            // than a row, so it falls out of this loop and is drawn
+            // separately below.
+            const groups = AFFILIATE_GROUPS.map((group) => {
+                const inGroup = rows.filter((row) => row.program.kind === group.kind);
+                if (!inGroup.length) return '';
 
-            return `
+                return `
                     <div class="affiliate-group">
                         <h3 class="affiliate-group-label">${escapeHtml(group.label)}</h3>
                         ${inGroup.map((row) => this._affiliateShelfHtml(row)).join('')}
                     </div>`;
-        }).filter(Boolean);
+            }).filter(Boolean);
 
-        // The billboard goes *between* two groups, never after the last one.
-        // Filtering first is what makes that true: groups with no programs
-        // render nothing, so "after the first group" has to mean the first one
-        // that actually drew, or an empty Live cams group would put the ad at
-        // the top. With fewer than two groups there is no between, and the
-        // footer slot already covers the end of the page.
-        const billboard = adSlotHtml('mid-billboard');
-        if (billboard && groups.length > 1) groups.splice(1, 0, billboard);
+            // The billboard goes *between* two groups, never after the last
+            // one. Filtering first is what makes that true: groups with no
+            // programs render nothing, so "after the first group" has to mean
+            // the first one that actually drew, or an empty Live cams group
+            // would put the ad at the top. With fewer than two groups there is
+            // no between, and the foot slot already covers the end of the page.
+            const billboard = adSlotHtml('mid-billboard');
+            if (billboard && groups.length > 1) groups.splice(1, 0, billboard);
 
-        this.affiliatesEl.querySelector('#affiliate-groups').innerHTML = groups.join('');
+            this.affiliatesEl.querySelector('#affiliate-groups').innerHTML = groups.join('');
 
-        this._bindShelfArrows(this.affiliatesEl);
-        this._renderPitch(rows.find((row) => row.program.kind === 'pitch'));
-        this._bindStarBios();
+            this._bindShelfArrows(this.affiliatesEl);
+            this._renderPitch(rows.find((row) => row.program.kind === 'pitch'));
+            this._bindStarBios();
+        }
+
+        // Last, and on both paths. This is the point at which the partner
+        // section has taken whatever height it is going to have, which is what
+        // the slots below it need before they can be drawn.
+        this._renderFootAds();
+    }
+
+    /**
+     * The slots that sit below the partner section.
+     *
+     * Built here rather than written into `_render`'s template, and the reason
+     * is measured rather than theoretical. `<section class="affiliates">` ships
+     * `hidden` and un-hides when the feed answers, around 700ms in. Anything
+     * already sitting below it at first paint is shoved down the page at that
+     * moment: with these two slots in the template it measured 0.27 to 0.43
+     * CLS depending on viewport, against a 0.1 threshold. The ads were not the
+     * thing that arrived late — they were the thing that got moved.
+     *
+     * Two things are load-bearing, and both were arrived at by measuring the
+     * version without them.
+     *
+     * The container is **created** here rather than sitting empty in the
+     * template waiting to be filled. An empty div still has a position at
+     * first paint, so when the section above expands it both moves and gains
+     * height in the same frame, and the shift is scored against the box it
+     * ends up as — an empty placeholder measured 0.29 to 0.36, no better than
+     * the markup it replaced. A node appended after the fact has no previous
+     * position and contributes nothing.
+     *
+     * And it is not created until the feed has **answered**, which is what
+     * `settled` is for. `_renderAffiliates` runs once at startup, before
+     * anything has been fetched, so creating on that pass puts the container
+     * at a position the section above is about to invalidate — which is the
+     * same shift again, 0.36, now attributed to a node that was created
+     * dynamically and still too early. `affiliateRows` is `undefined` in
+     * flight and an array once it is not, so it distinguishes "no answer yet"
+     * from "answered with nothing", and only the first of those is a reason
+     * to wait.
+     *
+     * Reserving space for the partner section up front would also work, and
+     * would mean guessing the height of a feed that has not answered yet and
+     * then shifting by the error in the guess.
+     *
+     * These stay outside the partner section rather than being appended to it,
+     * which is what the `hidden` path above is for: if no partner answers, the
+     * section stays empty and these are still drawn. A partner outage should
+     * not take the ad inventory down with it.
+     *
+     * Drawn once. A second pass would discard filled iframes and push the same
+     * zones onto the queue again, which is the network counting one impression
+     * twice. `fillAdSlots` still runs on every pass, for the billboard the
+     * partner section rebuilds above.
+     *
+     * (If `AFFILIATES_ONLY` is ever turned off, the shelves restored below the
+     * partner section settle on their own schedule and this lands under them —
+     * it would need the same treatment keyed to those instead.)
+     */
+    _renderFootAds() {
+        const main = this.mount.querySelector('#browse-main');
+        const settled = this.affiliateRows !== undefined;
+
+        if (main && settled && !this.footAdsEl) {
+            const html = nativeStripHtml() + adSlotHtml('footer-leaderboard');
+
+            if (html) {
+                this.footAdsEl = document.createElement('div');
+                this.footAdsEl.id = 'foot-ads';
+                this.footAdsEl.innerHTML = html;
+                main.appendChild(this.footAdsEl);
+            }
+        }
+
         fillAdSlots(this.mount);
     }
 
