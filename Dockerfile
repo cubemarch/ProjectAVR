@@ -70,6 +70,11 @@ COPY art ./art
 ENV AVR_DB=/data/projectavr.db
 ENV AVR_MEDIA_DIR=/data/media
 
+# Generated performer biographies. Same reasoning, with a bill attached: left
+# in the image this is re-bought from OpenAI on every deploy, because a rebuild
+# is exactly when the cache would be discarded.
+ENV AVR_STAR_BIO_CACHE=/data/star-bios.json
+
 # HLS segments. Ephemeral by design - a running transcode rewrites this
 # continuously and nothing in it is worth keeping for more than a few seconds,
 # so mount a tmpfs over it rather than letting it churn the container's writable
