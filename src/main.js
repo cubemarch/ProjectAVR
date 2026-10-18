@@ -4,6 +4,7 @@ import './styles/netflix.css';
 
 import { createEngine, createCameraRig, MagicWindowControls } from './app/engine.js';
 import { loadCatalog } from './catalog/catalog.js';
+import { AFFILIATES_ONLY } from './site-mode.js';
 import { isImmersive, PROJECTION } from './catalog/media-format.js';
 import { VideoSource } from './player/video-source.js';
 import { ImmersivePlayer } from './player/immersive-player.js';
@@ -58,7 +59,14 @@ async function boot() {
     // Restoring the session runs alongside the catalog fetch rather than
     // blocking it: the library renders for signed-out visitors just the same,
     // and personalisation is layered on when it arrives.
-    const [catalog] = await Promise.all([loadCatalog(), detectXr(app, caps), api.restore().catch(() => null)]);
+    // Affiliate-only mode renders none of the library, and a catalogue that is
+    // fetched but not drawn is still a catalogue handed to anybody who opens
+    // the network tab. Hiding it in the DOM is not the same as not sending it.
+    const [catalog] = await Promise.all([
+        AFFILIATES_ONLY ? Promise.resolve({ items: [], rows: [] }) : loadCatalog(),
+        detectXr(app, caps),
+        api.restore().catch(() => null)
+    ]);
 
     const video = new VideoSource(app);
     playerShell.appendChild(video.element);
@@ -74,6 +82,11 @@ async function boot() {
     const profile = new ProfilePage(document.getElementById('profile-root'));
 
     browse.renderAccount(api.user);
+    // Not awaited: these are other people's servers, and a slow partner must
+    // not hold up the page. Called here and nowhere else — the partner rows
+    // are the same for every visitor, signed in or not, so no session change
+    // can alter them.
+    browse.refreshAffiliates();
     await syncViewerState();
 
     const state = {
@@ -326,6 +339,8 @@ async function boot() {
 
     window.addEventListener('avr:exit-portal', () => {
         history.pushState({}, '', '/');
+        if (AFFILIATES_ONLY) return;
+
         // A newly published title should show up immediately on return.
         loadCatalog()
             .then((fresh) => {

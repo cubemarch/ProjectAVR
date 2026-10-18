@@ -3084,3 +3084,388 @@ body.is-profile {
 .recording-line .btn {
     flex: 0 0 auto;
 }
+
+/* ------------------------------------------------- affiliate partners -- */
+
+/*
+ * Other operators' catalogues, above our own rows.
+ *
+ * Deliberately set apart rather than blended in. These cards lead off the
+ * site, and a visitor who cannot tell the difference between a title we host
+ * and a paid link to somebody else's store has been misled by the layout
+ * whatever the disclosure line says. The separation is carried by three
+ * things at once, because any one of them alone reads as decoration: the
+ * group sits on its own slightly raised panel, the covers are portrait where
+ * every card of ours is 16:9, and each card names the partner it leaves for.
+ */
+.affiliates {
+    position: relative;
+    z-index: 2;
+    margin: 0 0 34px;
+    padding: 18px 0 6px;
+    background: linear-gradient(180deg, rgba(124, 92, 255, 0.07), transparent 70%);
+    border-top: 1px solid #1d1d26;
+    border-bottom: 1px solid #1d1d26;
+}
+
+.affiliates-head {
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+/*
+ * Affiliate-only mode — see `src/site-mode.js`.
+ *
+ * The billboard is what normally gives the page its top spacing: the header
+ * is fixed and transparent and the hero sits behind it on purpose. With the
+ * hero hidden, the partner panel would start underneath the header, so the
+ * space it was relying on has to be put back explicitly.
+ */
+#browse-main.affiliates-only {
+    padding-top: var(--header-h);
+}
+
+/* The panel's borders exist to separate paid rows from our own. In this mode
+   there is nothing above it to separate from, and a rule across the top of an
+   otherwise empty page just reads as a seam. */
+#browse-main.affiliates-only .affiliates {
+    border-top: 0;
+    background: none;
+}
+
+/* Not fine print. An affiliate disclosure that needs looking for is the kind
+   the FTC writes letters about, so it sits on the heading line at the same
+   size as the rest of the page's secondary text. */
+.affiliates-disclosure {
+    color: var(--text-dim);
+    font-size: 13px;
+}
+
+.affiliate-group + .affiliate-group {
+    margin-top: 18px;
+}
+
+.affiliate-group-label {
+    margin: 0 0 2px;
+    padding: 0 4vw;
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--text-faint);
+}
+
+.affiliate-shelf {
+    margin-bottom: 10px;
+}
+
+.affiliate-shelf .shelf-head h2 {
+    font-size: 17px;
+}
+
+/* Who the click leaves for, stated on the row as well as on every card. Uses
+   the shared `.badge` shape so it is read as the same kind of marker as the
+   VR and 3D tags, rather than as a second visual language. */
+.badge.partner {
+    color: var(--accent-hot);
+}
+
+.affiliate-card {
+    width: 168px;
+    display: block;
+    color: inherit;
+    text-decoration: none;
+}
+
+/* 380x540 is what the partner serves. Declaring it here rather than letting
+   the image set the height keeps the row from reflowing as covers arrive. */
+.affiliate-art {
+    position: relative;
+    aspect-ratio: 380 / 540;
+    background: #23232e;
+    overflow: hidden;
+}
+
+.affiliate-art img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+}
+
+/*
+ * Always open, where a catalogue card's body unfolds on hover.
+ *
+ * Not a style preference: the partner's name lives in here, and "every card
+ * names where the click goes" is one of the three cues this section relies on
+ * to stay distinguishable from our own rows. A disclosure that needs a mouse
+ * is not a disclosure, and on a touch screen it would never appear at all.
+ *
+ * Both states are stated so the shared `.card:hover .card-body` rule cannot
+ * resize these on hover — the cards also do not lift (see below), so any
+ * change in height here would just make the row twitch.
+ */
+.affiliate-card .card-body,
+.affiliate-card:hover .card-body {
+    padding: 8px 9px 10px;
+    max-height: none;
+    opacity: 1;
+}
+
+.affiliate-card .card-title {
+    font-size: 13px;
+    /* Partner titles are not length-checked by us and run long. Two lines,
+       then clipped: a third pushes the row's cards out of alignment. The
+       reserved height keeps one- and two-line titles the same size, and
+       `normal` is required because catalogue titles are a single nowrap line
+       and a clamp cannot wrap what is not allowed to wrap. */
+    white-space: normal;
+    line-height: 1.3;
+    min-height: 2.6em;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
+.affiliate-card .card-meta {
+    align-items: center;
+    justify-content: space-between;
+}
+
+.affiliate-go {
+    display: inline-flex;
+    color: var(--text-faint);
+}
+
+.affiliate-card:hover .affiliate-go {
+    color: var(--accent-hot);
+}
+
+/* The catalogue's hover lift, minus the scale. These sit in a row directly
+   under the billboard, and a card that grows on hover there overlaps the
+   hero's buttons. */
+.shelf-track .affiliate-card:hover {
+    transform: none;
+    box-shadow: 0 10px 26px rgba(0, 0, 0, 0.6);
+}
+
+.affiliate-card:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+}
+
+/* ---------------------------------------------------------- pitch banner --
+   The partner's rotating promo. Their artwork is 1366x400, so the aspect
+   ratio is theirs and is pinned rather than guessed — a band that reflows as
+   each slide decodes would shove the whole page around every three seconds.
+
+   Slides are stacked, not laid out in a strip: every one occupies the same
+   grid cell, and only opacity changes. That is what makes the crossfade free
+   of layout work, and it is why the container needs no fixed height of its
+   own beyond the ratio. */
+/* The same 4vw gutter every shelf head and group label uses. Without it the
+   banner is the one element on the page that starts at the viewport edge. */
+#affiliate-pitch {
+    padding: 0 4vw;
+}
+
+#affiliate-pitch[hidden] {
+    display: none;
+}
+
+/* Capped rather than full-bleed. The artwork is 1366 wide, so on a desktop
+   viewport an uncapped band renders at nearly 500px tall and the first screen
+   of the site is one partner's discount poster. The cap also stops the image
+   being upscaled past its own resolution. Left-aligned, not centred, so it
+   starts on the same edge as the heading above it and the rows below. */
+.pitch {
+    position: relative;
+    display: grid;
+    margin: 0 0 26px;
+    width: 100%;
+    max-width: 1024px;
+    aspect-ratio: 1366 / 400;
+    border-radius: 6px;
+    overflow: hidden;
+    background: var(--bg-raised);
+}
+
+.pitch-slide {
+    grid-area: 1 / 1;
+    position: relative;
+    display: block;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.6s var(--ease);
+}
+
+.pitch-slide.is-current {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+.pitch-slide img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+}
+
+/* Over the image rather than under it: these banners are busy, and a caption
+   on a plain background below would double the band's height for one line. */
+.pitch-caption {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    padding: 28px 20px 12px;
+    font-size: 14px;
+    font-weight: 600;
+    color: #fff;
+    text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
+    background: linear-gradient(transparent, rgba(0, 0, 0, 0.72));
+}
+
+.pitch-slide:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: -2px;
+}
+
+@media (max-width: 720px) {
+    .pitch-caption {
+        font-size: 12px;
+        padding: 20px 12px 10px;
+    }
+}
+
+/* ------------------------------------------------------------- top stars --
+   Portrait crops in a row of circles, which is a different shape from every
+   other card on the page: narrow, centred, and with the name outside the
+   artwork rather than in a `.card-body`. Reusing `.card-body` here would mean
+   fighting the collapsed-until-hover rule it carries for the catalogue, and
+   the name has to be legible before the pointer arrives. */
+.star-card {
+    width: 132px;
+    background: none;
+    text-align: center;
+    text-decoration: none;
+    overflow: visible;
+}
+
+.star-portrait {
+    width: 112px;
+    height: 112px;
+    margin: 0 auto;
+    border-radius: 50%;
+    overflow: hidden;
+    background: var(--bg-raised);
+    border: 2px solid transparent;
+    transition: border-color 0.2s var(--ease);
+}
+
+.star-portrait img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+}
+
+.star-name {
+    display: block;
+    margin-top: 9px;
+    font-size: 13px;
+    font-weight: 600;
+    line-height: 1.3;
+    color: var(--text);
+}
+
+/* No scale on hover. These are circles with a tooltip attached, and growing
+   the portrait moves the thing the card is anchored to while it opens. */
+.shelf-track .star-card:hover {
+    transform: none;
+    box-shadow: none;
+}
+
+.star-card:hover .star-portrait,
+.star-card:focus-visible .star-portrait {
+    border-color: var(--accent);
+}
+
+.star-card:focus-visible {
+    outline: none;
+}
+
+.star-shelf .shelf-track {
+    align-items: flex-start;
+}
+
+/* ----------------------------------------------------- performer profile --
+   Fixed, not absolute: the shelf it belongs to is a scroll container, so an
+   absolutely positioned child would be clipped at exactly the first and last
+   card. `browse.js` does the placement; everything here is appearance, except
+   `max-width`, which the placement code measures. */
+.star-bio {
+    position: fixed;
+    z-index: 40;
+    width: 340px;
+    max-width: calc(100vw - 24px);
+    padding: 14px 16px 12px;
+    border-radius: 8px;
+    background: var(--bg-raised);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    box-shadow: 0 18px 44px rgba(0, 0, 0, 0.72);
+    pointer-events: none;
+}
+
+.star-bio[hidden] {
+    display: none;
+}
+
+.star-bio-name {
+    margin: 0 0 6px;
+    font-size: 15px;
+    font-weight: 700;
+    color: var(--text);
+}
+
+.star-bio-text {
+    margin: 0;
+    font-size: 13px;
+    line-height: 1.5;
+    color: var(--text-dim);
+}
+
+.star-bio-facts {
+    margin: 10px 0 0;
+    padding: 0;
+    list-style: none;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
+}
+
+.star-bio-facts li {
+    font-size: 11px;
+    padding: 3px 8px;
+    border-radius: 100px;
+    background: rgba(255, 255, 255, 0.08);
+    color: var(--text-dim);
+}
+
+/* Deliberately legible rather than fine print. The claim this makes is that
+   the paragraph above is a model's recollection of a real person and not
+   something the site is vouching for. */
+.star-bio-source {
+    margin: 11px 0 0;
+    padding-top: 9px;
+    border-top: 1px solid rgba(255, 255, 255, 0.09);
+    font-size: 11px;
+    color: var(--text-faint);
+}
+
+.star-bio-loading {
+    margin: 0;
+    font-size: 13px;
+    color: var(--text-faint);
+}

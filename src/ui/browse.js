@@ -3,6 +3,8 @@ import { brandLockup } from './brand-mark.js';
 import { isCreator } from '../auth/roles.js';
 import { icons } from './icons.js';
 import { formatDuration, pickHero, searchCatalog } from '../catalog/catalog.js';
+import { AFFILIATE_GROUPS, AFFILIATE_LINK_REL, fetchAffiliates } from '../catalog/affiliates.js';
+import { AFFILIATES_ONLY } from '../site-mode.js';
 import {
     PROJECTION,
     PROJECTION_DETAIL,
@@ -13,6 +15,18 @@ import {
 } from '../catalog/media-format.js';
 import { dollars, perMinute } from './money.js';
 import { api } from '../api/client.js';
+
+/** How long the partner's promo banner holds each slide. Their feed asks 3s. */
+const PITCH_INTERVAL_MS = 3000;
+
+/**
+ * How long a pointer must rest on a performer before their profile is bought.
+ *
+ * The first hover of any given star costs a generated biography, so this is a
+ * spending control as much as a UI nicety. Long enough that crossing the row
+ * buys nothing, short enough that stopping to look feels like it responded.
+ */
+const HOVER_DELAY_MS = 350;
 
 /**
  * The browse experience: billboard, shelves, detail modal and search.
@@ -45,28 +59,22 @@ export class BrowseUI extends pc.EventHandler {
 
         this.mount.innerHTML = `
             ${this._headerHtml()}
-            <main id="browse-main">
-                <div id="billboard-slot"></div>
-                <section class="shelf live-creators" id="live-creators" hidden>
-                    <div class="shelf-head">
-                        <h2>Live Creators</h2>
+            <main id="browse-main" class="${AFFILIATES_ONLY ? 'affiliates-only' : ''}">
+                ${AFFILIATES_ONLY ? '' : '<div id="billboard-slot"></div>'}
+                <section class="affiliates" id="affiliates" hidden>
+                    <div class="shelf-head affiliates-head">
+                        <h2>Partner sites</h2>
+                        <span class="affiliates-disclosure">
+                            Paid links. We earn a commission on sales, at no extra cost to you.
+                        </span>
                     </div>
-                    <div class="creator-row" id="creator-row"></div>
+                    <div id="affiliate-pitch"></div>
+                    <div id="affiliate-groups"></div>
+                    <div id="star-bio" class="star-bio" role="tooltip" hidden></div>
                 </section>
-                <section class="shelf recordings-shelf" id="recordings-shelf" hidden>
-                    <div class="shelf-head">
-                        <h2>Recorded 1:1s</h2>
-                        <div class="tag-filter" id="recording-tags">
-                            <button data-tag="" class="active">All</button>
-                            <button data-tag="2d">2D</button>
-                            <button data-tag="3d">3D</button>
-                        </div>
-                    </div>
-                    <div class="recording-row" id="recording-row"></div>
-                </section>
-                <div class="shelves" id="shelves"></div>
+                ${AFFILIATES_ONLY ? '' : this._ownContentHtml()}
             </main>
-            ${this._modalHtml()}
+            ${AFFILIATES_ONLY ? '' : this._modalHtml()}
         `;
 
         this.header = this.mount.querySelector('.site-header');
@@ -75,6 +83,15 @@ export class BrowseUI extends pc.EventHandler {
         this.creatorsEl = this.mount.querySelector('#live-creators');
         this.recordingsEl = this.mount.querySelector('#recordings-shelf');
         this.billboardEl = this.mount.querySelector('#billboard-slot');
+        this.affiliatesEl = this.mount.querySelector('#affiliates');
+
+        this._renderAffiliates();
+
+        // Everything below needs markup that affiliate-only mode did not emit.
+        // Returning here rather than null-guarding each one keeps the single
+        // reason they are all skipped in one readable place — and three of the
+        // binds below would throw on a missing element rather than no-op.
+        if (AFFILIATES_ONLY) return;
 
         this._renderBillboard();
         this._renderShelves(this.catalog.rows);
@@ -86,6 +103,30 @@ export class BrowseUI extends pc.EventHandler {
         this._bindCreators();
         this._bindRecordings();
         this._bindShelves();
+    }
+
+    /** Our own surfaces: the billboard's neighbours, and the catalogue. */
+    _ownContentHtml() {
+        return `
+            <section class="shelf live-creators" id="live-creators" hidden>
+                <div class="shelf-head">
+                    <h2>Live Creators</h2>
+                </div>
+                <div class="creator-row" id="creator-row"></div>
+            </section>
+            <section class="shelf recordings-shelf" id="recordings-shelf" hidden>
+                <div class="shelf-head">
+                    <h2>Recorded 1:1s</h2>
+                    <div class="tag-filter" id="recording-tags">
+                        <button data-tag="" class="active">All</button>
+                        <button data-tag="2d">2D</button>
+                        <button data-tag="3d">3D</button>
+                    </div>
+                </div>
+                <div class="recording-row" id="recording-row"></div>
+            </section>
+            <div class="shelves" id="shelves"></div>
+        `;
     }
 
     /* ------------------------------------------------------- the market -- */
@@ -104,6 +145,8 @@ export class BrowseUI extends pc.EventHandler {
      * shown an empty shelf, they are shown no shelf.
      */
     async refreshRecordings() {
+        if (AFFILIATES_ONLY) return;
+
         if (!api.signedIn) {
             this.recordings = [];
             this.recordingsBlocked = null;
@@ -245,6 +288,452 @@ export class BrowseUI extends pc.EventHandler {
         document.body.style.overflow = 'hidden';
     }
 
+    /* ------------------------------------------------- affiliate partners -- */
+
+    /**
+     * Other operators' catalogues, at the top of the page.
+     *
+     * **Shown to everyone, including signed-out visitors** — David's call on
+     * 2026-10-18, overriding an earlier version that required `ageAssurance`
+     * first. So these rows render for a visitor our own catalogue would still
+     * be withheld from, and they are the one surface on the front page that
+     * does. Worth knowing before changing it back or extending it: the
+     * twenty-seven states in `docs/STATE-AGE-LAWS.md` legislate about exactly
+     * this kind of artwork, and the gate is the mechanism that was answering
+     * for it.
+     *
+     * Loaded once, not polled, and not session-dependent: there is nothing
+     * about a partner's "newest" row that changes when somebody signs in, and
+     * these are somebody else's servers.
+     */
+    async refreshAffiliates() {
+        if (!this.affiliatesEl) return;
+
+        // Already loaded. Re-rendering is free; re-fetching somebody else's
+        // API because this page re-rendered is not.
+        if (this.affiliateRows?.length) {
+            this._renderAffiliates();
+            return;
+        }
+
+        try {
+            this.affiliateRows = await fetchAffiliates();
+        } catch {
+            // `fetchAffiliates` already isolates per-partner failures, so
+            // reaching here means something systemic. A front page says
+            // nothing about it: there is no partner row, and that is all.
+            this.affiliateRows = [];
+        }
+
+        this._renderAffiliates();
+    }
+
+    _renderAffiliates() {
+        if (!this.affiliatesEl) return;
+
+        const rows = this.affiliateRows ?? [];
+        this.affiliatesEl.hidden = rows.length === 0;
+        if (this.affiliatesEl.hidden) return;
+
+        // Grouped by kind, in the order `AFFILIATE_GROUPS` declares, and a
+        // group with no programs in it is not drawn at all. That is what lets
+        // a live-cams deal be a single entry in the registry later on. `pitch`
+        // has no entry there because it is a banner rather than a row, so it
+        // falls out of this loop and is drawn separately below.
+        this.affiliatesEl.querySelector('#affiliate-groups').innerHTML = AFFILIATE_GROUPS.map(
+            (group) => {
+                const inGroup = rows.filter((row) => row.program.kind === group.kind);
+                if (!inGroup.length) return '';
+
+                return `
+                    <div class="affiliate-group">
+                        <h3 class="affiliate-group-label">${escapeHtml(group.label)}</h3>
+                        ${inGroup.map((row) => this._affiliateShelfHtml(row)).join('')}
+                    </div>`;
+            }
+        ).join('');
+
+        this._bindShelfArrows(this.affiliatesEl);
+        this._renderPitch(rows.find((row) => row.program.kind === 'pitch'));
+        this._bindStarBios();
+    }
+
+    /* ------------------------------------------------------ pitch banner -- */
+
+    /**
+     * The partner's rotating promo banner.
+     *
+     * Every slide is in the DOM from the start and the rotation is a class
+     * swap, so there is no layout shift when it advances and no second network
+     * request when it comes back round. Images after the first are lazy, which
+     * is the only reason holding five of them is cheap.
+     *
+     * Three behaviours worth keeping if this is rewritten: it pauses while the
+     * pointer is over it (a banner that navigates out from under a click is
+     * the single most annoying thing a carousel does), it stops entirely under
+     * `prefers-reduced-motion`, and it stops when the tab is hidden rather
+     * than quietly advancing for an hour in a background tab.
+     */
+    _renderPitch(row) {
+        const slot = this.affiliatesEl?.querySelector('#affiliate-pitch');
+        if (!slot) return;
+
+        clearInterval(this._pitchTimer);
+        this._pitchTimer = null;
+
+        const items = row?.items ?? [];
+        slot.hidden = items.length === 0;
+        if (slot.hidden) {
+            slot.innerHTML = '';
+            return;
+        }
+
+        // The partner's own widget randomises, and their feed asks for it. The
+        // order is fixed once per page load rather than per tick, so the
+        // sequence stays stable while somebody is looking at it.
+        const order = items.map((_, i) => i);
+        for (let i = order.length - 1; i > 0; i -= 1) {
+            const j = Math.floor(Math.random() * (i + 1));
+            [order[i], order[j]] = [order[j], order[i]];
+        }
+
+        slot.innerHTML = `
+            <div class="pitch" aria-label="${escapeHtml(row.program.partner)} promotions">
+                ${order
+                    .map((idx, pos) => this._pitchSlideHtml(items[idx], pos === 0))
+                    .join('')}
+            </div>`;
+
+        const pitch = slot.querySelector('.pitch');
+        const slides = [...pitch.querySelectorAll('.pitch-slide')];
+        if (slides.length < 2) return;
+
+        const still = window.matchMedia?.('(prefers-reduced-motion: reduce)')?.matches;
+        if (still) return;
+
+        let at = 0;
+        let paused = false;
+
+        // The offscreen slides are stacked underneath the visible one, so
+        // without this they stay in the tab order and a screen reader reads
+        // five promos where the page shows one. Visibility and exposure have
+        // to move together, which is why this is one function and not a
+        // class toggle with the attributes set once at render.
+        const show = (i, on) => {
+            slides[i].classList.toggle('is-current', on);
+            slides[i].toggleAttribute('aria-hidden', !on);
+            if (on) slides[i].removeAttribute('tabindex');
+            else slides[i].setAttribute('tabindex', '-1');
+        };
+
+        this._pitchTimer = setInterval(() => {
+            if (paused || document.hidden) return;
+            show(at, false);
+            at = (at + 1) % slides.length;
+            show(at, true);
+        }, PITCH_INTERVAL_MS);
+
+        pitch.addEventListener('pointerenter', () => {
+            paused = true;
+        });
+        pitch.addEventListener('pointerleave', () => {
+            paused = false;
+        });
+        pitch.addEventListener('focusin', () => {
+            paused = true;
+        });
+        pitch.addEventListener('focusout', () => {
+            paused = false;
+        });
+    }
+
+    _pitchSlideHtml(item, current) {
+        return `
+            <a class="pitch-slide${current ? ' is-current' : ''}"
+               href="${escapeHtml(item.href)}"
+               target="_blank" rel="${AFFILIATE_LINK_REL}"
+               ${current ? '' : 'tabindex="-1" aria-hidden="true"'}>
+                <img src="${escapeHtml(item.image)}" alt=""
+                     loading="${current ? 'eager' : 'lazy'}"
+                     decoding="async" referrerpolicy="no-referrer" />
+                ${item.title ? `<span class="pitch-caption">${escapeHtml(item.title)}</span>` : ''}
+            </a>`;
+    }
+
+    _affiliateShelfHtml({ program, items }) {
+        const stars = program.kind === 'stars';
+        const card = stars
+            ? (item) => this._starCardHtml(item)
+            : (item) => this._affiliateCardHtml(item);
+
+        return `
+            <section class="shelf affiliate-shelf${stars ? ' star-shelf' : ''}">
+                <div class="shelf-head">
+                    <h2>${escapeHtml(program.title)}</h2>
+                    <span class="badge partner">${escapeHtml(program.partner)}</span>
+                </div>
+                <div class="shelf-viewport">
+                    <button class="shelf-arrow prev">${icons.chevronLeft({ size: 24 })}</button>
+                    <div class="shelf-track">
+                        ${items.map(card).join('')}
+                    </div>
+                    <button class="shelf-arrow next">${icons.chevronRight({ size: 24 })}</button>
+                </div>
+            </section>`;
+    }
+
+    /**
+     * A performer: a face, a name, and a biography behind the hover.
+     *
+     * `data-star-id` is what the hover handler reads and what the server
+     * validates its spend against, so a card without one is simply not
+     * hoverable — which is the correct behaviour for a feed row that arrived
+     * without an id rather than something to paper over with a fallback.
+     */
+    _starCardHtml(item) {
+        return `
+            <a class="card star-card" href="${escapeHtml(item.href)}"
+               target="_blank" rel="${AFFILIATE_LINK_REL}"
+               ${item.starId ? `data-star-id="${item.starId}"` : ''}>
+                <div class="star-portrait">
+                    <img src="${escapeHtml(item.image)}" alt="" loading="lazy"
+                         decoding="async" referrerpolicy="no-referrer" />
+                </div>
+                <span class="star-name">${escapeHtml(item.title)}</span>
+            </a>`;
+    }
+
+    /**
+     * A real anchor, not a card with a click handler.
+     *
+     * Middle-click, open-in-new-tab, "copy link" and a screen reader all work
+     * for free, and `rel` — which is the whole disclosure and safety story
+     * here — only means anything on an anchor. What goes in it and why is
+     * `AFFILIATE_LINK_REL`.
+     */
+    _affiliateCardHtml(item) {
+        const minutes = item.durationMs ? formatDuration(item.durationMs / 1000) : '';
+
+        return `
+            <a class="card affiliate-card" href="${escapeHtml(item.href)}"
+               target="_blank" rel="${AFFILIATE_LINK_REL}">
+                <div class="affiliate-art">
+                    <img src="${escapeHtml(item.image)}" alt="" loading="lazy"
+                         decoding="async" referrerpolicy="no-referrer" />
+                    ${minutes ? `<span class="card-duration">${minutes}</span>` : ''}
+                </div>
+                <div class="card-body">
+                    <h3 class="card-title">${escapeHtml(item.title)}</h3>
+                    <div class="card-meta">
+                        <span>${escapeHtml(item.partner)}</span>
+                        <span class="affiliate-go">${icons.external({ size: 12 })}</span>
+                    </div>
+                </div>
+            </a>`;
+    }
+
+    /* -------------------------------------------- performer biographies -- */
+
+    /**
+     * Show a profile when the pointer rests on a performer.
+     *
+     * Bound on the section rather than on each card, and once per section
+     * rather than once per render. `_renderAffiliates` replaces the rows
+     * inside `#affiliates` but not `#affiliates` itself, and it runs again on
+     * every refresh, so without the guard below each refresh adds another
+     * full set of handlers to the same element — including one on `window`,
+     * which nothing would ever remove.
+     *
+     * Measured, so it is not overstated: duplicate handlers do *not* buy the
+     * biography twice, because each one clears the timer the last one set.
+     * That is incidental rather than designed, and it is not what the guard
+     * is for — the guard is for the unbounded listener growth behind it.
+     *
+     * **Resting, not passing.** Each card is one OpenAI call the first time
+     * anybody in the world hovers it, and dragging the pointer across the row
+     * crosses all ten in about a second. `HOVER_DELAY_MS` is what makes the
+     * difference between an intent to read and a mouse on its way somewhere
+     * else, and the in-flight request is aborted on the way out, so a sweep
+     * costs nothing.
+     *
+     * Keyboard gets the same thing on focus, with no delay — arriving by tab
+     * is already deliberate, and there is no sweeping to protect against.
+     */
+    _bindStarBios() {
+        const root = this.affiliatesEl;
+        const card = root?.querySelector('#star-bio');
+        if (!root || !card) return;
+
+        this.starBios ??= new Map();
+
+        // Transient state is reset on every render; the listeners below are
+        // not. A row that was being hovered when the refresh landed should
+        // not leave a request in flight against markup that no longer exists.
+        clearTimeout(this._bioTimer);
+        this._bioAbort?.abort();
+        this._bioAbort = null;
+        card.hidden = true;
+
+        if (this._bioBoundTo === root) return;
+        this._bioBoundTo = root;
+
+        const hide = () => {
+            clearTimeout(this._bioTimer);
+            this._bioAbort?.abort();
+            this._bioAbort = null;
+            card.hidden = true;
+            this._bioFor = null;
+        };
+
+        const open = async (anchor) => {
+            const starId = Number(anchor.dataset.starId);
+            if (!starId) return;
+
+            this._bioFor = starId;
+
+            // A profile already in hand renders in the same frame as the
+            // pointer arriving; only a cold one gets a spinner.
+            let bio = this.starBios.get(starId);
+
+            if (!bio) {
+                card.innerHTML = '<p class="star-bio-loading">Looking up…</p>';
+                this._place(card, anchor);
+                card.hidden = false;
+
+                this._bioAbort = new AbortController();
+
+                try {
+                    const res = await fetch(`/api/stars/${starId}/bio`, {
+                        signal: this._bioAbort.signal,
+                        headers: { Accept: 'application/json' }
+                    });
+
+                    // 503 is "no key configured" and 404 is "chart moved on".
+                    // Neither is worth a message on a hover card, and both are
+                    // remembered so the next hover does not ask again.
+                    bio = res.ok ? await res.json() : { known: false };
+                } catch (err) {
+                    if (err.name === 'AbortError') return;
+                    bio = { known: false };
+                }
+
+                this.starBios.set(starId, bio);
+            }
+
+            // The pointer may have moved on while that was in the air.
+            if (this._bioFor !== starId) return;
+
+            if (!bio.known) {
+                hide();
+                return;
+            }
+
+            card.innerHTML = this._starBioHtml(bio, anchor);
+            this._place(card, anchor);
+            card.hidden = false;
+        };
+
+        const enter = (event) => {
+            const anchor = event.target.closest?.('.star-card[data-star-id]');
+            if (!anchor || !root.contains(anchor)) return;
+
+            clearTimeout(this._bioTimer);
+            this._bioAbort?.abort();
+
+            const delay = event.type === 'focusin' ? 0 : HOVER_DELAY_MS;
+            this._bioTimer = setTimeout(() => open(anchor), delay);
+        };
+
+        // `pointerover` rather than `pointerenter`: it bubbles, which is what
+        // makes one listener on the section work for every card in it.
+        //
+        // Not bound on a touch screen. `pointerover` fires on a tap there, so
+        // every tap on a performer would flash a loading card on its way to
+        // following the link — and buy a biography to show for a fifth of a
+        // second. Keyboard is bound either way: `focusin` has no such
+        // ambiguity, and a phone with a keyboard attached should still work.
+        if (window.matchMedia?.('(hover: hover)')?.matches !== false) {
+            root.addEventListener('pointerover', enter);
+        }
+
+        root.addEventListener('focusin', enter);
+
+        root.addEventListener('pointerout', (event) => {
+            const anchor = event.target.closest?.('.star-card');
+            if (anchor && !anchor.contains(event.relatedTarget)) hide();
+        });
+        root.addEventListener('focusout', (event) => {
+            const anchor = event.target.closest?.('.star-card');
+            if (anchor && !anchor.contains(event.relatedTarget)) hide();
+        });
+
+        // A card pinned to a position in the viewport is wrong the moment the
+        // row scrolls under it, and the row scrolls on every arrow press.
+        root.addEventListener('scroll', hide, { capture: true, passive: true });
+        window.addEventListener('keydown', (e) => e.key === 'Escape' && hide());
+    }
+
+    /**
+     * The card's contents.
+     *
+     * The "Written by AI" line is not decoration. A paragraph of confident
+     * career history about a real person, in our own styling, under our own
+     * heading, reads as something we are asserting — and it is a language
+     * model's recollection, which is a different claim with a different error
+     * rate. Saying so is the honest minimum, and it is why the model is also
+     * allowed to answer "I don't know" rather than fill the space.
+     */
+    _starBioHtml(bio, anchor) {
+        const name = bio.name || anchor.querySelector('.star-name')?.textContent || '';
+
+        return `
+            <h4 class="star-bio-name">${escapeHtml(name)}</h4>
+            <p class="star-bio-text">${escapeHtml(bio.bio)}</p>
+            ${
+                bio.highlights?.length
+                    ? `<ul class="star-bio-facts">${bio.highlights
+                          .map((h) => `<li>${escapeHtml(h)}</li>`)
+                          .join('')}</ul>`
+                    : ''
+            }
+            <p class="star-bio-source">Written by AI. May be incomplete or wrong.</p>`;
+    }
+
+    /**
+     * Put the card beside the portrait, and keep it on screen.
+     *
+     * Positioned against the viewport (`position: fixed`) rather than against
+     * the shelf, because the shelf is a scroll container with `overflow`
+     * hidden on it — an absolutely positioned child would be clipped at the
+     * first and last card, which are exactly the two the card most needs to
+     * escape from.
+     */
+    _place(card, anchor) {
+        const MARGIN = 12;
+        const rect = anchor.getBoundingClientRect();
+
+        // Measure before deciding: the card's height depends on how much the
+        // model wrote, so it is not a constant to hard-code.
+        card.style.visibility = 'hidden';
+        card.hidden = false;
+        const box = card.getBoundingClientRect();
+        card.style.visibility = '';
+
+        let left = rect.left + rect.width / 2 - box.width / 2;
+        left = Math.max(MARGIN, Math.min(left, window.innerWidth - box.width - MARGIN));
+
+        // Below the portrait by preference, above it when that would run off
+        // the bottom — which is the usual case for the stars row, since it
+        // sits near the top of the page.
+        let top = rect.bottom + 10;
+        if (top + box.height > window.innerHeight - MARGIN) {
+            top = Math.max(MARGIN, rect.top - box.height - 10);
+        }
+
+        card.style.left = `${Math.round(left)}px`;
+        card.style.top = `${Math.round(top)}px`;
+    }
+
     /* ----------------------------------------------------- live creators -- */
 
     /**
@@ -256,6 +745,12 @@ export class BrowseUI extends pc.EventHandler {
      * long for the same reason.
      */
     startCreatorPolling(intervalMs = 15_000) {
+        // No row to fill, so no timer and no requests. Guarded here rather
+        // than at the call sites because `setMode` restarts polling every
+        // time the player closes, and one missed call site is a poll that
+        // runs forever against a page that cannot show the answer.
+        if (AFFILIATES_ONLY) return;
+
         clearInterval(this._creatorTimer);
         this._creatorTimer = setInterval(() => this.refreshCreators(), intervalMs);
 
@@ -272,6 +767,8 @@ export class BrowseUI extends pc.EventHandler {
     }
 
     async refreshCreators() {
+        if (AFFILIATES_ONLY) return;
+
         try {
             this.creators = await api.liveCreators();
         } catch {
@@ -388,6 +885,8 @@ export class BrowseUI extends pc.EventHandler {
      * finds out until they are already in the room.
      */
     async openCreatorDetails(creator) {
+        if (!this.modalEl) return;
+
         const panel = this.modalEl.querySelector('.modal');
         this._modalItem = null;
 
@@ -458,6 +957,20 @@ export class BrowseUI extends pc.EventHandler {
     }
 
     _headerHtml() {
+        // Affiliate-only mode leaves the brand and nothing else. Every other
+        // control here acts on the catalogue — the filters, My List, search
+        // and "Send to headset" all need titles to act on, and the account
+        // controls would offer a signup for a service with nothing in it.
+        // Signing in is still reachable: `/creator` and `/profile` open the
+        // auth modal. See `src/site-mode.js`.
+        if (AFFILIATES_ONLY) {
+            return `
+                <header class="site-header">
+                    <div class="brand">${brandLockup({ symbolHeight: 68, wordmarkHeight: 42 })}</div>
+                </header>
+            `;
+        }
+
         return `
             <header class="site-header">
                 <div class="brand">${brandLockup({ symbolHeight: 68, wordmarkHeight: 42 })}</div>
@@ -699,6 +1212,8 @@ export class BrowseUI extends pc.EventHandler {
      *   how a dead end gets mistaken for a broken page.
      */
     _renderShelves(rows, opts = {}) {
+        if (!this.shelvesEl) return;
+
         if (!rows.length) {
             const hint =
                 opts.empty === undefined
@@ -872,8 +1387,14 @@ export class BrowseUI extends pc.EventHandler {
      * itself, which survives every re-render — binding both together meant a
      * card click firing once per filter the visitor had used since loading.
      */
-    _bindShelfArrows() {
-        this.shelvesEl.querySelectorAll('.shelf').forEach((shelf) => {
+    /**
+     * @param {HTMLElement} [root] which subtree to wire; the catalogue shelves
+     *   by default, the partner section when it re-renders its own rows.
+     */
+    _bindShelfArrows(root = this.shelvesEl) {
+        if (!root) return;
+
+        root.querySelectorAll('.shelf').forEach((shelf) => {
             const track = shelf.querySelector('.shelf-track');
 
             shelf.querySelector('.prev').addEventListener('click', () => {
@@ -1058,6 +1579,10 @@ export class BrowseUI extends pc.EventHandler {
     }
 
     closeDetails() {
+        // Affiliate-only mode emits no modal, and `setMode` calls this on
+        // every return to the browse view. See `src/site-mode.js`.
+        if (!this.modalEl) return;
+
         const wasOpen = this.modalEl.classList.contains('open');
 
         // A recording plays inside this modal, and a hidden element with a
