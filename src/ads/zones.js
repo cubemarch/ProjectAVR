@@ -123,13 +123,18 @@ export const AD_PLACEMENTS = [
  *
  * One zone id per unit. An empty list draws no strip; a list of two draws two.
  * The format is designed to be tiled — 108x140 is a thumbnail, and a single
- * one of them centred in a 1440px page reads as a stray image rather than as
- * a row. Adding the second and third is appending two ids to this array.
+ * one of them centred in a 1440px page read as a stray image rather than as a
+ * row, which is why there are three.
+ *
+ * Three is also about the ceiling. The strip wraps rather than scrolls, so a
+ * fourth is not a layout problem, but a row of thumbnails stops reading as
+ * part of this site's grid somewhere around there and starts reading as a
+ * banner farm.
  *
  * @type {{zones: number[], width: number, height: number}}
  */
 export const NATIVE_STRIP = {
-    zones: [1129402],
+    zones: [1129402, 1129404, 1129405],
     width: 108,
     height: 140
 };
