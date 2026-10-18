@@ -11,6 +11,14 @@
         />
         <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%237c5cff'/%3E%3Ctext x='16' y='23' font-family='Helvetica,Arial' font-size='19' font-weight='bold' fill='%23fff' text-anchor='middle'%3EL%3C/text%3E%3C/svg%3E" />
 
+        <!-- JuicyAds site ownership check. Public by the same reasoning as the
+             measurement id below: the verifier reads it out of this page's
+             source, so it is not a secret and does not belong in `app.env`.
+
+             It is only on this file. Verification fetches the domain root, and
+             a copy in `live.html` would be a second place to forget. -->
+        <meta name="juicyads-site-verification" content="351d1e66f357b0091150925ff110cf44" />
+
         <!-- Google Analytics (GA4). The measurement id is not a secret - it is
              visible in the page source of every site that uses one - so it is
              written here rather than threaded through the build as an env var.

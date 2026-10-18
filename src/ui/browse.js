@@ -5,6 +5,7 @@ import { icons } from './icons.js';
 import { formatDuration, pickHero, searchCatalog } from '../catalog/catalog.js';
 import { AFFILIATE_GROUPS, AFFILIATE_LINK_REL, fetchAffiliates } from '../catalog/affiliates.js';
 import { AFFILIATES_ONLY } from '../site-mode.js';
+import { adSlotHtml, fillAdSlots, nativeStripHtml } from '../ads/juicyads.js';
 import {
     PROJECTION,
     PROJECTION_DETAIL,
@@ -61,6 +62,7 @@ export class BrowseUI extends pc.EventHandler {
             ${this._headerHtml()}
             <main id="browse-main" class="${AFFILIATES_ONLY ? 'affiliates-only' : ''}">
                 ${AFFILIATES_ONLY ? '' : '<div id="billboard-slot"></div>'}
+                ${adSlotHtml('top-leaderboard')}
                 <section class="affiliates" id="affiliates" hidden>
                     <div class="shelf-head affiliates-head">
                         <h2>Partner sites</h2>
@@ -72,6 +74,8 @@ export class BrowseUI extends pc.EventHandler {
                     <div id="affiliate-groups"></div>
                     <div id="star-bio" class="star-bio" role="tooltip" hidden></div>
                 </section>
+                ${nativeStripHtml()}
+                ${adSlotHtml('footer-leaderboard')}
                 ${AFFILIATES_ONLY ? '' : this._ownContentHtml()}
             </main>
             ${AFFILIATES_ONLY ? '' : this._modalHtml()}
@@ -86,6 +90,13 @@ export class BrowseUI extends pc.EventHandler {
         this.affiliatesEl = this.mount.querySelector('#affiliates');
 
         this._renderAffiliates();
+
+        // Again here, because `_renderAffiliates` returns early when no partner
+        // answered — and the leaderboards are children of `<main>`, not of the
+        // affiliate section, precisely so that a partner outage does not take
+        // the ad inventory down with it. `fillAdSlots` marks what it has
+        // registered, so the two calls do not double-count an impression.
+        fillAdSlots(this.mount);
 
         // Everything below needs markup that affiliate-only mode did not emit.
         // Returning here rather than null-guarding each one keeps the single
@@ -340,22 +351,32 @@ export class BrowseUI extends pc.EventHandler {
         // a live-cams deal be a single entry in the registry later on. `pitch`
         // has no entry there because it is a banner rather than a row, so it
         // falls out of this loop and is drawn separately below.
-        this.affiliatesEl.querySelector('#affiliate-groups').innerHTML = AFFILIATE_GROUPS.map(
-            (group) => {
-                const inGroup = rows.filter((row) => row.program.kind === group.kind);
-                if (!inGroup.length) return '';
+        const groups = AFFILIATE_GROUPS.map((group) => {
+            const inGroup = rows.filter((row) => row.program.kind === group.kind);
+            if (!inGroup.length) return '';
 
-                return `
+            return `
                     <div class="affiliate-group">
                         <h3 class="affiliate-group-label">${escapeHtml(group.label)}</h3>
                         ${inGroup.map((row) => this._affiliateShelfHtml(row)).join('')}
                     </div>`;
-            }
-        ).join('');
+        }).filter(Boolean);
+
+        // The billboard goes *between* two groups, never after the last one.
+        // Filtering first is what makes that true: groups with no programs
+        // render nothing, so "after the first group" has to mean the first one
+        // that actually drew, or an empty Live cams group would put the ad at
+        // the top. With fewer than two groups there is no between, and the
+        // footer slot already covers the end of the page.
+        const billboard = adSlotHtml('mid-billboard');
+        if (billboard && groups.length > 1) groups.splice(1, 0, billboard);
+
+        this.affiliatesEl.querySelector('#affiliate-groups').innerHTML = groups.join('');
 
         this._bindShelfArrows(this.affiliatesEl);
         this._renderPitch(rows.find((row) => row.program.kind === 'pitch'));
         this._bindStarBios();
+        fillAdSlots(this.mount);
     }
 
     /* ------------------------------------------------------ pitch banner -- */

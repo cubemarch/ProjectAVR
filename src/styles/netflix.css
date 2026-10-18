@@ -3469,3 +3469,119 @@ body.is-profile {
     font-size: 13px;
     color: var(--text-faint);
 }
+
+/* --------------------------------------------------------------- ads --
+ *
+ * JuicyAds slots. The markup comes from `src/ads/juicyads.js`; the size for
+ * a given viewport is chosen there, in JavaScript, because desktop and
+ * mobile are different zone ids rather than one creative that reflows.
+ *
+ * What this stylesheet is responsible for is that whichever size was chosen
+ * is safe at any width the page is later resized to. Three rules carry that:
+ *
+ *   - the slot is laid out as a full-width centring box, not as a fixed
+ *     block. Ad slots sit as direct children of `.affiliates` and
+ *     `#affiliate-groups`, neither of which has a horizontal gutter of its
+ *     own — the 4vw gutter on this site is applied by the shelves inside
+ *     them. So a 300px creative has the whole viewport to centre in and
+ *     still fits a 320px phone, which it would not inside `padding: 0 4vw`;
+ *
+ *   - `max-width: 100%` and `overflow: hidden` on the slot mean that a unit
+ *     too wide for its container is clipped rather than pushing the document
+ *     wider. A horizontal scrollbar on a phone is the most visible way an ad
+ *     integration breaks a layout, and it is caused by exactly this;
+ *
+ *   - the height is reserved from the custom property before the creative
+ *     arrives, so the rows below do not jump when it fills. The size is
+ *     known in advance for a fixed-size ad, which makes the layout shift
+ *     entirely avoidable rather than merely small.
+ */
+
+.ad-slot {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 5px;
+
+    width: 100%;
+    max-width: 100%;
+    margin: 26px 0;
+    overflow: hidden;
+
+    /* Reserved: the creative, plus the label above it. */
+    min-height: calc(var(--ad-h) + 17px);
+}
+
+/*
+ * The element the network fills.
+ *
+ * `max-width: 100%` is the resize guard and nothing else — at the width the
+ * size was picked for, the unit is exactly `--ad-w` across. The height is not
+ * capped with it, because a creative whose height collapsed would re-introduce
+ * the layout shift the reservation above exists to prevent.
+ */
+.ad-slot > ins {
+    display: block;
+    width: var(--ad-w);
+    height: var(--ad-h);
+    max-width: 100%;
+}
+
+/*
+ * "Advertisement".
+ *
+ * Required reading rather than decoration: these slots sit directly under a
+ * row of affiliate cards carrying the line "Paid links. We earn a commission
+ * on sales." That disclosure is accurate for those cards and wrong for a CPM
+ * banner, so the two have to be told apart. Small, but never hidden — at
+ * `font-size: 0` or `visibility: hidden` this stops being a disclosure.
+ */
+.ad-label {
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--text-faint);
+    line-height: 1;
+}
+
+/*
+ * The native strip.
+ *
+ * Wraps rather than scrolls. Three 300px units need 940px with the gaps, so
+ * on anything narrower they reflow to two and then to one, which is the
+ * behaviour that keeps a native unit looking like part of the grid instead of
+ * like a banner that fell off the side.
+ */
+.ad-strip {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 20px;
+    margin: 26px 0;
+    padding: 0 4vw;
+}
+
+.ad-strip .ad-slot {
+    width: auto;
+    margin: 0;
+}
+
+/*
+ * Phones.
+ *
+ * The margins come in because vertical space is scarcer than horizontal
+ * space on a phone, and an ad with desktop breathing room either side of it
+ * pushes the first real row below the fold.
+ */
+@media (max-width: 760px) {
+    .ad-slot {
+        margin: 18px 0;
+    }
+
+    .ad-strip {
+        gap: 14px;
+        margin: 18px 0;
+        padding: 0 12px;
+    }
+}
