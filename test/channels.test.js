@@ -597,3 +597,49 @@ test('only a superuser can reserve a name, and the built-in list is not editable
 
     applySuperuser('');
 });
+
+/**
+ * The status code on an address that was never real.
+ *
+ * The SPA answers unknown names with the catalogue, which is right: a mistyped
+ * handle should land somewhere useful rather than on an error page. What was
+ * wrong was doing it with a 200, because that made every string anybody could
+ * invent a live page on this domain - `/<bank>/account/verify` included - and
+ * that is the shape Safe Browsing reads as a host serving somebody else's
+ * phishing kit. The body still boots; only the status tells the truth now.
+ *
+ * Skipped where there is no build to serve: the fallback is mounted only when
+ * `dist/` exists, so without one there is no behaviour here to check.
+ */
+const HAS_DIST = fs.existsSync(path.join(import.meta.dirname, '..', 'dist', 'index.html'));
+
+test('an address that was never real answers 404, and still boots', { skip: !HAS_DIST }, async () => {
+    const agent = makeAgent();
+    await agent.register('creator');
+    assert.equal(
+        (await agent.fetch('/api/profile/names', { method: 'POST', body: JSON.stringify({ slug: 'real-handle' }) }))
+            .status,
+        201
+    );
+
+    const status = async (p) => (await fetch(`${base}${p}`, { redirect: 'manual' })).status;
+
+    // Addresses the site actually answers for.
+    assert.equal(await status('/'), 200, 'the front page');
+    assert.equal(await status('/creator'), 200, 'an app route');
+    assert.equal(await status('/real-handle'), 200, 'a name somebody holds');
+
+    // Everything else. A well-formed name nobody holds is as much a miss as a
+    // path that could never have been a name at all - the first is the one the
+    // old check got wrong, because it only ever looked at shape.
+    assert.equal(await status('/no-such-handle'), 404, 'a name nobody holds');
+    assert.equal(await status('/secure/paypal/login'), 404, 'multi-segment invention');
+    assert.equal(await status('/update-your-billing-information'), 404, 'too long to be a name');
+    assert.equal(await status('/api/does/not/exist'), 404, 'an API path that is not mounted');
+
+    // The point of answering with `index.html` at all is that the page still
+    // works, so a 404 that served an empty body would have missed it.
+    const res = await fetch(`${base}/secure/paypal/login`);
+    assert.equal(res.status, 404);
+    assert.match(await res.text(), /browse-root/, 'the SPA still boots on a miss');
+});

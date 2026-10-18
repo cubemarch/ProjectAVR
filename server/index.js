@@ -22,6 +22,7 @@ import { mountCreator } from './routes/creator.js';
 import { mountViewer } from './routes/viewer.js';
 import { mountProfiles } from './routes/profiles.js';
 import { mountChannels } from './routes/channels.js';
+import { resolveChannel } from './channels/index.js';
 import { mountRecordings } from './routes/recordings.js';
 import { mountCredits } from './credits/index.js';
 import { paymentsBanner } from './credits/providers.js';
@@ -313,8 +314,30 @@ if (fs.existsSync(DIST)) {
         res.sendFile(path.join(DIST, 'live.html'));
     });
 
+    // Addresses the site actually answers for. Must agree with `APP_PATHS` and
+    // `channelSlugFrom` in `src/main.js`: that pair decides what the page does
+    // with a path, this pair decides whether the path was ever real.
+    const APP_PATHS = new Set(['/', '/index.html', '/creator', '/profile']);
+    const CHANNEL_SLUG = /^\/([a-z0-9][a-z0-9-]{1,28}[a-z0-9])\/?$/;
+
+    function isRealAddress(pathname) {
+        if (APP_PATHS.has(pathname)) return true;
+
+        const match = CHANNEL_SLUG.exec(pathname.toLowerCase());
+        return match ? Boolean(resolveChannel(match[1])) : false;
+    }
+
+    // The SPA still boots on a miss - an unrecognised name is supposed to land
+    // on the catalogue, not on an error page - but the *status* has to tell the
+    // truth, and until now it did not. Answering every invented path with 200
+    // means `lustxr.com/<anything an attacker types>` is a live page on this
+    // domain: not just a soft-404 that confuses a crawler, but the signature
+    // Safe Browsing's social-engineering classifier looks for, because it is
+    // what a host serving somebody else's phishing kit looks like from outside.
+    // Status and body are independent, so a 404 costs the visitor nothing.
     app.get('*', (req, res) => {
         res.set('Cache-Control', 'no-cache');
+        res.status(isRealAddress(req.path) ? 200 : 404);
         res.sendFile(path.join(DIST, 'index.html'));
     });
 } else {

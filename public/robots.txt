@@ -1,0 +1,16 @@
+# The catalogue and channel pages are the public face of the site and are
+# meant to be found. Everything disallowed below is either an API, a session
+# address that stops existing when the broadcast ends, or a signed-in surface
+# that renders nothing to a crawler anyway.
+#
+# The `$` anchors matter. A bare `Disallow: /live` is a prefix match, so it
+# would also hide a channel named `livegirl` - and a channel name is the one
+# address a creator puts on a poster, so hiding one is a real cost.
+
+User-agent: *
+Allow: /
+Disallow: /api/
+Disallow: /live$
+Disallow: /live/
+Disallow: /creator$
+Disallow: /profile$
