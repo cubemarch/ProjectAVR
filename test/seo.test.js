@@ -4,6 +4,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { INDEXNOW_KEY, INDEXNOW_KEY_FILE, sitemapLocs, submitUrls } from '../server/indexnow.js';
+
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const read = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8');
 
@@ -110,7 +112,7 @@ test('the home page carries content for crawlers that do not run JavaScript', ()
 /**
  * The fallback has to describe the page that is actually served.
  *
- * `docs/SEARCH.md` §2 puts it plainly: the moment the `<noscript>` describes
+ * `docs/SEARCH.md` §3 puts it plainly: the moment the `<noscript>` describes
  * something the rendered page does not, it stops being a fallback and
  * becomes cloaking. That is not a hypothetical here — it has already
  * happened once. The text claimed the site "sorts it by format" and that
@@ -147,6 +149,103 @@ test('the crawlable fallback does not claim features the page marks as Coming So
         /in progress|not yet available/,
         'the fallback says the own-library is not live rather than just omitting it'
     );
+});
+
+/* ------------------------------------------------- the card and icons -- */
+
+/** Width and height out of a PNG's IHDR chunk, which is always first. */
+function pngSize(relPath) {
+    const buf = fs.readFileSync(path.join(ROOT, relPath));
+    assert.equal(buf.toString('ascii', 12, 16), 'IHDR', `${relPath} is not a PNG`);
+    return { width: buf.readUInt32BE(16), height: buf.readUInt32BE(20) };
+}
+
+test('the link preview has an image, and it is the size it claims to be', () => {
+    // `twitter:card` asked for `summary_large_image` for months with no image
+    // declared anywhere, which is the worst of the three states: the clients
+    // that honour it render a bare URL or a broken box rather than falling
+    // back to a small card. Every paste of this link into a chat window was
+    // spending the preview and getting nothing for it.
+    const og = INDEX.match(/<meta property="og:image" content="([^"]+)"/);
+    assert.ok(og, 'no og:image');
+
+    // Absolute. A scraper resolves this against nothing - it is not on our
+    // domain and often never fetched the page from one.
+    assert.match(og[1], /^https:\/\/lustxr\.com\//, 'og:image must be an absolute URL');
+
+    const tw = INDEX.match(/<meta name="twitter:image" content="([^"]+)"/);
+    assert.ok(tw, 'no twitter:image');
+    assert.equal(tw[1], og[1], 'the two cards should show the same image');
+
+    // The file is in `public/`, which Express serves at the root and Vite
+    // copies into `dist/`. A card pointing at a 404 is indistinguishable
+    // from no card at all, and nothing else in the build would notice.
+    const file = path.join('public', og[1].replace('https://lustxr.com/', ''));
+    assert.ok(fs.existsSync(path.join(ROOT, file)), `${og[1]} has no file behind it`);
+
+    // Declared dimensions let a scraper reserve the box before fetching, and
+    // are worse than useless when they are wrong - the preview is laid out to
+    // the lie and then painted with the truth.
+    const declared = {
+        width: Number(INDEX.match(/<meta property="og:image:width" content="(\d+)"/)?.[1]),
+        height: Number(INDEX.match(/<meta property="og:image:height" content="(\d+)"/)?.[1])
+    };
+    assert.deepEqual(pngSize(file), declared, 'og:image dimensions disagree with the file');
+
+    // 1200x630 is what every major scraper crops to. Anything else is letterboxed.
+    assert.deepEqual(declared, { width: 1200, height: 630 });
+});
+
+test('the icons point at files that exist', () => {
+    // These replaced an inline SVG of the letter L on a purple square, which
+    // predated the brand mark. A `href` to a missing PNG is a silently blank
+    // tab, and the data URI it replaced could never 404 - so this is a new
+    // way to fail that the old markup did not have.
+    for (const rel of ['icon', 'apple-touch-icon']) {
+        const m = INDEX.match(new RegExp(`<link rel="${rel}"[^>]*href="(/[^"]+)"`));
+        assert.ok(m, `no ${rel} link`);
+        assert.ok(
+            fs.existsSync(path.join(ROOT, 'public', m[1].slice(1))),
+            `${rel} points at ${m[1]}, which has no file behind it`
+        );
+    }
+
+    // iOS composites a transparent home-screen icon against a background
+    // nobody chose, so that one is deliberately square and opaque.
+    assert.deepEqual(pngSize('public/apple-touch-icon.png'), { width: 180, height: 180 });
+});
+
+/* ---------------------------------------------------------- indexnow -- */
+
+test('the IndexNow key is published where a submission says it is', () => {
+    // The whole verification mechanism is that this file is reachable on the
+    // host being submitted for. If the constant and the filename drift, every
+    // submission 403s - and submissions are a fire-and-forget CLI nobody is
+    // watching, so the first evidence would be Bing quietly not updating.
+    const file = path.join(ROOT, 'public', INDEXNOW_KEY_FILE);
+    assert.ok(fs.existsSync(file), `public/${INDEXNOW_KEY_FILE} is not published`);
+    assert.equal(fs.readFileSync(file, 'utf8').trim(), INDEXNOW_KEY);
+
+    // The protocol's own constraint on the key.
+    assert.match(INDEXNOW_KEY, /^[a-f0-9]{8,128}$/i, 'key must be 8-128 hex characters');
+});
+
+test('a submission refuses URLs that are not on this host', async () => {
+    // The endpoint rejects the entire batch if one URL is foreign, answering
+    // with a status that does not say which - so the check is here, where the
+    // message can name it.
+    await assert.rejects(
+        () => submitUrls(['https://lustxr.com/', 'https://example.com/x']),
+        /example\.com/
+    );
+});
+
+test('the sitemap reader finds every address the sitemap lists', () => {
+    const locs = sitemapLocs(
+        '<urlset><url><loc>https://lustxr.com/</loc></url>' +
+            '<url><loc>https://lustxr.com/terms</loc></url></urlset>'
+    );
+    assert.deepEqual(locs, ['https://lustxr.com/', 'https://lustxr.com/terms']);
 });
 
 /* ------------------------------------------------------------ robots -- */

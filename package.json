@@ -11,7 +11,8 @@
     "preview": "npm run build && node --env-file-if-exists=.env server/index.js",
     "test": "node --test test/**/*.test.js",
     "start:cluster": "node --env-file-if-exists=.env server/cluster.js",
-    "worker": "AVR_WORKER=1 node --env-file-if-exists=.env server/index.js"
+    "worker": "AVR_WORKER=1 node --env-file-if-exists=.env server/index.js",
+    "indexnow": "node server/indexnow.js"
   },
   "repository": {
     "type": "git",

@@ -56,8 +56,34 @@
             content="A curated directory of VR porn and 3D adult video from leading partner studios and cam sites, with performer profiles. Paid links. 18+."
         />
         <meta property="og:url" content="https://lustxr.com/" />
+
+        <!-- The card image. `twitter:card` has claimed `summary_large_image`
+             since this block was written, with no image to put in it, which
+             is the worst of the three states: a large-image card with no
+             image renders as a bare URL in most clients and as a broken
+             placeholder in the rest.
+
+             Absolute, because a relative URL is resolved against whatever
+             page embedded it and the scrapers that read this are not on this
+             domain. 1200x630 is the size Facebook, LinkedIn, Slack, Discord
+             and X all crop to; declaring the dimensions lets a scraper
+             reserve the box before it has fetched the file. -->
+        <meta property="og:image" content="https://lustxr.com/og-card.png" />
+        <meta property="og:image:width" content="1200" />
+        <meta property="og:image:height" content="630" />
+        <meta property="og:image:alt" content="LustXR — a VR headset and the LustXR wordmark" />
         <meta name="twitter:card" content="summary_large_image" />
-        <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%237c5cff'/%3E%3Ctext x='16' y='23' font-family='Helvetica,Arial' font-size='19' font-weight='bold' fill='%23fff' text-anchor='middle'%3EL%3C/text%3E%3C/svg%3E" />
+        <meta name="twitter:image" content="https://lustxr.com/og-card.png" />
+
+        <!-- The brand mark, replacing an inline SVG of the letter L on a
+             purple square that predates the mark existing. Both files are in
+             `public/`, so they are served by Express at the root and copied
+             into `dist/` by Vite. The tab icon keeps its transparency so it
+             reads against light and dark browser chrome; the iOS icon does
+             not, because iOS composites a transparent home-screen icon
+             against a background nobody chose. -->
+        <link rel="icon" type="image/png" sizes="96x96" href="/favicon.png" />
+        <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
 
         <!-- JuicyAds site ownership check. Public by the same reasoning as the
              measurement id below: the verifier reads it out of this page's
@@ -148,35 +174,111 @@
             <noscript>
                 <h1>LustXR — VR porn and 3D adult video, curated</h1>
                 <p>
-                    LustXR is a directory of adult video shot for virtual reality and
-                    stereoscopic 3D. It collects what is worth watching across a set of partner
-                    studios and cam sites, organises it by studio and by performer, and links
-                    straight through to the site hosting it.
+                    LustXR is a directory of adult video. It collects what is worth watching
+                    across a set of partner studios, organises it by studio and by performer,
+                    and links straight through to the site hosting it.
+                    <strong>LustXR does not host or produce any of this video.</strong>
+                </p>
+
+                <h2>The problem this site exists to solve</h2>
+                <p>
+                    Adult video shot for virtual reality is scattered across sites that each
+                    stock a little of it, and it is published in formats that decide whether a
+                    given headset can play a given file at all. The format is often not stated
+                    plainly on the page you buy from, so the usual way to find out that a file
+                    is the wrong one is to pay for it first. Settling that before the click
+                    rather than after it is the problem this site exists to solve.
+                </p>
+
+                <h2>How VR video is packaged, and why it matters</h2>
+                <p>
+                    Four properties describe almost every VR or 3D video file. They are
+                    independent of one another, which is why &ldquo;VR video&rdquo; on its own
+                    tells you almost nothing about whether something will play.
+                </p>
+                <dl>
+                    <dt>Projection: 180&deg; or 360&deg;</dt>
+                    <dd>
+                        A 180&deg; file covers the hemisphere in front of the viewer. A 360&deg;
+                        file covers the whole sphere, so you can turn and look behind you. Most
+                        adult VR is 180&deg;, because spending the whole frame on the half of
+                        the world anyone is actually looking at buys roughly twice the effective
+                        resolution. A 180&deg; file played as though it were 360&deg; appears
+                        stretched across too much of the view, and the reverse leaves half the
+                        sphere black.
+                    </dd>
+
+                    <dt>Stereo layout: side-by-side or over-under</dt>
+                    <dd>
+                        A stereoscopic file carries two images, one per eye, packed into a
+                        single video frame. Side-by-side (SBS) puts them left and right;
+                        over-under, also called top-bottom or TB, stacks them. Nothing in the
+                        video itself reliably says which, so a player told the wrong one splits
+                        the frame along the wrong axis and shows a doubled or squashed picture.
+                        This is the single most common reason a correctly downloaded file looks
+                        broken.
+                    </dd>
+
+                    <dt>Monoscopic or stereoscopic</dt>
+                    <dd>
+                        A monoscopic file shows one image to both eyes. It still surrounds you
+                        and you can still look around, but it is flat &mdash; there is no depth,
+                        because both eyes receive exactly the same picture. A stereoscopic file
+                        carries a separate image per eye and is what produces the sense of
+                        physical presence people mean by VR. Mono files are roughly half the
+                        size, which is why they turn up in places where stereo was implied.
+                    </dd>
+
+                    <dt>Eye order: left-right or right-left</dt>
+                    <dd>
+                        Which half of a stereo frame belongs to which eye. Reversed, an image
+                        still looks three-dimensional, so it is easy to miss &mdash; but the
+                        depth is inverted, near objects read as far, and most people experience
+                        it as eye strain or nausea within a few minutes rather than as a visible
+                        fault. Left-right is the overwhelming convention.
+                    </dd>
+                </dl>
+
+                <h2>What this means for a headset</h2>
+                <p>
+                    Format support is mostly a property of the player application rather than
+                    of the headset. The standalone headsets in common use &mdash; Meta Quest 2,
+                    Quest 3 and Quest Pro, and Pico &mdash; and PC headsets driven over a link
+                    will all play every combination above, provided the playback app is told
+                    which combination it has been given. Dedicated VR video players exist
+                    precisely because that instruction usually has to be supplied by hand.
                 </p>
                 <p>
-                    The point of organising it this way is that VR and 3D adult video is scattered
-                    across sites that each stock a little of it, in formats — side-by-side,
-                    over-under, 180 or 360 degrees, monoscopic or stereo — that decide whether a
-                    given headset can play a given file at all. Settling the format before the
-                    click rather than after it is the problem this site exists to solve.
+                    Where real incompatibility does appear it is usually codec and resolution
+                    rather than projection: a file encoded in HEVC at a resolution above what a
+                    particular device will decode in hardware either stutters or refuses to
+                    play, and the same title offered at a lower resolution plays cleanly on the
+                    same headset. A file that plays on a desktop and fails on a headset is far
+                    more often this than a format mismatch.
                 </p>
+
+                <h2>What is on the site today</h2>
                 <p>
-                    What is on the site today is the partner directory, live cam rooms and
-                    performer profiles. Our own library — every entry tagged with its projection
-                    and its stereo layout, with a filter for each format — is in progress and is
-                    marked on the site as not yet available.
+                    The partner directory and performer profiles. Our own library &mdash; every
+                    entry tagged with its projection and its stereo layout, with a filter for
+                    each format &mdash; is in progress and is marked on the site as not yet
+                    available.
                 </p>
+
+                <h2>Paid links</h2>
                 <p>
-                    <strong>LustXR does not host or produce any of this video.</strong> Every
-                    title links out to the partner site that hosts it, and those links are paid:
-                    we earn a commission if you subscribe or buy, at no extra cost to you. See the
-                    <a href="/2257">18 U.S.C. 2257 exemption statement</a> for who holds the
-                    records for the material linked from here.
+                    Every title links out to the partner site that hosts it, and those links are
+                    paid: we earn a commission if you subscribe or buy, at no extra cost to you.
+                    See the <a href="/2257">18 U.S.C. 2257 exemption statement</a> for who holds
+                    the records for the material linked from here.
                 </p>
+
+                <h2>Adults only</h2>
                 <p>
                     This site is for adults. You must be at least 18 years old, or the age of
                     majority where you live, whichever is greater, to use it.
                 </p>
+
                 <p>
                     Browsing the directory needs JavaScript, because it is an application rather
                     than a document.

@@ -864,7 +864,7 @@ export class BrowseUI extends pc.EventHandler {
      *
      * It deliberately does not link `cams.lustxr.com`. That host is the
      * Chaturbate white label, and linking it from an indexed page is the one
-     * thing `docs/SEARCH.md` §4 rules out — `test/cams.test.js` fails the
+     * thing `docs/SEARCH.md` §5 rules out — `test/cams.test.js` fails the
      * build if our own hostnames ever become a cam link.
      */
     _camsButtonHtml() {

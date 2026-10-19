@@ -622,7 +622,7 @@ test('the storefront label is short enough to be a control', () => {
 });
 
 test('the live cam control never points at our own white label', () => {
-    // `docs/SEARCH.md` §4: nothing indexed links `cams.lustxr.com`. The
+    // `docs/SEARCH.md` §5: nothing indexed links `cams.lustxr.com`. The
     // masthead button is the most plausible place for that to be undone,
     // because "Live Cams" reads like it wants an href.
     const cams = methodBody('_camsButtonHtml');

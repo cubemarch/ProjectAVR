@@ -35,11 +35,88 @@ mistypes still gets a usable site. Status and body are independent, and the
 crawler reads the status.
 
 The appeal cannot be made from this repository. See
-[§5](#5-what-needs-a-google-login).
+[§6](#6-what-needs-a-google-login).
+
+**Status, 2026-10-19: the appeal and the Search Console verification have both
+been submitted.** The listing was still live when checked the same day, which
+is expected — review takes days, not hours. How to check it without an API key
+and without loading the site:
+
+```sh
+curl -s 'https://transparencyreport.google.com/transparencyreport/api/v3/safebrowsing/status?site=lustxr.com'
+```
+
+The second field of the returned row is the status: `1` is clean, `3` is
+listed. On 2026-10-19 the apex answered `3` and `www.lustxr.com` answered `1`.
+
+That asymmetry is worth knowing about and **worth doing nothing about**. The
+obvious move — repointing the canonical at the clean hostname — is the wrong
+one twice over: it reads as evasion of a listing rather than a fix for one, and
+it throws away what little the apex has accrued in exchange for a hostname that
+would very likely inherit the flag anyway. The appeal is the fix. Wait for it.
 
 ---
 
-## 2. What is in the tree
+## 2. The catalogue is not what the site says it is
+
+Measured 2026-10-19 against the live feeds.
+
+**Of the 24 titles in `aebn-newest`, 22 carry no VR, 180, 360, SBS or 3D token
+anywhere in the record.** `trending` is 3 of 24. These are general-market
+adult DVD releases. Meanwhile the title, the meta description, the JSON-LD
+and the `<noscript>` all describe a directory of VR and stereoscopic 3D video
+organised by format.
+
+There is no VR-scoped AEBN feed available to us as things stand. `genreId` is
+accepted and ignored by `straight.aebn.com/straight/api/movies/newest`, and
+`vr.aebn.com` does not resolve. The three programs in
+[`src/catalog/affiliates.js`](../src/catalog/affiliates.js) are sales-tool
+feeds with no format dimension to filter on.
+
+Re-check with:
+
+```sh
+curl -s 'https://straight.aebn.com/straight/api/movies/newest' \
+  | python3 -c "import json,sys,re; d=json.load(sys.stdin); \
+print(sum(bool(re.search(r'\bVR\b|180|360|SBS', str(m), re.I)) for m in d), 'of', len(d))"
+```
+
+This matters twice, and both are things Google acts on rather than merely
+notices:
+
+- **It is the snippet-to-landing-page mismatch
+  [`index.html`](../index.html) warns about in its own head comment.** A
+  result promising VR over a page of general 2D covers is what a visitor
+  bounces from and what a ranking adjustment is made of. The head comment was
+  written about the `AFFILIATES_ONLY` flag hiding the catalogue; the feed turns
+  out to produce the same mismatch by a different route.
+- **It removes the defence against thin-affiliate classification.** Google's
+  affiliate guidance turns on *substantial added value*. The whole of this
+  site's added-value claim is format and headset compatibility, and
+  `_affiliateCardHtml` renders a title, a partner and a duration. With the
+  claim removed, what is left is a mirror of a feed that thousands of
+  affiliates carry — which is the same policy exposure
+  [§5](#5-things-that-would-cost-more-than-they-return) refuses a page-per-room
+  for, arriving through the front door.
+
+It is also the root of the cloaking fix recorded in §3. That was treated as
+stale copy and corrected as copy; the copy was downstream of this.
+
+**Two honest fixes, in preference order.** Source a VR-native affiliate
+programme — SexLikeReal, VRBangers, BaDoinkVR and CzechVR all run one, with
+VR-only catalogues and real format metadata, which makes the claim true and
+the added value real in the same move. Failing that, change the positioning to
+match the feed. What is not available is leaving both as they are and writing
+more metadata about it: every tag added on top of the mismatch makes the
+mismatch bigger.
+
+Nothing in this repository can detect this regressing, because the feed is a
+third party's and its contents are not ours to pin. It needs re-measuring
+whenever a programme is added or swapped.
+
+---
+
+## 3. What is in the tree
 
 ### The site declares itself adult
 
@@ -163,6 +240,54 @@ that 404 is worse than no sitemap.
 If the database query throws, the route logs and emits the static entries
 anyway. A sitemap missing its channels is still a useful sitemap; a 500 is not.
 
+### IndexNow pushes changes to Bing without waiting to be crawled
+
+[`server/indexnow.js`](../server/indexnow.js), run with `npm run indexnow`.
+
+Bing, Yandex, Seznam and Naver share one submission endpoint. Google does not
+participate and has said so, so **this changes nothing about Google ranking**.
+It is here for one reason: ChatGPT's web results come from Bing, and so do
+Copilot's. For a domain that cannot buy search advertising ([§4](#4-paid-search-does-not-exist-for-this-domain)),
+cannot be browsed by ChatGPT's own agent (above), and is invisible to every
+crawler that does not run JavaScript, a free push into the index those answers
+are drawn from is the shortest path between publishing something and an
+assistant being able to cite it.
+
+The key is served in plaintext at `/<key>.txt` and that is the whole
+verification mechanism — it is not a secret, and it is committed rather than
+configured because a published value gains nothing from being an environment
+variable and loses the one property that matters: that the file and the
+submission cannot disagree. `test/seo.test.js` pins that they match, because a
+key file that 404s makes every submission fail with a 403 nobody is watching
+for.
+
+**Submission is manual on purpose.** A restart is not a content change, and the
+protocol asks submitters not to resend unchanged URLs. A hook on boot would
+send the same six addresses on every deploy and teach the endpoint to ignore
+this host. Run it when something has actually changed — and note that the CLI
+checks the live host serves the key before submitting, so it must be run after
+a deploy rather than before.
+
+### The link preview has an image, and the icons are the brand
+
+`twitter:card` claimed `summary_large_image` for months with no image declared
+anywhere. That is the worst of the three available states: clients that honour
+the card render a bare URL or a broken box rather than falling back to a small
+one, so every paste of this link into a chat window spent the preview and got
+nothing. `og:image` is now `/og-card.png`, 1200x630, which is what Facebook,
+LinkedIn, Slack, Discord and X all crop to.
+
+The icons replaced an inline SVG of the letter `L` on a purple square that
+predated the brand mark existing. Both the card and the icons are in
+`public/`, so Express serves them at the root and Vite copies them into
+`dist/`.
+
+Three things here can break silently and are therefore tested: an `og:image`
+pointing at a 404, declared dimensions that disagree with the file (a scraper
+lays the preview out to the declared box and then paints the real one into
+it), and an icon `href` with no file behind it — a failure mode the data URI
+it replaced did not have.
+
 ### The policy pages
 
 Five pages under [`public/legal/`](../public/legal/), served at `/terms`,
@@ -211,7 +336,7 @@ block and the `<noscript>` change with it.**
 
 ---
 
-## 3. Paid search does not exist for this domain
+## 4. Paid search does not exist for this domain
 
 Not "is difficult". Is prohibited, by policy, at every mainstream network.
 
@@ -267,7 +392,7 @@ first, then test one network with a fixed small budget, then judge.
 
 ---
 
-## 4. Things that would cost more than they return
+## 5. Things that would cost more than they return
 
 - **Turning the AI performer biographies into indexable pages.** They are fine
   as they are used today: a hover card, not indexable, labelled as model-written
@@ -332,23 +457,32 @@ first, then test one network with a fixed small budget, then judge.
 
 ---
 
-## 5. What needs a Google login
+## 6. What needs a Google login
 
-None of this can be done from the repository. In priority order:
+None of this can be done from the repository.
 
-1. **Appeal the Safe Browsing listing.**
-   <https://safebrowsing.google.com/safebrowsing/report_error/>, or Search
-   Console → Security Issues → Request Review once the property is verified.
-   The soft-404 cause is fixed; say so in the appeal.
-2. **Verify the Search Console property.** DNS TXT is the right method — it
-   covers the apex and every subdomain and survives a redeploy. The Cloudflare
-   zone is already under the account token at
-   `~/.config/cloudflare/lustxr.env`.
+**Done, 2026-10-19:**
+
+1. ~~**Appeal the Safe Browsing listing.**~~ Submitted. The soft-404 cause was
+   fixed first, which is what the appeal has to be able to say. Check the
+   result with the `curl` in [§1](#1-the-listing-comes-first) rather than by
+   loading the site — review takes days, and a cleared listing is the gate on
+   everything else here.
+2. ~~**Verify the Search Console property.**~~ Submitted.
+
+**Still outstanding, in priority order:**
+
 3. **Submit `https://lustxr.com/sitemap.xml`** in Search Console. `robots.txt`
    already points at it, but submitting it is what starts the first crawl rather
    than waiting for one.
 4. **URL-inspect and request indexing** for `/` and the five policy pages.
 5. **Bing Webmaster Tools**, which imports a verified Search Console property in
-   one step and is where ChatGPT's web results come from.
+   one step and is where ChatGPT's web results come from. Worth doing before
+   the Google side pays off: `npm run indexnow` submits to the same index, and
+   Bing is the one that feeds generative answers today.
 6. **Google Postmaster Tools**, for the mail side — unrelated to ranking, same
    login, easy to do at the same time.
+
+**Not a login, but the one that outranks all six:** the catalogue mismatch in
+[§2](#2-the-catalogue-is-not-what-the-site-says-it-is). Indexing a page faster
+does not help if the page does not deliver what the result promised.
