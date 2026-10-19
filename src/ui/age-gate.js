@@ -1,5 +1,6 @@
 import { brandLockup } from './brand-mark.js';
 import { sleepUntilReturn } from '../api/identity-return.js';
+import { EVENTS, regionOf, track } from '../analytics.js';
 import {
     cameraAvailable,
     cameraProblem,
@@ -66,7 +67,14 @@ export async function ensureAgeGate() {
     // page has no content without the fetches it is holding up anyway.
     if (!state) state = { ok: false, owes: 'attestation', jurisdiction: null };
 
-    if (state.ok) return true;
+    // Exactly one `age_gate_passed` per load, whichever way it happened, so
+    // the event is a clean count of sessions that saw the site. `stored` is
+    // the visitor who was already through and never met the dialog at all;
+    // the pass rate worth reading is the other methods over `age_gate_shown`.
+    if (state.ok) {
+        track(EVENTS.AGE_GATE_PASSED, { method: 'stored', region: regionOf(state.jurisdiction) });
+        return true;
+    }
 
     return new Promise((resolve) => {
         render(state, resolve);
@@ -92,6 +100,15 @@ function render(state, resolve) {
     const policy = state.jurisdiction;
     const verified = state.owes === 'verification';
 
+    // Two parameters on every gate event, because the only interesting
+    // question about this dialog is how it performs in the twenty-seven
+    // states that make it a document check versus everywhere else.
+    const where = { region: regionOf(policy), asks: verified ? 'verification' : 'attestation' };
+
+    // Fired per drawing, not per load: `again` re-renders when the answer
+    // changed underneath us, and that genuinely is a second showing.
+    track(EVENTS.AGE_GATE_SHOWN, where);
+
     const root = document.createElement('div');
     root.id = ROOT_ID;
     root.className = 'age-gate';
@@ -115,6 +132,8 @@ function render(state, resolve) {
     document.body.classList.add('age-gate-open');
 
     const leave = () => {
+        track(EVENTS.AGE_GATE_LEFT, where);
+
         // Not `history.back()`: a visitor who arrived from a search result has
         // nothing to go back to and would sit on the gate forever.
         window.location.replace('https://www.google.com/');
@@ -132,7 +151,7 @@ function render(state, resolve) {
         const ok = await attest(policy?.attestation?.version);
 
         if (ok) {
-            done();
+            done('attestation');
             return;
         }
 
@@ -151,7 +170,10 @@ function render(state, resolve) {
     // are through it and away from it.
     trapFocus(root);
 
-    function done() {
+    /** @param {'attestation' | 'selfie' | 'document' | 'recheck'} method how they got through */
+    function done(method) {
+        track(EVENTS.AGE_GATE_PASSED, { ...where, method });
+
         root.remove();
         document.body.classList.remove('age-gate-open');
         resolve(true);
@@ -163,8 +185,18 @@ function render(state, resolve) {
         document.body.classList.remove('age-gate-open');
 
         const next = (await ask()) ?? { ok: false, owes: 'verification', jurisdiction: null };
-        if (next.ok) resolve(true);
-        else render(next, resolve);
+
+        // `done` is not reused here: it would report the jurisdiction of the
+        // gate that just turned out to be the wrong one. This pass belongs to
+        // wherever the visitor has turned out to be.
+        if (next.ok) {
+            track(EVENTS.AGE_GATE_PASSED, {
+                region: regionOf(next.jurisdiction),
+                asks: where.asks,
+                method: 'recheck'
+            });
+            resolve(true);
+        } else render(next, resolve);
     }
 }
 
@@ -353,6 +385,8 @@ function wireVerification(root, state, done, again) {
 
     if (!button) return;
 
+    const region = regionOf(state.jurisdiction);
+
     const say = (message) => {
         if (status) status.textContent = message;
     };
@@ -458,7 +492,7 @@ function wireVerification(root, state, done, again) {
         const verdict = await sendSelfie(photo, state.selfieConsent?.version);
 
         if (verdict.status === 'verified') {
-            done();
+            done('selfie');
             return;
         }
 
@@ -466,6 +500,12 @@ function wireVerification(root, state, done, again) {
             again();
             return;
         }
+
+        // `error` and `rejected` are both reported, and kept apart by the
+        // parameter: one is a check that said no and one is a check that did
+        // not happen, and conflating them would hide a provider outage inside
+        // what looks like a run of under-18 visitors.
+        track(EVENTS.AGE_GATE_FAILED, { region, via: 'selfie', outcome: verdict.status });
 
         button.disabled = false;
         say(verdict.message);
@@ -509,9 +549,11 @@ function wireVerification(root, state, done, again) {
         const verdict = await poll(popup);
 
         if (verdict === 'verified') {
-            done();
+            done('document');
             return;
         }
+
+        track(EVENTS.AGE_GATE_FAILED, { region, via: 'document', outcome: verdict });
 
         popup?.close();
         button.disabled = false;

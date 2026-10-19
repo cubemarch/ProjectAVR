@@ -1,6 +1,12 @@
 import { icons } from './icons.js';
 import { AFFILIATE_LINK_REL } from '../catalog/affiliates.js';
 
+// Aliased, and it has to be. `track` is already the name of the `.cam-track`
+// element in two methods here, and an import shadowed by a local would fail
+// at the call rather than at the import - silently, in the one kind of code
+// whose job is to report that something happened.
+import { EVENTS, track as report } from '../analytics.js';
+
 /**
  * Live cams: a shelf of rooms broadcasting right now, and a theatre to watch
  * one in without leaving the page.
@@ -217,6 +223,16 @@ export class CamShelf {
          */
         this.applied = '';
 
+        /**
+         * The last query reported to analytics, so one is not counted twice.
+         *
+         * Separate from {@link applied}, which tracks what the *server* has
+         * answered and is reset by things that have nothing to do with
+         * whether a visitor has searched for a word before. See
+         * {@link _requery}.
+         */
+        this.reported = '';
+
         /** @type {Map<HTMLElement, {room: object, at: number}>} */
         this.onScreen = new Map();
 
@@ -282,6 +298,16 @@ export class CamShelf {
         // this is in the air, and what the response means is what was asked
         // for — not what is in the box by the time it arrives.
         const asked = this.query;
+
+        // Here and not in the `input` listener, which fires per keystroke.
+        // This runs once the box has settled, so "blonde" is one search and
+        // not six. Clearing the box is not a search, and neither is arriving
+        // back at a term already reported — picking a suggestion sets the box
+        // to text that may be what was typed to summon it.
+        if (asked && asked !== this.reported) {
+            this.reported = asked;
+            report(EVENTS.SEARCH, { search_term: asked });
+        }
 
         const url = new URL('/api/cams', location.origin);
 
@@ -766,11 +792,20 @@ export class CamShelf {
             const anchor = event.target.closest?.('.cam-card');
             if (!anchor) return;
 
-            if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
-            if (event.button !== 0) return;
-
             const room = this.rooms.find((r) => r.username === anchor.dataset.cam);
-            if (!room?.embed) return;
+            const modified =
+                event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0;
+
+            // Both ways out of this handler are reported, and they are not the
+            // same thing: the theatre keeps the visitor here, and everything
+            // below leaves for the partner. Counting them together would make
+            // an on-page player look like outbound traffic.
+            if (modified || !room?.embed) {
+                report(EVENTS.CAM_CLICK, { partner: 'Chaturbate', from: 'card' });
+                return;
+            }
+
+            report(EVENTS.CAM_OPEN, { partner: 'Chaturbate' });
 
             event.preventDefault();
             this._openTheatre(room, anchor);
@@ -1124,7 +1159,19 @@ export class CamShelf {
         document.body.classList.add('cam-theatre-open');
 
         el.addEventListener('click', (event) => {
-            if (event.target.closest('[data-close]')) this._closeTheatre();
+            if (event.target.closest('[data-close]')) {
+                this._closeTheatre();
+                return;
+            }
+
+            // The theatre is where a cam visit actually converts: the room is
+            // already playing, and this is the link that carries the
+            // commission. Reported separately from the card so the two can be
+            // compared - the question worth answering about the theatre is
+            // whether watching first makes the click out more likely.
+            if (event.target.closest('.cam-theatre-out')) {
+                report(EVENTS.CAM_CLICK, { partner: 'Chaturbate', from: 'theatre' });
+            }
         });
 
         this.onKeydown = (event) => {

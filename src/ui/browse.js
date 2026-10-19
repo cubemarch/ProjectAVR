@@ -11,6 +11,7 @@ import {
     storefrontUrl
 } from '../catalog/affiliates.js';
 import { AFFILIATES_ONLY, COMING_SOON_SHELVES } from '../site-mode.js';
+import { EVENTS, track } from '../analytics.js';
 import { adSlotHtml, bioCardAdHtml, fillAdSlots, nativeStripHtml } from '../ads/juicyads.js';
 import { CamShelf, camSkeletonHtml, camsExpected } from './cams.js';
 import {
@@ -65,6 +66,59 @@ export class BrowseUI extends pc.EventHandler {
 
         this._render();
         this._bindScroll();
+        this._bindOutbound();
+    }
+
+    /**
+     * Report a click that leaves for a partner.
+     *
+     * Bound on `this.mount` from the constructor, which is the only place it
+     * can go. `_render` replaces the mount's *children*, so a listener on the
+     * mount itself outlives every redraw and is attached exactly once — and
+     * `_render` returns early in affiliate-only mode before any of the other
+     * binds, so a handler installed down there would not exist in the mode
+     * the site is actually running in.
+     *
+     * Delegated rather than per-link for the same reason: the partner rows
+     * arrive after the first paint and are replaced whenever they refresh.
+     *
+     * It does not call `preventDefault`, does not cancel, and does not wait.
+     * These are real anchors with `target="_blank"` — the navigation is the
+     * browser's and the measurement must not be able to interfere with it.
+     */
+    _bindOutbound() {
+        this.mount.addEventListener('click', (e) => {
+            const storefront = e.target.closest?.('[data-storefront]');
+
+            if (storefront) {
+                // The id, not the pill's printed label. The id is declared once
+                // in `src/catalog/affiliates.js` and a report keyed on it
+                // survives the wording changing; text scraped out of the page
+                // is also the shape this file is not allowed to send, and only
+                // happens to be harmless while the one label is "All Movies".
+                track(EVENTS.STOREFRONT_CLICK, {
+                    storefront: storefront.dataset.storefront,
+                    partner: storefront.dataset.partner
+                });
+                return;
+            }
+
+            const card = e.target.closest?.('.affiliate-card, .star-card');
+            if (!card) return;
+
+            const shelf = card.closest('.affiliate-shelf');
+
+            // The performer's name and the title of a film are both deliberately
+            // absent. Which row somebody clicked is a measure of the shelf;
+            // which performer they clicked is a record of what one person
+            // looked at, which is the thing `src/analytics.js` says we do not
+            // collect and the privacy policy says we do not keep.
+            track(EVENTS.AFFILIATE_CLICK, {
+                program: shelf?.dataset.program,
+                partner: shelf?.dataset.partner,
+                card: card.classList.contains('star-card') ? 'performer' : 'title'
+            });
+        });
     }
 
     _render() {
@@ -856,6 +910,7 @@ export class BrowseUI extends pc.EventHandler {
                 return `
                     <a class="pill pill-movies" href="${escapeHtml(storefrontUrl(s))}"
                        target="_blank" rel="${AFFILIATE_LINK_REL}"
+                       data-storefront="${escapeHtml(s.id)}" data-partner="${escapeHtml(s.partner)}"
                        title="${escapeHtml(full)}" aria-label="${escapeHtml(full)}">
                         <span class="pill-icon">${icons.film({ size: 18 })}</span>
                         <span class="pill-text">${escapeHtml(s.label)}</span>
@@ -870,8 +925,14 @@ export class BrowseUI extends pc.EventHandler {
             ? (item) => this._starCardHtml(item)
             : (item) => this._affiliateCardHtml(item);
 
+        // The two data attributes are read by `_bindOutbound` and by nothing
+        // else. They are on the section rather than on each card because the
+        // row is what knows which programme it is: a card would have to be
+        // handed the answer, and both card builders would have to carry it.
         return `
-            <section class="shelf affiliate-shelf${stars ? ' star-shelf' : ''}">
+            <section class="shelf affiliate-shelf${stars ? ' star-shelf' : ''}"
+                     data-program="${escapeHtml(program.id)}"
+                     data-partner="${escapeHtml(program.partner)}">
                 <div class="shelf-head">
                     <h2>${escapeHtml(program.title)}</h2>
                     <span class="badge partner">${escapeHtml(program.partner)}</span>
