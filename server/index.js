@@ -94,13 +94,119 @@ app.use(
 
 app.use(cookieParser());
 
+/**
+ * Paths that serve public bytes with no cookie behind them.
+ *
+ * `*` with no credentials is the combination the specification makes safe: the
+ * browser will not attach cookies to such a request, so another origin gets
+ * exactly what it would get by fetching the address from its own server and
+ * nothing more. Everything here is already open to whoever knows the address —
+ * `/stream` is key-based, `/playlist.m3u` and `/deovr/u` carry their token in
+ * the query, `/dlna` is a LAN protocol — so CORS was never what protected them.
+ *
+ * And the cross-origin read here is real rather than hypothetical: HLS is
+ * fronted by a CDN, so a page on this origin loading `/live/hls` is loading it
+ * from an edge hostname, which is what {@link docs/LIVE.md} means when it says
+ * those segments are served with `Access-Control-Allow-Origin: *`. A headset
+ * browser or a DeoVR shell is the same case.
+ *
+ * `/live/transcode` is deliberately *not* here. It shares the prefix but it is
+ * a diagnostics endpoint, not media.
+ */
+const PUBLIC_MEDIA = /^\/playlist\.m3u$|^\/(?:stream|media|art|dlna|deovr|delivery|live\/hls)(?:\/|$)/;
+
+let originCache = { key: null, set: null };
+
+/**
+ * The origins allowed to make *credentialed* cross-origin requests.
+ *
+ * Same origin needs no entry: a browser does not apply CORS to a page reading
+ * its own server. This set is only for a *different* origin reading a response
+ * that was produced with this visitor's cookies, so every entry is a site
+ * trusted to act as them. `AVR_PUBLIC_URL` is the canonical address and is
+ * always in; `AVR_CORS_ORIGINS` is a comma-separated list for anything else.
+ *
+ * Both unset means nothing is allowed, which is the right answer for a
+ * deployment whose only client is its own page — and that is this one, where
+ * every request `src/` makes is a relative path.
+ *
+ * @returns {Set<string>}
+ */
+function credentialedOrigins() {
+    const key = `${process.env.AVR_PUBLIC_URL ?? ''}|${process.env.AVR_CORS_ORIGINS ?? ''}`;
+    if (originCache.key === key) return originCache.set;
+
+    const set = new Set();
+    const configured = [process.env.AVR_PUBLIC_URL, ...String(process.env.AVR_CORS_ORIGINS ?? '').split(',')];
+
+    for (const entry of configured) {
+        const value = String(entry ?? '').trim();
+        if (!value) continue;
+
+        try {
+            set.add(new URL(value).origin);
+        } catch {
+            // A typo drops that one entry rather than throwing. This runs per
+            // request, and the failure direction is the safe one: an origin
+            // that cannot be parsed is an origin that is not trusted.
+        }
+    }
+
+    originCache = { key, set };
+    return set;
+}
+
+/**
+ * CORS, split by what the response is allowed to contain.
+ *
+ * This used to reflect whatever `Origin` arrived and send
+ * `Access-Control-Allow-Credentials: true` alongside it, which is the one
+ * combination that means "any website on the internet may read this visitor's
+ * private responses". It was a permissive default from the first commit rather
+ * than a decision, and nothing ever needed it: no browser client of this server
+ * is cross-origin. The cookies are all `SameSite=Lax`, which is what kept the
+ * reflection from being exploitable in a current browser — but that is one
+ * mitigation deep, and it does not cover a bearer token or a shared cache.
+ *
+ * So: public bytes get `*` and no credentials; a recognised origin gets itself
+ * and credentials; anything else gets no `Access-Control-*` header at all.
+ */
 app.use((req, res, next) => {
-    res.set('Access-Control-Allow-Origin', req.headers.origin || '*');
-    res.set('Access-Control-Allow-Credentials', 'true');
-    res.set('Access-Control-Allow-Headers', 'Range, Content-Type, SOAPAction, Authorization');
-    res.set('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
-    res.set('Access-Control-Expose-Headers', 'Content-Range, Content-Length, Accept-Ranges');
     res.set('X-Content-Type-Options', 'nosniff');
+
+    if (PUBLIC_MEDIA.test(req.path)) {
+        res.set('Access-Control-Allow-Origin', '*');
+        res.set('Access-Control-Allow-Methods', 'GET, HEAD, POST, OPTIONS');
+        // `Range` is not a safelisted request header, so a byte-range read from
+        // a browser preflights; `SOAPAction` is how a DLNA control point names
+        // the action it is invoking.
+        res.set('Access-Control-Allow-Headers', 'Range, Content-Type, SOAPAction');
+        res.set('Access-Control-Expose-Headers', 'Content-Range, Content-Length, Accept-Ranges');
+    } else {
+        // The answer below depends on who asked, so it must not be cached as
+        // though it did not. Without this a shared cache can hand one origin's
+        // approval to the next origin that asks for the same URL.
+        res.vary('Origin');
+
+        const origin = req.headers.origin;
+
+        if (origin && credentialedOrigins().has(origin)) {
+            res.set('Access-Control-Allow-Origin', origin);
+            res.set('Access-Control-Allow-Credentials', 'true');
+            res.set('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
+            // Short on purpose. `X-AVR-Consent-Version` is absent deliberately:
+            // the selfie routes put the consent version in a header precisely so
+            // that posting a photograph preflights, and leaving that header
+            // un-allowed is what makes the preflight refuse. See the age-check
+            // section of docs/STATE-AGE-LAWS.md. Do not add it here.
+            res.set('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+        }
+
+        // Otherwise nothing. A simple cross-origin request still reaches the
+        // route — CORS governs whether the response may be *read*, not whether
+        // it is sent — but the page that made it cannot see what came back, and
+        // anything carrying JSON or a custom header never gets past preflight.
+    }
 
     if (req.method === 'OPTIONS') {
         res.status(204).end();
