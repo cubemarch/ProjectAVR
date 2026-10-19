@@ -59,13 +59,22 @@ test.after(() => {
 
 /* ----------------------------------------------------------------- fixture -- */
 
-/** One room as upstream actually sends it, with the field names they use. */
+/**
+ * One room as upstream actually sends it, with the field names they use.
+ *
+ * Verified against a live `onlinerooms` response on 2026-10-19, which is a
+ * thing worth doing again before trusting this: the shelf was empty in
+ * production for a working affiliate code because this fixture said
+ * `room_status` and upstream had started saying `current_show`, and a fixture
+ * written from the same stale documentation as the code under test agrees
+ * with it about everything including what is wrong.
+ */
 function upstreamRoom(over = {}) {
     return {
         username: 'examplecam',
         display_name: 'Example Cam',
         gender: 'f',
-        room_status: 'public',
+        current_show: 'public',
         room_subject: 'hello',
         age: 24,
         num_users: 120,
@@ -100,9 +109,33 @@ test('an ordinary room becomes a card', () => {
     assert.equal(room.embed, 'https://chaturbate.com/embed/examplecam/?tour=x&campaign=y');
 });
 
+test('the status field is read under either name upstream has used', () => {
+    // The live field is `current_show`. `room_status` is what it was called
+    // when this route was written, and is still accepted because the failure
+    // it caused was silent in both directions: a feed that goes back to the
+    // old name would empty the shelf again with nothing to show for it in a
+    // log or a test run.
+    const current = normalise(upstreamRoom({ current_show: 'public' }));
+    assert.ok(current, 'the live field name is honoured');
+
+    const legacy = normalise(upstreamRoom({ current_show: undefined, room_status: 'public' }));
+    assert.ok(legacy, 'so is the name upstream used previously');
+
+    // And the old name must not be able to re-open a room the live field has
+    // already closed, or a feed sending both would show private shows.
+    const conflict = normalise(upstreamRoom({ current_show: 'private', room_status: 'public' }));
+    assert.equal(conflict, null, 'the live field wins where the two disagree');
+});
+
 test('a room we would not show comes back as nothing', () => {
     const refused = {
-        'a private show': { room_status: 'away' },
+        'a private show': { current_show: 'private' },
+        'an away broadcaster': { current_show: 'away' },
+        'a hidden show': { current_show: 'hidden' },
+
+        // Fails closed. A status field we cannot read is not evidence that a
+        // show is public, and this is the case the rename actually produced.
+        'a room with no status field at all': { current_show: undefined },
         'a broadcaster under 18': { age: 17 },
         'no username': { username: '' },
         'a username with a path in it': { username: '../admin' },
@@ -409,10 +442,187 @@ test('the filters cut the cached list rather than asking upstream again', async 
 
     const call = await gatedVisitor();
 
-    assert.equal((await call('/api/cams?vr=1')).body.total, 1);
+    // `matched`, not `total`. The counts describe what this visitor could be
+    // shown and so stay at two however the row is filtered, which is what
+    // lets a caller size a control off them; `matched` is the filtered
+    // figure. `?vr=1` has no control behind it today — the live feed has no
+    // headset rooms — but it is route contract and a stubbed one matches.
+    const vr = (await call('/api/cams?vr=1')).body;
+
+    assert.equal(vr.matched, 1, 'one of the two is a headset room');
+    assert.equal(vr.total, 2, 'but both are still on offer');
+    assert.equal(vr.vrTotal, 1, 'and that count is pre-filter');
+
     assert.equal((await call('/api/cams?gender=m')).body.rooms[0].username, 'flatman');
-    assert.equal((await call('/api/cams?gender=nonsense')).body.total, 0);
-    assert.equal(calls.length, 1, 'a filter click cost an upstream request');
+    assert.equal((await call('/api/cams?gender=nonsense')).body.matched, 0);
+    assert.equal(calls.length, 1, 'every filter cut the one cached list');
+
+    delete process.env.AVR_CHATURBATE_WM;
+});
+
+test('a query narrows the row without narrowing what the row says it has', async () => {
+    _resetCamsCache();
+    process.env.AVR_CHATURBATE_WM = 'test-wm';
+
+    stubUpstream([
+        upstreamRoom({ username: 'ada', display_name: 'Ada', tags: ['blonde', 'vr'] }),
+        upstreamRoom({ username: 'bea', display_name: 'Bea', tags: ['blonde'] }),
+        upstreamRoom({ username: 'cyd', display_name: 'Cyd', tags: ['brunette'] })
+    ]);
+
+    const call = await gatedVisitor();
+    const names = (body) => body.rooms.map((r) => r.username).sort();
+
+    const blonde = (await call('/api/cams?q=blonde')).body;
+
+    assert.deepEqual(names(blonde), ['ada', 'bea']);
+    assert.equal(blonde.matched, 2, 'two matched');
+    assert.equal(blonde.total, 3, 'out of three on offer');
+    assert.equal(blonde.vrTotal, 1, 'and the VR count ignores the box entirely');
+
+    // Every word, not any word: the second term narrows.
+    assert.deepEqual(names((await call('/api/cams?q=blonde%20vr')).body), ['ada']);
+
+    // Substring, so a half-typed word still finds the tag.
+    assert.deepEqual(names((await call('/api/cams?q=blon')).body), ['ada', 'bea']);
+
+    // The box and the buttons compose rather than replacing each other.
+    assert.deepEqual(names((await call('/api/cams?q=blonde&vr=1')).body), ['ada']);
+
+    delete process.env.AVR_CHATURBATE_WM;
+});
+
+test('a query reaches every field printed on the card, and nothing behind it', async () => {
+    _resetCamsCache();
+    process.env.AVR_CHATURBATE_WM = 'test-wm';
+
+    stubUpstream([
+        upstreamRoom({ username: 'byhandle' }),
+        upstreamRoom({ username: 'r2', display_name: 'ByName' }),
+        upstreamRoom({ username: 'r3', room_subject: 'playing BySubject tonight' }),
+        upstreamRoom({ username: 'r4', tags: ['bytag'] }),
+        upstreamRoom({ username: 'r5', spoken_languages: ['bylanguage'] })
+    ]);
+
+    const call = await gatedVisitor();
+    const one = async (q) => (await call(`/api/cams?q=${q}`)).body;
+
+    for (const [q, who] of [
+        ['byhandle', 'byhandle'],
+        ['byname', 'r2'],
+        ['bysubject', 'r3'],
+        ['bytag', 'r4'],
+        ['bylanguage', 'r5']
+    ]) {
+        const body = await one(q);
+
+        assert.equal(body.matched, 1, `"${q}" matched something other than one room`);
+        assert.equal(body.rooms[0].username, who, `"${q}" found the wrong room`);
+    }
+
+    // Case folds both ways round: the query is lowercased and so is the
+    // haystack, so a capitalised display name is found by a typed one.
+    assert.equal((await one('BYNAME')).rooms[0].username, 'r2');
+
+    // The revshare link has our affiliate code and the partner's hostname in
+    // it. If `href` were searchable, this would match all five.
+    assert.equal((await one('chaturbate')).matched, 0, 'the outbound URL is not a haystack');
+
+    // Nor does the field the match is made against travel to the browser.
+    assert.equal((await one('byname')).rooms[0].search, undefined);
+
+    delete process.env.AVR_CHATURBATE_WM;
+});
+
+test('a pasted paragraph is truncated rather than run', async () => {
+    _resetCamsCache();
+    process.env.AVR_CHATURBATE_WM = 'test-wm';
+
+    stubUpstream([upstreamRoom({ username: 'ada', tags: ['blonde'] })]);
+
+    const call = await gatedVisitor();
+
+    // Seven words. The seventh is nonsense and would exclude the room if the
+    // cap were not applied, so this fails loudly if `QUERY_TERMS` stops
+    // biting rather than silently doing more work than intended.
+    const seven = 'blonde blonde blonde blonde blonde blonde zzzznope';
+
+    assert.equal((await call(`/api/cams?q=${encodeURIComponent(seven)}`)).body.matched, 1);
+
+    // Same for the character cap: padding past 64 pushes the nonsense out.
+    const long = `${'blonde '.repeat(9)}zzzznope`;
+
+    assert.ok(long.length > 64, 'the fixture has to exceed the cap to test it');
+    assert.equal((await call(`/api/cams?q=${encodeURIComponent(long)}`)).body.matched, 1);
+
+    // A repeated-group pattern, which is the shape that hangs a backtracking
+    // engine. It is a literal substring here, so it simply matches nothing.
+    const evil = `${'a+'.repeat(20)}!`;
+
+    assert.equal((await call(`/api/cams?q=${encodeURIComponent(evil)}`)).body.matched, 0);
+
+    // Whitespace-only is not a filter, and neither is a missing one.
+    assert.equal((await call('/api/cams?q=%20%20')).body.matched, 1);
+    assert.equal((await call('/api/cams?q=')).body.matched, 1);
+
+    // A repeated `?q=` arrives as an array, which has no `.slice(0, 64)` that
+    // means what this wants. It must narrow to nothing rather than throw.
+    assert.equal((await call('/api/cams?q=blonde&q=blonde')).status, 200);
+
+    delete process.env.AVR_CHATURBATE_WM;
+});
+
+test('a suggestion never promises more rooms than picking it returns', async () => {
+    _resetCamsCache();
+    process.env.AVR_CHATURBATE_WM = 'test-wm';
+
+    stubUpstream([
+        upstreamRoom({ username: 'ada', tags: ['blonde', 'vr'] }),
+        upstreamRoom({ username: 'bea', tags: ['blonde'] }),
+        upstreamRoom({ username: 'cyd', tags: ['blonde', 'solo'] }),
+        upstreamRoom({ username: 'dot', tags: ['solo'] }),
+        upstreamRoom({ username: 'eve', tags: ['lonely'] }),
+
+        // Says the word, does not carry the tag. The facet counts tags and
+        // the query reads the subject too, so this room is in one and not
+        // the other — which is the whole point of the floor below.
+        upstreamRoom({ username: 'fay', tags: [], room_subject: 'blonde today' })
+    ]);
+
+    const call = await gatedVisitor();
+    const facet = (body) => Object.fromEntries(body.tags.map((t) => [t.tag, t.count]));
+
+    const all = facet((await call('/api/cams')).body);
+
+    assert.equal(all.blonde, 3);
+    assert.equal(all.solo, 2);
+    assert.equal(all.lonely, undefined, 'a tag on one room is not worth suggesting');
+    assert.equal(all.vr, undefined, 'nor is the tag that only marks the room as VR');
+
+    // Commonest first, so a list cut to eight rows is cut at the useful end.
+    assert.deepEqual(
+        (await call('/api/cams')).body.tags.map((t) => t.tag),
+        ['blonde', 'solo']
+    );
+
+    // Narrowed by `?vr=1`, only one room is in scope — so no tag clears the
+    // floor, and the list is empty rather than full of dead ends.
+    assert.deepEqual((await call('/api/cams?vr=1')).body.tags, []);
+
+    // The box does not move it. Suggestions that reshuffled per keystroke
+    // would move the row the visitor is reaching for.
+    const picked = (await call('/api/cams?q=blonde')).body;
+
+    assert.deepEqual(facet(picked), all);
+
+    // And the direction of the gap. A suggestion reading "blonde 3" that
+    // returns four rooms is a pleasant surprise; one that returns two is the
+    // search looking broken, and only one of those is reachable from here.
+    assert.ok(
+        picked.matched >= all.blonde,
+        `picking a suggestion returned ${picked.matched}, which must not be under the ${all.blonde} it promised`
+    );
+    assert.equal(picked.matched, 4, 'the room that only says the word is found too');
 
     delete process.env.AVR_CHATURBATE_WM;
 });

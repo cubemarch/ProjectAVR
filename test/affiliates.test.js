@@ -387,6 +387,8 @@ const browseSource = readFileSync(
     'utf8'
 );
 
+const camsSource = readFileSync(new URL('../src/ui/cams.js', import.meta.url), 'utf8');
+
 /** The stylesheet, for the checks that are about layout rather than markup. */
 const css = readFileSync(new URL('../src/styles/netflix.css', import.meta.url), 'utf8');
 
@@ -394,28 +396,36 @@ const css = readFileSync(new URL('../src/styles/netflix.css', import.meta.url), 
  * One method's body, by name.
  *
  * Anchored on the four-space indent of a class method *definition* rather
- * than on the bare name, because every one of these is also called from
- * somewhere earlier in the file — `_syncCamsButton` from `refreshCams`,
- * `_camsButtonHtml` from `_browseNavHtml` — and slicing between call sites
- * produces a backwards range and a silently empty string that passes any
- * `doesNotMatch` put to it.
+ * than on the bare name, because most of these are also called from
+ * somewhere earlier in the file — `_browseNavHtml` from `_mastheadHtml`, and
+ * so on — and slicing between call sites produces a backwards range and a
+ * silently empty string that passes any `doesNotMatch` put to it.
  *
  * Throws rather than returning '' on a missed anchor, so a renamed method
  * fails loudly here instead of quietly disarming the checks below.
+ *
+ * The trailing `(` in the anchor is load-bearing twice over: it is what
+ * distinguishes a definition from a call, and it is what stops `_bind`
+ * matching `_bindSearch` and returning the wrong method's body.
+ *
+ * `async` is optional in both patterns. It has to be in the second one as
+ * well as the first: a terminator that does not recognise an async method
+ * runs straight past it and returns two methods glued together, which is
+ * how a `doesNotMatch` ends up reading a body it was never pointed at.
  */
-function methodBody(name) {
-    const open = `\n    ${name}(`;
-    const start = browseSource.indexOf(open);
-    assert.notEqual(start, -1, `${name} moved or was renamed`);
-    assert.equal(
-        browseSource.indexOf(open, start + 1),
-        -1,
-        `${name} is defined more than once`
-    );
+function methodBody(name, src = browseSource) {
+    const open = new RegExp(`\\n {4}(?:async )?${name}\\(`);
+    const found = open.exec(src);
+
+    assert.ok(found, `${name} moved or was renamed`);
+
+    const after = found.index + found[0].length;
+
+    assert.ok(!open.test(src.slice(after)), `${name} is defined more than once`);
 
     // To the next method definition at the same indent, or the end.
-    const next = browseSource.slice(start + open.length).search(/\n {4}[_a-zA-Z]+\(/);
-    return next === -1 ? browseSource.slice(start) : browseSource.slice(start, start + open.length + next);
+    const next = src.slice(after).search(/\n {4}(?:async )?[_a-zA-Z]+\(/);
+    return next === -1 ? src.slice(found.index) : src.slice(found.index, after + next);
 }
 
 test('the browse group discloses the paid link it leads with', () => {
@@ -610,8 +620,8 @@ test('the storefront is a link, not a button, and still declares itself paid', (
 });
 
 test('the storefront label is short enough to be a control', () => {
-    // It is printed inside a pill beside "Live Cams". A sentence here does not
-    // fail anything, it just silently wraps the masthead onto three lines.
+    // It is printed inside a pill in the masthead. A sentence here does not
+    // fail anything, it just silently wraps that row onto three lines.
     for (const s of AFFILIATE_STOREFRONTS) {
         assert.ok(
             s.label.length <= 16,
@@ -621,18 +631,167 @@ test('the storefront label is short enough to be a control', () => {
     }
 });
 
-test('the live cam control never points at our own white label', () => {
-    // `docs/SEARCH.md` §5: nothing indexed links `cams.lustxr.com`. The
-    // masthead button is the most plausible place for that to be undone,
-    // because "Live Cams" reads like it wants an href.
-    const cams = methodBody('_camsButtonHtml');
-    assert.match(cams, /<button class="pill pill-cams"/, 'a button, so it cannot carry an href');
-
+/**
+ * `docs/SEARCH.md` §5: nothing indexed links `cams.lustxr.com`.
+ *
+ * There was a "Live Cams" button in the masthead, and this test used to pin
+ * it as a `<button>` on the grounds that "Live Cams" reads like a control
+ * that wants an href. The button is gone — it scrolled to a shelf that is
+ * already the first element in `<main>` — so what is left is the rule
+ * itself, checked against both files that draw cam UI rather than against
+ * the one control that happened to be the temptation.
+ *
+ * `src/ui/cams.js` is now the likelier place for it to come back: it holds
+ * the theatre, which embeds the white label's player, and the distance from
+ * an embed to an "open in a new tab" link is one line.
+ */
+test('no client code points a visitor at our own white label', () => {
     // Comments stripped first. The rule is worth writing down next to the
-    // control it constrains, and `_camsButtonHtml` does exactly that — so a
-    // check against the raw source would be failed by the sentence
-    // explaining why it must not fail.
-    const code = browseSource.replace(/\/\*[\s\S]*?\*\//g, '');
-    assert.doesNotMatch(code, /cams\.lustxr\.com/, 'the host appears in no code path');
-    assert.doesNotMatch(code, /whitelabel\.chaturbate/, 'nor does the CNAME behind it');
+    // code it constrains — both files do exactly that — so a check against
+    // raw source would be failed by the sentences explaining why it must
+    // not fail.
+    const strip = (src) => src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '');
+
+    for (const [name, src] of [
+        ['browse.js', browseSource],
+        ['cams.js', camsSource]
+    ]) {
+        const code = strip(src);
+        assert.doesNotMatch(code, /cams\.lustxr\.com/, `${name}: the host appears in no code path`);
+        assert.doesNotMatch(code, /whitelabel\.chaturbate/, `${name}: nor does the CNAME behind it`);
+    }
+});
+
+/**
+ * A keystroke must narrow the row without repainting the head.
+ *
+ * `_render` replaces the mount's `innerHTML` wholesale. Routing a keystroke
+ * through it would destroy and recreate the input being typed into, losing
+ * the caret after the first character — the kind of defect that is obvious
+ * in a browser and invisible in a diff, because `this._render()` is what
+ * every other path in this file legitimately calls.
+ */
+test('typing in the cam search redraws the row and not the box', () => {
+    const bind = methodBody('_bindSearch', camsSource);
+
+    const handler = bind.slice(bind.indexOf("addEventListener('input'"));
+    const body = handler.slice(0, handler.indexOf('});'));
+
+    assert.ok(body.length > 0, 'the input handler moved out of _bindSearch');
+
+    assert.match(body, /this\.query = /, 'the query is held on the instance');
+    assert.match(body, /this\._reflow\(\)/, 'and the row alone is redrawn');
+    assert.doesNotMatch(body, /this\._render\(\)/, 'a full render would take the caret with it');
+
+    // The request is deferred; the redraw is not. Both halves matter — one
+    // is why it does not cost a request per letter, the other is why the
+    // delay is invisible.
+    assert.match(body, /clearTimeout\(this\.queryTimer\)/, 'the pending request is cancelled');
+    assert.match(body, /setTimeout\(\(\) => this\._requery\(\), QUERY_DEBOUNCE_MS\)/);
+});
+
+test('nothing that can run while somebody is typing calls _render', () => {
+    // `_render` replaces the mount, which destroys the input along with its
+    // caret, its selection and its focus. Only `refresh` may call it, and
+    // `refresh` runs once, before there is anybody typing into anything.
+    for (const name of ['_requery', '_reflow', '_bindSearch', '_suggestTake', '_countLater']) {
+        assert.doesNotMatch(
+            methodBody(name, camsSource).replace(/\/\*[\s\S]*?\*\//g, ''),
+            /this\._render\(\)/,
+            `${name} can run mid-keystroke and must not replace the mount`
+        );
+    }
+
+    assert.match(methodBody('refresh', camsSource), /this\._render\(\)/, 'something must');
+});
+
+test('a superseded cam query is abandoned rather than raced', () => {
+    const load = methodBody('_load', camsSource);
+
+    assert.match(load, /this\.inflight\?\.abort\(\)/, 'the previous request is aborted');
+    assert.match(load, /signal: this\.inflight\.signal/, 'and this one is abortable');
+
+    // Without this the row survives a cancelled keystroke; with `this.rooms
+    // = []` in the catch it would blank on every other letter typed.
+    const caught = load.slice(load.indexOf('} catch'));
+
+    assert.match(caught, /return false/);
+    assert.doesNotMatch(caught, /this\.rooms\s*=/, 'a failed request must not empty the row');
+
+    // `applied` is what stops `_visible` filtering locally. Setting it
+    // anywhere but after a landed response would claim the server had
+    // narrowed a list it never saw.
+    assert.equal(
+        (load.match(/this\.applied = /g) || []).length,
+        1,
+        'applied is assigned in exactly one place'
+    );
+    assert.ok(
+        load.indexOf('this.applied = ') < load.indexOf('return true'),
+        'and only on the path where a response arrived'
+    );
+});
+
+test('the cam count waits for the answer it is reporting', () => {
+    // `_countLater` announces into a live region. If it fired before the
+    // debounced request, it would announce the local preview's count and
+    // then be corrected a moment later — two interruptions for one query.
+    const settle = Number(camsSource.match(/const COUNT_SETTLE_MS = ([\d_]+)/)?.[1]);
+    const debounce = Number(camsSource.match(/const QUERY_DEBOUNCE_MS = ([\d_]+)/)?.[1]);
+
+    assert.ok(Number.isFinite(settle) && Number.isFinite(debounce), 'both constants exist');
+    assert.ok(settle > debounce, `the count (${settle}ms) must settle after the query (${debounce}ms)`);
+});
+
+test('the suggestion list is the server vocabulary, not the sixty rooms in hand', () => {
+    const suggest = methodBody('_suggest', camsSource);
+
+    // `this.tags` is the facet the route computes over everything online.
+    // Building this from `this.rooms` instead would offer only the tags
+    // that happen to be on the current page, which is the bug the server
+    // side of this feature exists to prevent.
+    assert.match(suggest, /this\.tags\s*$|this\.tags\b/m, 'suggestions come from the facet');
+    assert.doesNotMatch(suggest, /this\.rooms/, 'and not from the rooms already drawn');
+});
+
+/**
+ * The shelf offers no VR filter, and that is a measurement rather than taste.
+ *
+ * Every room online on 2026-10-19 — 5,990 of them — was swept, and not one
+ * carried any of the nineteen spellings in the route's `VR_TAGS`; the
+ * partner's own tag index returns zero for all nineteen, and the room object
+ * has no VR field. A filter whose answer is always "none" promises a feed
+ * that does not exist, so the two buttons that used to sit in the head were
+ * taken out.
+ *
+ * This guards the removal rather than the reasoning: a control is an easy
+ * thing to put back from a screenshot, and the measurement that says not to
+ * lives in a comment nobody re-reads. `?vr=1` deliberately stays supported
+ * route-side — see the cams route tests — so putting the buttons back is a
+ * markup change, which is exactly why it needs a test in front of it.
+ */
+test('the cam shelf draws no filter it cannot populate', () => {
+    const render = methodBody('_render', camsSource);
+
+    assert.doesNotMatch(render, /data-cam-filter/, 'no filter buttons in the head');
+    assert.doesNotMatch(render, /VR & 3D|Everyone/, 'nor the labels they carried');
+
+    // The state behind them too. A left-over `this.filter` is a filter that
+    // is applied and cannot be changed, which is worse than either answer.
+    assert.doesNotMatch(camsSource, /this\.filter\b/, 'and no filter state anywhere');
+    assert.doesNotMatch(camsSource, /\bFILTERS\b/, 'nor the table they were drawn from');
+
+    // The badge is not the filter: a room that does tag itself still says so
+    // on its card, which is the no-op the route's VR-first sort is kept for.
+    assert.match(render + camsSource, /cam-badge vr/, 'a VR room is still labelled');
+});
+
+test('the cam shelf lets go of its timers and its request', () => {
+    const destroy = methodBody('destroy', camsSource);
+
+    for (const held of ['countTimer', 'queryTimer']) {
+        assert.match(destroy, new RegExp(`clearTimeout\\(this\\.${held}\\)`), `${held} is cleared`);
+    }
+
+    assert.match(destroy, /this\.inflight\?\.abort\(\)/, 'and the request in flight is dropped');
 });

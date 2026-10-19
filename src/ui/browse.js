@@ -154,12 +154,6 @@ export class BrowseUI extends pc.EventHandler {
 
         this._renderAffiliates();
 
-        // Before the early return: the browse controls are emitted in both
-        // site modes — in the header in one and in `.masthead` in the other —
-        // so binding them after it would leave the cam button dead in the one
-        // mode that is currently live.
-        this._bindMasthead();
-
         // Again here, because `_renderAffiliates` returns immediately when
         // there is no affiliate section at all — and the top leaderboard is a
         // child of `<main>`, above that section, so it is drawn and fillable
@@ -285,15 +279,34 @@ export class BrowseUI extends pc.EventHandler {
      * above the partner section: a shelf that appears after the page has
      * painted pushes everything below it down, which is the layout shift
      * `_renderFootAds` goes to some length to avoid further down the page.
-     * The rest of the reasoning, including why this is sometimes skipped
-     * entirely, is in `camsExpected`.
+     * The rest of the reasoning is in `camsExpected`.
+     *
+     * ## The memory decides the skeleton, not whether to look
+     *
+     * This used to return nothing at all when `camsExpected()` was false,
+     * and that quietly made the memory permanent. No section meant no
+     * element, no element meant `this.cams` was null, a null shelf meant
+     * `refreshCams` awaited nothing — and `rememberCams` only runs inside
+     * the handler that never ran. So the first night the feed came back
+     * empty wrote a `'0'` that nothing was ever again in a position to
+     * revise, and the row stayed gone on that browser after the partner was
+     * configured, with no way to tell from the page that it was stuck
+     * rather than quiet.
+     *
+     * The section is now always here and the *skeleton* is what the memory
+     * gates, which is what it was always actually for: an empty hidden
+     * section reserves no height, so there is no layout shift to avoid and
+     * nothing to pay for keeping it. One wasted request per load on a
+     * deployment with no cam partner is the cost, and it buys a shelf that
+     * can come back on its own.
      */
     _camShelfHtml() {
-        if (!camsExpected()) return '';
+        const expected = camsExpected();
 
         return `
-            <section class="shelf cam-shelf is-loading" id="cam-shelf" data-nosnippet>
-                ${camSkeletonHtml()}
+            <section class="shelf cam-shelf${expected ? ' is-loading' : ''}"
+                     id="cam-shelf" data-nosnippet${expected ? '' : ' hidden'}>
+                ${expected ? camSkeletonHtml() : ''}
             </section>`;
     }
 
@@ -308,10 +321,6 @@ export class BrowseUI extends pc.EventHandler {
      */
     async refreshCams() {
         await this.cams?.refresh();
-
-        // The shelf hides itself when the feed is empty or the partner is
-        // unconfigured, and the Live Cams button points at it.
-        this._syncCamsButton();
     }
 
     /* ------------------------------------------------------- the market -- */
@@ -743,7 +752,14 @@ export class BrowseUI extends pc.EventHandler {
     /* ------------------------------------------------ the browse controls -- */
 
     /**
-     * The two places a visitor can go, and the sentence that discloses one.
+     * The storefront links, and the sentence that discloses them.
+     *
+     * There was a "Live Cams" button here too, which scrolled to `#cam-shelf`.
+     * It is gone: in affiliate-only mode that shelf is the first element in
+     * `<main>`, so the control scrolled from the top of the page to the top
+     * of the page and read as broken. The shelf has a search box of its own
+     * now — see `CamShelf._render` — which is the thing the button was being
+     * asked to stand in for.
      *
      * ## The disclosure travels with the links. It is not optional
      *
@@ -782,7 +798,7 @@ export class BrowseUI extends pc.EventHandler {
      * section, for the same reason.
      */
     _browseNavHtml(storefronts = AFFILIATE_STOREFRONTS) {
-        const buttons = this._storefrontButtonsHtml(storefronts) + this._camsButtonHtml();
+        const buttons = this._storefrontButtonsHtml(storefronts);
         if (!buttons) return '';
 
         // Singular or plural with the count, because one link reading "Paid
@@ -806,7 +822,7 @@ export class BrowseUI extends pc.EventHandler {
      *
      * Affiliate-only mode renders the same group into `.site-header` instead
      * — see `_headerHtml` — so this wrapper is never emitted there and the
-     * two pills never appear twice.
+     * pills never appear twice.
      *
      * There is no advertisement in this row. There was for part of
      * 2026-10-18, a 908x258 at the right-hand end called `top-billboard`;
@@ -846,70 +862,6 @@ export class BrowseUI extends pc.EventHandler {
                     </a>`;
             })
             .join('');
-    }
-
-    /**
-     * The jump to the live cam shelf.
-     *
-     * A `<button>` and not an `<a href="#cam-shelf">`, because it scrolls
-     * within this page and a hash in the address bar would survive a reload
-     * into a position the shelf may no longer occupy.
-     *
-     * Gated on `camsExpected()` — the same call that decides whether the
-     * shelf is reserved at all — so the button and its destination are never
-     * out of step on first paint. They can still diverge *after* the feed
-     * answers, because an empty feed hides the shelf; `_syncCamsButton`
-     * closes that gap, and is called from the same place the shelf is
-     * refreshed.
-     *
-     * It deliberately does not link `cams.lustxr.com`. That host is the
-     * Chaturbate white label, and linking it from an indexed page is the one
-     * thing `docs/SEARCH.md` §5 rules out — `test/cams.test.js` fails the
-     * build if our own hostnames ever become a cam link.
-     */
-    _camsButtonHtml() {
-        if (!camsExpected()) return '';
-
-        return `
-            <button class="pill pill-cams" type="button" data-masthead="cams">
-                <span class="pill-live" aria-hidden="true"></span>
-                <span class="pill-text">Live Cams</span>
-            </button>`;
-    }
-
-    /**
-     * Hide the cam button when the shelf it points at has gone.
-     *
-     * `CamShelf._render` hides its mount when the partner is unconfigured or
-     * nobody is broadcasting. A button that scrolls to a hidden element
-     * scrolls nowhere, which reads as a broken control rather than as a
-     * quiet night, so it follows the shelf exactly.
-     */
-    _syncCamsButton() {
-        const btn = this.mount.querySelector('[data-masthead="cams"]');
-        if (btn) btn.hidden = !this.camShelfEl || this.camShelfEl.hidden;
-    }
-
-    /**
-     * Wire the masthead's one scripted control.
-     *
-     * Only the cam button needs anything: the storefront is an `<a>` and the
-     * browser handles it.
-     *
-     * `scroll-margin-top` on the shelf does the offsetting, not an arithmetic
-     * `scrollTo` here — the header is fixed and 96px or 128px depending on
-     * the breakpoint, and duplicating that number in JavaScript is how it
-     * ends up wrong at one of them. `behavior: 'smooth'` is left to the
-     * browser, which already drops it for `prefers-reduced-motion`.
-     */
-    _bindMasthead() {
-        const btn = this.mount.querySelector('[data-masthead="cams"]');
-        if (!btn) return;
-
-        btn.addEventListener('click', () => {
-            if (!this.camShelfEl || this.camShelfEl.hidden) return;
-            this.camShelfEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
-        });
     }
 
     _affiliateShelfHtml({ program, items }) {

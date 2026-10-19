@@ -295,10 +295,19 @@ body.is-immersive #render-canvas {
  * rather than as broken, not so much that the words stop being legible —
  * the point of drawing them at all is that a reader can see *what* is
  * coming, and an unreadable smear says nothing a grey box would not.
+ *
+ * The opacity was 0.4, which did not survive the veil being laid over it.
+ * Two dimmings compose: `--text-dim` at 0.4 over `--bg` is #47474F, and
+ * 62% black on top of that is #1B1B1F — 1.12:1 against the page, which is
+ * not dim, it is gone. Each value was defensible alone and the pair was
+ * not, which is the usual way a stacked opacity goes wrong. Raised here
+ * and lightened in the veil, splitting the correction between the two
+ * layers so neither has to carry it alone; the group now runs 2.4:1 at the
+ * badge end to 3.3:1 at the far end.
  */
 .header-soon > .site-nav,
 .header-soon > .header-right {
-    opacity: 0.4;
+    opacity: 0.58;
     filter: blur(0.4px);
     pointer-events: none;
     user-select: none;
@@ -353,10 +362,28 @@ body.is-immersive #render-canvas {
     display: grid;
     place-items: center start;
     border-radius: 8px;
+    /*
+     * Stops in pixels, not percentages, because the two halves of this
+     * gradient have different jobs and only one of them scales.
+     *
+     * The first `--soon-lead` of it backs the badge and should stay heavy;
+     * everything after it is over the controls and should get out of the
+     * way. As percentages those two regions move apart whenever the group's
+     * width changes — the lead is a fixed 140px, so on a wide header it is
+     * a fifth of the gradient and on a narrow one a third, and a stop
+     * picked to sit at the badge's trailing edge only does on the viewport
+     * it was picked at. Anchoring to the same variable the lead uses keeps
+     * the heavy part exactly as wide as the thing it exists to back.
+     *
+     * The 120px fall-off is about one nav item: enough that the edge is a
+     * gradient and not a line, short enough that "Home" is already clear of
+     * the dark end.
+     */
     background: linear-gradient(
         90deg,
-        rgba(10, 10, 12, 0.72) 0%,
-        rgba(10, 10, 12, 0.62) 62%,
+        rgba(10, 10, 12, 0.72) 0,
+        rgba(10, 10, 12, 0.62) var(--soon-lead),
+        rgba(10, 10, 12, 0.24) calc(var(--soon-lead) + 120px),
         rgba(10, 10, 12, 0) 100%
     );
     pointer-events: none;
@@ -581,7 +608,25 @@ body.is-immersive #render-canvas {
     margin-bottom: 34px;
 }
 
+/*
+ * `position: relative; z-index: 1` is not cosmetic — it is what makes the
+ * controls in here clickable.
+ *
+ * `.shelf-track` below carries `margin: -30px 0` so a card can scale on
+ * hover without being clipped by its own `overflow-x`. The net effect is
+ * that the track's border box starts twenty pixels *above* this element's
+ * bottom edge, and the track is the later sibling, so in the default
+ * stacking order it won the overlap and swallowed every pointer event in
+ * that strip. A 26px head is mostly strip: the cam shelf's filter box and
+ * both tag buttons sat under it and could only be hit on their top two
+ * pixels. Nothing looked wrong, because the track is transparent there.
+ *
+ * A hovered card still paints over this — it takes `z-index: 6` — which is
+ * the one case where the card, not the head, is the thing being pointed at.
+ */
 .shelf-head {
+    position: relative;
+    z-index: 1;
     display: flex;
     align-items: baseline;
     gap: 12px;
@@ -3565,47 +3610,6 @@ body.is-profile {
     box-shadow: 0 12px 30px rgba(124, 92, 255, 0.45);
 }
 
-.pill-cams {
-    background: rgba(255, 255, 255, 0.06);
-    border-color: rgba(255, 255, 255, 0.16);
-}
-
-.pill-cams:hover,
-.pill-cams:focus-visible {
-    transform: translateY(-2px);
-    background: rgba(255, 255, 255, 0.1);
-    border-color: rgba(255, 59, 59, 0.5);
-    box-shadow: 0 12px 30px rgba(0, 0, 0, 0.5);
-}
-
-/*
- * The live dot, and the ring that leaves it.
- *
- * Same red as the badge on a cam card, deliberately — it is the same claim
- * about the same rooms, and a second shade of "live" on one page would read
- * as two different states. The expanding ring is a `box-shadow` rather than
- * a pseudo-element because the pill already spends `::after` on the sheen.
- */
-.pill-live {
-    width: 9px;
-    height: 9px;
-    border-radius: 50%;
-    background: #ff3b3b;
-    animation: pill-live-pulse 2.2s var(--ease) infinite;
-}
-
-@keyframes pill-live-pulse {
-    0% {
-        box-shadow: 0 0 0 0 rgba(255, 59, 59, 0.55);
-    }
-    70% {
-        box-shadow: 0 0 0 10px rgba(255, 59, 59, 0);
-    }
-    100% {
-        box-shadow: 0 0 0 0 rgba(255, 59, 59, 0);
-    }
-}
-
 /*
  * The arrival.
  *
@@ -3630,9 +3634,12 @@ body.is-profile {
     }
 }
 
-/* The jump target for the Live Cams button. The header is fixed and is one
-   of two heights depending on the breakpoint, so the offset is declared here
-   where both are already known rather than computed in the click handler. */
+/* The id is addressable from outside — `/#cam-shelf` in a shared link — and
+   the header is fixed at one of two heights depending on the breakpoint, so
+   an anchor landing would otherwise put the shelf head underneath it. The
+   offset is declared here where both heights are already known. There was a
+   masthead button that scrolled here too; it is gone, because the shelf is
+   the first thing in `<main>` and the jump went nowhere. */
 #cam-shelf {
     scroll-margin-top: calc(var(--header-h) + 20px);
 }
@@ -3648,7 +3655,6 @@ body.is-profile {
     .pill,
     .pill::after,
     .pill-icon,
-    .pill-live,
     .browse-nav .pill {
         animation: none;
         transition: none;
@@ -4325,9 +4331,133 @@ fieldset.age-gate-methods {
     margin-bottom: 28px;
 }
 
+/* `center` rather than the `baseline` every other shelf head uses, because
+   this one holds an input and a baseline-aligned text field sits a few
+   pixels low against the heading beside it. */
 .cam-head {
     align-items: center;
     flex-wrap: wrap;
+}
+
+/* The search box, and the suggestion list under it.
+ *
+ * No `margin-left: auto`, deliberately: it belongs next to the heading, in
+ * reading order, and the two auto margins further along this row already
+ * divide the free space between the tag buttons and the disclosure. A third
+ * would redistribute that split and move both of them.
+ *
+ * The query runs server-side over every room broadcasting, not over the
+ * sixty on the shelf — see `CamShelf._requery`. `PAGE_MAX` in
+ * `server/routes/cams.js` caps what comes back, not what is searched, and
+ * the count in the head says so when the two differ.
+ */
+.cam-search {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    color: var(--text-dim);
+}
+
+.cam-search > svg {
+    position: absolute;
+    left: 10px;
+    pointer-events: none;
+}
+
+.cam-search input {
+    width: 190px;
+    max-width: 48vw;
+    padding: 5px 12px 5px 30px;
+    border: 1px solid #2c2c36;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.04);
+    color: var(--text);
+    font: inherit;
+    font-size: 12px;
+}
+
+.cam-search input::placeholder {
+    color: var(--text-dim);
+}
+
+.cam-search input:focus-visible {
+    outline: none;
+    border-color: var(--vr);
+    background: rgba(255, 255, 255, 0.08);
+}
+
+/* The suggestion list.
+ *
+ * `position: absolute` against `.cam-search`, so it hangs below the box
+ * without reserving a line in the head and without moving the shelf.
+ *
+ * `min-width` rather than `width`, because the counts vary in width and a
+ * list sized to the box alone wraps "deepthroat 21" onto two lines. It is
+ * allowed to be wider than the field it belongs to; it is not allowed to
+ * leave the viewport, hence the `max-width`.
+ */
+.cam-suggest {
+    position: absolute;
+    top: calc(100% + 6px);
+    left: 0;
+    z-index: 20;
+    min-width: 100%;
+    max-width: 70vw;
+    max-height: 272px;
+    margin: 0;
+    padding: 4px;
+    overflow-y: auto;
+    list-style: none;
+    border: 1px solid #2c2c36;
+    border-radius: 10px;
+    background: #14141a;
+    box-shadow: 0 12px 28px rgba(0, 0, 0, 0.55);
+}
+
+/* Raised over a hovered card, which takes `z-index: 6`.
+ *
+ * It has to be here and not on `.cam-suggest`: `.shelf-head` is positioned
+ * with a `z-index` of its own — it must be, or the track's negative margin
+ * swallows every pointer event in this strip — and that makes it a stacking
+ * context. A child's `z-index` is then scoped inside it and cannot outrank
+ * the head's siblings however large it is. So the head itself is lifted, and
+ * only while there is something open inside it worth lifting it for. */
+.cam-head.suggesting {
+    z-index: 10;
+}
+
+.cam-suggestion {
+    display: flex;
+    gap: 12px;
+    align-items: baseline;
+    justify-content: space-between;
+    padding: 6px 10px;
+    border-radius: 6px;
+    font-size: 13px;
+    color: var(--text);
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+/* One class for both, because keyboard and pointer are selecting the same
+   thing and a list that highlights two rows at once has no active row. */
+.cam-suggestion:hover,
+.cam-suggestion.active {
+    background: rgba(255, 255, 255, 0.08);
+}
+
+.cam-suggestion-count {
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+    color: var(--text-dim);
+}
+
+/* Empty whenever the row is unfiltered, so this collapses to nothing and the
+   head looks exactly as it did before the box was added. */
+.cam-count {
+    margin: 0;
+    font-size: 12px;
+    color: var(--text-dim);
 }
 
 /* Pushed to the end of the heading line rather than placed after the filter,
@@ -4335,6 +4465,19 @@ fieldset.age-gate-methods {
    and wraps to its own line on a phone instead of squeezing the buttons. */
 .cam-disclosure {
     margin-left: auto;
+}
+
+/* A query that matched nothing.
+ *
+ * Given a card's height rather than left to collapse: the row is above the
+ * fold, and a shelf that shrinks to a line and springs back as the next
+ * character is typed moves the whole page under the reader's hands. */
+.cam-none {
+    margin: 0;
+    padding: 10px 0;
+    min-height: 120px;
+    font-size: 14px;
+    color: var(--text-dim);
 }
 
 .cam-card {
@@ -4639,6 +4782,45 @@ body.cam-theatre-open {
     overflow: hidden;
 }
 
+/* Once the head wraps, the search box has to go last.
+ *
+ * On a wide screen it sits beside the heading and the suggestion list hangs
+ * over the shelf below, which is what a dropdown is supposed to do. Once the
+ * head wraps, the box is on the first line and the disclosure is on the
+ * second, and the list opens straight over the disclosure — measured at
+ * 768px the list spans y=128..354 and the disclosure sits at y=134. "Paid
+ * links. We earn a commission" being hidden at the moment somebody is
+ * choosing which paid link to click is the one thing in this head that must
+ * not be covered.
+ *
+ * So on its own full-width line at the end, where the list hangs over the
+ * shelf instead — and where the box is a usable width on a phone besides.
+ * Reading order is unchanged: `order` moves it visually and leaves it where
+ * it is for the keyboard and for a screen reader.
+ *
+ * 900 and not 720 because 790 is where the head actually wraps — measured in
+ * 10px steps, the disclosure drops to a second line between 800 and 790 —
+ * and a breakpoint sitting below the thing it exists to prevent is no
+ * breakpoint at all. The margin above it is for a longer heading or a
+ * translated disclosure, either of which moves the wrap wider. */
+@media (max-width: 900px) {
+    .cam-search {
+        order: 1;
+        flex-basis: 100%;
+    }
+
+    .cam-search input {
+        width: 100%;
+        max-width: none;
+    }
+
+    .cam-suggest {
+        max-width: none;
+    }
+}
+
+/* The theatre goes edge to edge on a phone, which is a separate question
+ * from where the search box sits and keeps its own breakpoint. */
 @media (max-width: 720px) {
     .cam-theatre {
         padding: 0;

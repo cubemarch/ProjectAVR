@@ -183,8 +183,8 @@ export const AFFILIATE_STOREFRONTS = [
 
         // Two strings because the masthead button shows one and says the
         // other. `label` is what is printed — short, because it is a primary
-        // control at the top of the page next to "Live Cams" and not a line
-        // of body copy. `partner` is what the accessible name and the
+        // control at the top of the page and not a line of body copy, and a
+        // long one wraps the row. `partner` is what the accessible name and the
         // tooltip carry, so the link is never anonymous: a screen reader
         // announces where it goes, and so does a hover. Printing "All movies
         // at AEBN" on the button instead would be clearer and uglier, and

@@ -49,10 +49,20 @@ import { visitorGate } from '../identity/visitor-gate.js';
  *   - nothing here reaches the sitemap, the `<noscript>` or the JSON-LD;
  *   - outbound links carry `sponsored nofollow noopener noreferrer`.
  *
- * What is *not* duplicated is the selection. This site is about VR, so the
- * ordering here is VR-first, and the row is presented as a VR cam shelf rather
- * than as a mirror of somebody's front page. That is the only part of this
- * feature that is ours, and it is the part that justifies publishing it.
+ * The intention was that the selection would not be duplicated either: this
+ * site is about VR, the ordering here is VR-first, and the row was presented
+ * as a VR cam shelf rather than as a mirror of somebody's front page.
+ *
+ * **That differentiation does not currently exist**, and the measurement is
+ * in the note on {@link VR_TAGS}: the partner has no VR rooms, no VR tag and
+ * no VR field, so a VR-first sort over this feed is a sort with nothing to
+ * put first. What ships is the feed in the partner's own order, searchable.
+ * The search is real and is ours — it runs over every room online rather than
+ * over one page of them — but it is a feature, not a selection, and it is
+ * thinner ground than the above claimed. Closing this properly needs either a
+ * cam partner that actually carries headset rooms or a row that stops
+ * implying one; it is the same open question as the catalogue-relevance
+ * mismatch in `docs/SEARCH.md` §2.
  *
  * @see docs/SEARCH.md for the rest of the search posture.
  */
@@ -69,6 +79,27 @@ const UPSTREAM_LIMIT = 500;
 
 /** What we will hand the browser in one response. */
 const PAGE_MAX = 60;
+
+/** Longest `?q=` we will look at, and the most words we will take from it. */
+const QUERY_MAX = 64;
+const QUERY_TERMS = 6;
+
+/**
+ * How much of the tag vocabulary the suggestion list is given.
+ *
+ * Measured against the live feed: five hundred rooms carry 2,172 tag
+ * instances over 235 distinct tags, and a hundred of those distinct tags
+ * belong to exactly one room. The whole vocabulary would be 3.2 KB.
+ *
+ * The floor is the interesting one. A tag held by a single room is a
+ * suggestion the row can barely honour, and this list turns over every forty
+ * five seconds, so by the time it is clicked that one room is often gone.
+ * Requiring two leaves 135 tags covering 95% of instances for about 2 KB, and
+ * the ceiling is only there so an upstream that starts emitting tags per room
+ * cannot quietly turn this field into the largest thing in the response.
+ */
+const TAG_MIN_ROOMS = 2;
+const TAG_MAX = 150;
 
 const cache = new TtlCache(TTL_MS);
 
@@ -89,8 +120,22 @@ let lastGood = null;
  *
  * Deliberately a closed list rather than a substring match. `3d` as a
  * substring hits nothing useful and `vr` hits `servername`, `vrchat` and a
- * dozen usernames; the row's entire claim to being curated rather than
- * mirrored rests on this being right, so it is enumerated.
+ * dozen usernames, and the nearest real tag — `3dxchat`, ten rooms, a flat
+ * game played on a monitor — is exactly the kind of thing a substring match
+ * would promote to a headset stream. So it is enumerated.
+ *
+ * **Nothing in this list currently matches anything.** On 2026-10-19 every
+ * room online was swept through `offset` — 5,990 of them, carrying 801
+ * distinct tags — and not one carried any of these nineteen. The partner's own
+ * tag index agrees: `?tag=` returns a count of zero for all nineteen, against
+ * 600 for a control like `teen`. The room object has no VR field to read
+ * instead; `is_hd` is the closest thing it exposes.
+ *
+ * The list stays, and `rank` still sorts on it, because it costs one `Set`
+ * lookup per room and it is what makes the day a broadcaster does tag a
+ * headset stream a no-op here rather than a change. What it does not do is
+ * justify a control: the shelf draws no VR filter, because a filter whose
+ * answer is always "none" promises a feed that does not exist.
  */
 const VR_TAGS = new Set([
     'vr',
@@ -187,7 +232,21 @@ function normalise(room) {
     const username = typeof room.username === 'string' ? room.username.trim() : '';
     if (!/^[\w.-]{1,64}$/.test(username)) return null;
 
-    if (room.room_status !== 'public') return null;
+    // Upstream calls this `current_show`. It was `room_status` when this was
+    // written, and the rename is the reason the shelf was empty in production
+    // for a working affiliate code: the old name reads as `undefined`, which
+    // is not `'public'`, so every one of the five hundred rooms was refused
+    // and the row drew nothing. Nothing failed — not the fetch, not a test,
+    // because the fixture had been written from the same documentation as the
+    // code and carried the same stale name.
+    //
+    // Both are accepted, and the absence of both still refuses. A field we
+    // cannot read is not evidence that a show is public, and the one thing
+    // this check exists to prevent is putting a private or away room on the
+    // page; `??` rather than `||` so that a legitimately empty string is
+    // treated as an answer rather than falling through to the other name.
+    const show = room.current_show ?? room.room_status;
+    if (show !== 'public') return null;
 
     const age = Number(room.age);
     if (Number.isFinite(age) && age < 18) return null;
@@ -208,10 +267,17 @@ function normalise(room) {
               .slice(0, 12)
         : [];
 
+    const name = String(room.display_name || room.username).trim().slice(0, 64);
+    const subject = String(room.room_subject || '').trim().slice(0, 160);
+
+    const languages = Array.isArray(room.spoken_languages)
+        ? room.spoken_languages.filter((l) => typeof l === 'string').slice(0, 4)
+        : [];
+
     return {
         username,
-        name: String(room.display_name || room.username).trim().slice(0, 64),
-        subject: String(room.room_subject || '').trim().slice(0, 160),
+        name,
+        subject,
         thumb,
         href,
         embed,
@@ -222,9 +288,21 @@ function normalise(room) {
         fresh: room.is_new === true,
         vr: tags.some((t) => VR_TAGS.has(t.replace(/[^a-z0-9_]/g, ''))),
         tags,
-        languages: Array.isArray(room.spoken_languages)
-            ? room.spoken_languages.filter((l) => typeof l === 'string').slice(0, 4)
-            : [],
+        languages,
+
+        // Everything `?q=` is allowed to match, flattened once here rather than
+        // rebuilt per request: this runs five hundred times per cache fill and
+        // a search runs five hundred times per keystroke, which is the wrong
+        // way round to be joining strings.
+        //
+        // Name, handle, the subject line the broadcaster wrote, their tags and
+        // the languages they speak — which is to say what is printed on the
+        // card, plus what a visitor would reasonably expect to be searchable.
+        // Not `href`, which would make a query for "chaturbate" match all five
+        // hundred, and not the thumbnail URL, which carries a room's name in a
+        // path segment and would match substrings that are not words.
+        search: [name, username, subject].concat(tags, languages).join(' ').toLowerCase(),
+
         blockedStates: codeSet(room.block_from_states),
         blockedCountries: codeSet(room.block_from_countries)
     };
@@ -249,6 +327,82 @@ function visibleTo(room, { country, region }) {
     if (country === 'US' && region && room.blockedStates?.has(region)) return false;
 
     return true;
+}
+
+/**
+ * A `?q=` string, reduced to the terms a room has to carry all of.
+ *
+ * Caps on both length and count, because this is reached once per keystroke
+ * and the work is linear in terms × rooms: six terms against five hundred
+ * rooms is three thousand substring scans, which is nothing, and an uncapped
+ * query pasted from a paragraph is not. Both caps truncate rather than reject
+ * — a visitor who pastes something absurd gets the first few words searched,
+ * which is a better answer than an error for an input they will retype.
+ *
+ * Plain {@link String.includes} downstream, never a constructed `RegExp`: a
+ * query is visitor input and compiling it would hand a stranger the regex
+ * engine, which is the whole of the ReDoS class for the sake of a wildcard
+ * nobody asked for.
+ */
+function searchTerms(raw) {
+    if (typeof raw !== 'string') return [];
+
+    return raw
+        .slice(0, QUERY_MAX)
+        .toLowerCase()
+        .split(/\s+/)
+        .filter(Boolean)
+        .slice(0, QUERY_TERMS);
+}
+
+/**
+ * Whether a room carries every term.
+ *
+ * AND, not OR, and substring, not word: "blonde girl" means both, and "span"
+ * finds "spanish". Narrowing as you type is the behaviour a search box in a
+ * row of sixty is judged by, and OR would widen on the second word.
+ */
+function matchesQuery(room, terms) {
+    for (const term of terms) if (!room.search.includes(term)) return false;
+
+    return true;
+}
+
+/**
+ * Which tags are on offer, and roughly how many rooms each would return.
+ *
+ * Counted over the rooms a query is about to be run against rather than over
+ * everything online, so the number beside a suggestion is scoped to what the
+ * caller actually asked for. Under `?vr=1` a tag whose rooms are all flat does
+ * not appear at all — which is the point: a suggestion that cannot be honoured
+ * is worse than no suggestion, because the visitor reads the empty row as the
+ * search being broken rather than as the tag being wrong.
+ *
+ * It is a floor and not an equality, and the gap is one-directional. This
+ * counts rooms *tagged* `blonde`; picking the suggestion runs `?q=blonde`,
+ * which also matches the word in a display name or a room subject. Measured
+ * against the live feed: the suggestion reads 27 and the row comes back with
+ * 30. Picking a tag can only ever return at least what the number promised,
+ * never fewer, which is the direction that does not disappoint anybody — and
+ * closing the gap would mean either a count that lies about the query or a
+ * query that ignores two thirds of the card.
+ *
+ * Ties break alphabetically rather than by insertion order, so the list does
+ * not reshuffle between two requests that saw the same rooms in a different
+ * order from upstream.
+ */
+function tagFacet(rooms) {
+    const counts = new Map();
+
+    for (const room of rooms) {
+        for (const tag of room.tags) counts.set(tag, (counts.get(tag) || 0) + 1);
+    }
+
+    return [...counts]
+        .filter(([, n]) => n >= TAG_MIN_ROOMS)
+        .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+        .slice(0, TAG_MAX)
+        .map(([tag, count]) => ({ tag, count }));
 }
 
 /** VR first, then the room most worth watching. Ours, not upstream's order. */
@@ -311,12 +465,33 @@ export function mountCams(app) {
      * The row.
      *
      * Public and unauthenticated, like the affiliate rows beside it. The spend
-     * is zero — this calls a free partner endpoint — so the limiter is there
-     * for the upstream's sake rather than ours, and it is generous enough that
-     * a visitor flipping filters never meets it.
+     * is zero — this calls a free partner endpoint, and every filter below cuts
+     * the one cached list rather than asking upstream again — so the limiter is
+     * here for our own sake, against a client that has stopped debouncing.
      *
-     * `?vr=1` restricts to headset rooms, `?gender=f|m|s|c|t` to one gender.
-     * Both filter the one cached list rather than asking upstream again.
+     * A hundred and twenty a minute is two a second sustained. The shelf waits
+     * for a pause in typing before it asks, so a visitor typing a word costs
+     * one or two; the budget is sized for the case where that debounce breaks
+     * and every keystroke arrives, which at human typing speed is around the
+     * limit. Nobody reaches it by searching. Something looping does.
+     *
+     * `?vr=1` restricts to headset rooms, `?gender=f|m|s|c|t` to one gender,
+     * and `?q=` to rooms carrying every word of it — see {@link searchTerms}.
+     *
+     * The counts are deliberately not symmetrical with that. `total` and
+     * `vrTotal` describe what this visitor could be shown, before any of the
+     * three filters; `matched` describes what the filters left. Both numbers
+     * are answers about the feed rather than about a request, which is what a
+     * caller deciding whether a control is worth offering at all needs — a
+     * figure that moved with the search box would make any such control
+     * disable itself as you typed past it, and a visitor cannot get back to a
+     * control that does that. `vrTotal` is zero against the live feed today;
+     * see {@link VR_TAGS} and the note on it, and the shelf draws no VR
+     * control as a result.
+     *
+     * `tags` is the vocabulary behind the suggestion list, which exists
+     * because the browser holds sixty rooms and the query runs against five
+     * hundred: the shelf cannot offer what it cannot see, so it is told.
      */
     router.get('/', rateLimit({ windowMs: 60_000, max: 120 }), async (req, res) => {
         // Belt and braces with `robots.txt`, which already disallows `/api/`:
@@ -368,28 +543,48 @@ export function mountCams(app) {
         const where = resolveRegion(req);
         const wantsVr = req.query.vr === '1';
         const gender = typeof req.query.gender === 'string' ? req.query.gender.slice(0, 1) : '';
+        const terms = searchTerms(req.query.q);
 
-        const visible = rooms.filter(
-            (room) =>
-                visibleTo(room, where) &&
-                (!wantsVr || room.vr) &&
-                (!gender || room.gender === gender)
+        // Geography only. This is the denominator `total` and `vrTotal` are
+        // reported from, so it has to mean "everything this visitor is allowed
+        // to see" and not "everything they are currently asking for".
+        const here = rooms.filter((room) => visibleTo(room, where));
+
+        // The parameters applied but not the box. Suggestions are counted over
+        // this and the query is run against it, which is what keeps a
+        // suggested tag's count a floor on the cards it produces — see
+        // `tagFacet` — without the suggestions reshuffling on every keystroke.
+        const pool = here.filter(
+            (room) => (!wantsVr || room.vr) && (!gender || room.gender === gender)
         );
+
+        const matched = terms.length ? pool.filter((room) => matchesQuery(room, terms)) : pool;
 
         // `private` and not `public`: the list is filtered by the viewer's
         // region, so a shared cache in front of this would hand one
         // jurisdiction's list to another. Thirty seconds in the browser is
-        // what stops a filter click costing a round trip.
+        // what stops a filter click costing a round trip — and it is why
+        // backspacing through a word is nearly free, since each shorter query
+        // is one the browser asked a moment ago and still holds.
         res.set('Cache-Control', 'private, max-age=30');
 
         res.json({
             configured: true,
-            total: visible.length,
-            vrTotal: visible.filter((room) => room.vr).length,
-            rooms: visible
+            total: here.length,
+            vrTotal: here.filter((room) => room.vr).length,
+
+            // How many the filters left, which is not `rooms.length` when more
+            // than sixty match. The shelf says "Top 60 of 214" off this, so a
+            // visitor is told their query was narrowed by the page rather than
+            // being left to assume the partner has exactly sixty of anything.
+            matched: matched.length,
+
+            tags: tagFacet(pool),
+
+            rooms: matched
                 .sort(rank)
                 .slice(0, PAGE_MAX)
-                .map(({ blockedStates, blockedCountries, ...room }) => room)
+                .map(({ blockedStates, blockedCountries, search, ...room }) => room)
         });
     });
 
