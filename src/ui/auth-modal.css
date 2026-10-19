@@ -215,6 +215,45 @@
     line-height: 1.45;
 }
 
+/* A method the server cannot run is dimmed rather than removed: the statute is
+   about what the viewer is offered, so a missing option would hide a fault
+   that this makes visible. */
+.auth-backdrop .method-choice label.checkbox.is-unavailable {
+    cursor: not-allowed;
+    opacity: 0.45;
+}
+
+.auth-backdrop .method-choice label.checkbox em {
+    font-style: normal;
+    color: #ff6b6b;
+}
+
+/* ------------------------------------------------------------ the camera -- */
+
+/* Only ever on screen during the camera step, which is only ever entered by
+   somebody who picked the anonymous route, agreed, and pressed the button - a
+   dialog that turned a camera on while they were still reading what it does
+   for would have answered the question for them. Styles duplicated from the
+   signed-out gate rather than shared because this stylesheet is loaded on
+   pages that never load that one. */
+.auth-backdrop .age-gate-camera {
+    margin: 0 0 14px;
+}
+
+.auth-backdrop .age-gate-cam {
+    display: block;
+    width: 100%;
+    max-height: 320px;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 10px;
+    background: #000;
+    object-fit: cover;
+    /* Mirrored, because an unmirrored preview is the one thing that makes
+       people unable to centre their own face. The capture is not mirrored -
+       see `frameFrom`. */
+    transform: scaleX(-1);
+}
+
 /* --------------------------------------------------------- role selector -- */
 
 /* Two cards rather than a checkbox: what a creator account is differs enough

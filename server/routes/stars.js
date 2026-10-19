@@ -232,6 +232,31 @@ export function mountStars(app) {
     const router = express.Router();
 
     /**
+     * Every profile already written, in one request.
+     *
+     * This exists so the browser can fill the whole row before the first
+     * hover instead of paying a round trip and showing a spinner on each of
+     * ten performers. Doing that against the route below would be ten
+     * requests out of a budget of thirty a minute, which a visitor would
+     * exhaust by reloading three times.
+     *
+     * **It reads the cache and never writes it.** A performer with no profile
+     * yet is absent from the response rather than commissioned, so this
+     * endpoint cannot spend a penny no matter how it is called — and a page
+     * load can never cost ten OpenAI calls. The route below remains the only
+     * thing that buys anything, which is what keeps the allowlist, the delay
+     * and the limiter meaningful.
+     *
+     * No allowlist check, deliberately. Everything here is already public one
+     * id at a time, filtering would mean a feed fetch on a path that runs on
+     * every page load, and the browser only ever looks up ids it has drawn.
+     */
+    router.get('/bios', rateLimit({ windowMs: 60_000, max: 60 }), (_req, res) => {
+        res.set('Cache-Control', 'public, max-age=3600');
+        res.json({ bios: loadCache() });
+    });
+
+    /**
      * One performer's profile.
      *
      * Public and unauthenticated, because the row it belongs to is: a hover

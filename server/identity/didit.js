@@ -28,15 +28,20 @@
  *   AVR_DIDIT_FACEAUTH_WORKFLOW_ID  Biometric Authentication: liveness + face match
  *   AVR_DIDIT_AGE_WORKFLOW_ID       document OCR only - no liveness, no face match
  *
- * A fourth is optional and only Florida needs it:
+ * Florida's anonymous route is not a fourth workflow. Fla. Stat. § 501.1737
+ * requires it be performed by an independent third party that retains nothing,
+ * and a workflow cannot be that whatever its retention schedule, because a
+ * workflow opens a session and a session is a thing that exists afterwards.
+ * {@link estimateAge} calls the standalone Age Estimation endpoint instead,
+ * with `save_api_request: false`: no stored image, no face template, no
+ * session to go looking for. "Never written" rather than "deleted promptly" is
+ * a promise about a mechanism instead of a schedule, which is the promise the
+ * statute asks for, and it needs no console configuration beyond the API key.
  *
- *   AVR_DIDIT_AGE_ANON_WORKFLOW_ID  the same check under a retain-nothing policy
- *
- * Fla. Stat. § 501.1737 requires that an anonymous route be offered alongside
- * the standard one, performed by an independent third party that keeps nothing.
- * Unset, the anonymous choice falls back to the ordinary age workflow and says
- * so in the log - which is the honest failure, because the viewer picked
- * "anonymous" and would otherwise be told they got it.
+ * This replaced an `AVR_DIDIT_AGE_ANON_WORKFLOW_ID` that, unset, silently fell
+ * back to the ordinary age workflow - so a viewer who picked "anonymous" got
+ * an ordinary document session and was told otherwise. There is now no such
+ * fallback: where the estimate cannot run, the route is not offered.
  *
  * The age workflow is separate rather than a reuse of the enrolment one because
  * the difference between them is the point: it must not capture a selfie. Every
@@ -51,6 +56,33 @@ const API_BASE = process.env.AVR_DIDIT_API_BASE || 'https://verification.didit.m
 
 const REQUEST_TIMEOUT_MS = 10_000;
 
+/**
+ * The age the selfie estimate has to clear, which is deliberately not 18.
+ *
+ * Didit's own documentation says the model's error grows for faces near the
+ * limit, and the limit is exactly where this check is used. Asking for 18 means
+ * every seventeen-year-old who reads a little old gets in, because the estimate
+ * that let them through was inside its own margin. Asking for twenty-five
+ * spends that margin on the right side: an adult who reads young is declined
+ * and offered the document route, which costs them a minute. The reverse error
+ * costs a minor access and us the statute.
+ *
+ * This is the long-standing "Challenge 25" convention from off-licence retail,
+ * and it is the number the UK regulator's own age-estimation guidance is
+ * written around.
+ */
+const ESTIMATE_FLOOR = Number(process.env.AVR_AGE_ESTIMATION_MIN || 25);
+
+/** Didit auto-compresses to ~0.3 MB, so anything past this is wasted upload. */
+const MAX_SELFIE_BYTES = 2 * 1024 * 1024;
+
+/**
+ * Longer than the JSON calls because this one carries an image and waits on a
+ * model. Ten seconds would occasionally fire on a slow run and send somebody
+ * back to the camera for a photo that was about to be accepted.
+ */
+const ESTIMATE_TIMEOUT_MS = 20_000;
+
 function config() {
     const apiKey = process.env.AVR_DIDIT_API_KEY;
     if (!apiKey) throw new Error('AVR_DIDIT_API_KEY is not set');
@@ -59,8 +91,7 @@ function config() {
         apiKey,
         enrolWorkflow: process.env.AVR_DIDIT_ENROL_WORKFLOW_ID || null,
         faceWorkflow: process.env.AVR_DIDIT_FACEAUTH_WORKFLOW_ID || null,
-        ageWorkflow: process.env.AVR_DIDIT_AGE_WORKFLOW_ID || null,
-        ageAnonWorkflow: process.env.AVR_DIDIT_AGE_ANON_WORKFLOW_ID || null
+        ageWorkflow: process.env.AVR_DIDIT_AGE_WORKFLOW_ID || null
     };
 }
 
@@ -76,10 +107,19 @@ function config() {
  * Asked per check rather than globally, because the checks are independent: a
  * missing age workflow must not stop a creator enrolling.
  *
- * @param {'enrol'|'face'|'age'} [check] one check, or every check if omitted
+ * @param {'enrol'|'face'|'age'|'selfie'} [check] one check, or every workflow if omitted
  * @returns {string[]} the unset environment variable names, most important first
  */
 export function diditWorkflowGaps(check) {
+    // The selfie estimate is the one check with no workflow behind it. It is a
+    // standalone endpoint rather than a hosted flow, so a key is the whole of
+    // its configuration - and it is answered before `config()` is called,
+    // because `config()` throws on a missing key and the honest answer here is
+    // to name that key as the gap rather than to fail asking.
+    if (check === 'selfie') {
+        return process.env.AVR_DIDIT_API_KEY ? [] : ['AVR_DIDIT_API_KEY'];
+    }
+
     const { enrolWorkflow, faceWorkflow, ageWorkflow } = config();
 
     const byCheck = {
@@ -255,6 +295,48 @@ function adultFrom(idVerification) {
     if (Number.isFinite(age) && age > 0) return age >= 18;
 
     return null;
+}
+
+/**
+ * Read an age-estimation response into a verdict.
+ *
+ * Didit returns HTTP 200 for a refusal as well as a pass, so the body is the
+ * decision and the status line says nothing. Their rule is that a result counts
+ * as approved only when `warnings` is empty; this keeps that and adds two
+ * conditions of its own, both in the direction of declining:
+ *
+ *   - **The age is re-checked here.** The threshold was sent with the request,
+ *     so a conforming server has already applied it, but this is the only place
+ *     that knows a pass means an adult cookie. A floor enforced in one place
+ *     that is not ours is a floor we cannot prove we applied.
+ *   - **Exactly one face.** The estimate describes the *largest* face in the
+ *     frame, so a minor standing beside an adult who is nearer the lens is
+ *     handed the adult's age. Liveness does not catch that — nothing is being
+ *     spoofed. Nobody needs a second person in shot to take a selfie, so the
+ *     cost of refusing is a retake.
+ */
+function readEstimate(json) {
+    const estimate = json?.age_estimation ?? {};
+    const warnings = Array.isArray(estimate.warnings) ? estimate.warnings : [];
+    const faces = Array.isArray(estimate.user_image?.entities) ? estimate.user_image.entities : [];
+
+    const ageRaw = Number(estimate.age_estimation);
+    const age = Number.isFinite(ageRaw) && ageRaw > 0 ? ageRaw : null;
+
+    const reject = (declineReason) => ({
+        status: 'rejected',
+        adultConfirmed: false,
+        estimatedAge: age,
+        declineReason
+    });
+
+    if (warnings.length) return reject(normalise(warnings[0]?.risk) || 'declined');
+    if (normalise(estimate.status) !== 'approved') return reject('declined');
+    if (age === null) return reject('age_not_detected');
+    if (faces.length > 1) return reject('more_than_one_face');
+    if (age < ESTIMATE_FLOOR) return reject('age_below_minimum');
+
+    return { status: 'verified', adultConfirmed: true, estimatedAge: age, declineReason: null };
 }
 
 function documentCountryOf(idVerification) {
@@ -453,26 +535,11 @@ export function diditProvider() {
          * later has something to name. It does not put a face on file, because
          * the workflow never captures one.
          */
-        async startAgeCheck({ userId, redirectUrl = null, anonymous = false }) {
-            const { ageWorkflow, ageAnonWorkflow } = config();
+        async startAgeCheck({ userId, redirectUrl = null }) {
+            const { ageWorkflow } = config();
             if (!ageWorkflow) throw new Error('AVR_DIDIT_AGE_WORKFLOW_ID is not set');
 
-            if (anonymous && !ageAnonWorkflow) {
-                // Loud, because a Florida viewer chose the anonymous route and
-                // is about to be given the ordinary one. The check still runs
-                // and the viewer is still verified; what is missing is the
-                // retain-nothing promise the statute attaches to that choice.
-                console.warn(
-                    '[identity] anonymous age verification was requested but ' +
-                        'AVR_DIDIT_AGE_ANON_WORKFLOW_ID is not set; running the standard age workflow'
-                );
-            }
-
-            return createSession({
-                workflowId: (anonymous && ageAnonWorkflow) || ageWorkflow,
-                userId,
-                redirectUrl
-            });
+            return createSession({ workflowId: ageWorkflow, userId, redirectUrl });
         },
 
         async fetchAgeCheck(inquiryId) {
@@ -508,6 +575,65 @@ export function diditProvider() {
             }
 
             return { status: 'pending', adultConfirmed: false, documentCountry, declineReason: null };
+        },
+
+        /**
+         * Estimate an age from a selfie, store nothing, and answer at once.
+         *
+         * This is Florida's anonymous route. § 501.1737 asks for a method
+         * performed by an independent third party that retains nothing, and
+         * `save_api_request: false` is literally that: Didit's documentation
+         * for this endpoint says nothing is stored, the returned `request_id`
+         * is a throwaway correlation value that cannot be looked up again, no
+         * session appears in their console, and no face embedding joins the
+         * application's face index. There is nothing afterwards to ask them to
+         * delete, which is a stronger promise than deleting it would be.
+         *
+         * It is also why this is a *different endpoint* from the document
+         * check rather than a second workflow. A workflow would have produced a
+         * stored session; the anonymity here is a property of the call.
+         *
+         * Nothing about the image is kept at this end either. It arrives as a
+         * request body, is forwarded in memory, and is never written to disk or
+         * to a log — see the route in `visitor-gate.js`.
+         *
+         * No `vendor_data` is sent. The account flow passes a subject so that
+         * erasure has something to name later; here there is nothing to erase
+         * and a correlation handle would only create one.
+         *
+         * @param {{image: Buffer, mimeType?: string}} input
+         */
+        async estimateAge({ image, mimeType = 'image/jpeg' }) {
+            const { apiKey } = config();
+
+            if (!image?.length) throw new Error('no selfie was supplied');
+            if (image.length > MAX_SELFIE_BYTES) throw new Error('the selfie is too large');
+
+            const form = new FormData();
+            form.append('user_image', new Blob([image], { type: mimeType }), 'selfie.jpg');
+            form.append('save_api_request', 'false');
+            form.append('age_estimation_decline_threshold', String(ESTIMATE_FLOOR));
+
+            const res = await fetch(`${API_BASE}/age-estimation/`, {
+                method: 'POST',
+                // No Content-Type: fetch sets the multipart boundary itself.
+                headers: { 'x-api-key': apiKey },
+                body: form,
+                signal: AbortSignal.timeout(ESTIMATE_TIMEOUT_MS)
+            });
+
+            const text = await res.text();
+            const json = text ? safeJson(text) : null;
+
+            if (!res.ok) {
+                const err = new Error(
+                    `didit POST /age-estimation/ failed (${res.status}): ${errorDetail(json, text)}`
+                );
+                err.status = res.status;
+                throw err;
+            }
+
+            return readEstimate(json);
         },
 
         /**

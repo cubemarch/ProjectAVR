@@ -295,6 +295,27 @@ function parseStamp(value) {
 }
 
 /**
+ * Methods whose pass is good only where the statute that named them applies.
+ *
+ * The general rule - "the row's method must appear in this policy's list" -
+ * is tempting and wrong. These strings are our taxonomy of statutory language,
+ * not a description of what the provider actually did: a single Didit document
+ * check is `government_id` in Alabama and `digitized_id` in Indiana, and
+ * treating that difference as a cross-state filter would re-ask a traveller
+ * for a document identical to the one they already produced, for no legal
+ * benefit to anybody.
+ *
+ * The anonymous estimate is the exception, and the reason is that it is the
+ * one method that is genuinely weaker rather than differently worded. No
+ * document is read, no birthdate is seen, and nothing is retained to audit
+ * afterwards; Florida accepts that trade and twenty-six other legislatures,
+ * having written their lists, did not. So a Florida estimate stays a Florida
+ * pass. This is the same rule the signed-out cookie gets from being bound to
+ * `placeKey`, written out for a row that is not.
+ */
+const PLACE_BOUND_METHODS = new Set(['anonymous']);
+
+/**
  * Is a passed document check still good enough for this policy?
  *
  * Separate from `ageAssurances.isCurrent` because that answers "did this
@@ -304,11 +325,16 @@ function parseStamp(value) {
  * changes once an hour.
  *
  * @param {Policy} policy
- * @param {{verified_at?: string|null}|null} assurance a current `age_assurances` row
+ * @param {{verified_at?: string|null, method?: string|null}|null} assurance a
+ *   current `age_assurances` row
  * @returns {{ok: boolean, reason: string|null, expiresAt: string|null}}
  */
 export function assuranceSatisfies(policy, assurance) {
     if (!assurance) return { ok: false, reason: 'no_assurance', expiresAt: null };
+
+    if (PLACE_BOUND_METHODS.has(assurance.method) && !policy.methods.includes(assurance.method)) {
+        return { ok: false, reason: 'method_not_accepted_here', expiresAt: null };
+    }
 
     if (!policy.sessionMinutes) return { ok: true, reason: null, expiresAt: null };
 

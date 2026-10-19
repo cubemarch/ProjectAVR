@@ -619,12 +619,13 @@ All under `/api/identity`, all requiring a normal access token.
 
 | Method | Path | Caller | Purpose |
 | --- | --- | --- | --- |
-| `GET` | `/consent` | either | Both disclosures — enrolment and age — with versions |
+| `GET` | `/consent` | either | All three disclosures — enrolment, age and selfie — with versions |
 | `GET` | `/jurisdiction` | anyone | Which gate this request gets, and the statute behind it. No auth; `private, no-store` |
 | `GET` | `/status` | browser | Verification, age, attestation, jurisdiction, unlock state + any pending challenge |
 | `POST` | `/attest` | browser | "I am 18 or over", where no statute asks for more. **403** where one does |
-| `POST` | `/age` | browser | Record consent, open the document-only inquiry. **400** in Florida without a chosen method |
+| `POST` | `/age` | browser | Record consent, open the document-only inquiry. **400** in Florida without a chosen method, and **400 `use_selfie_route`** if that method is `anonymous` |
 | `POST` | `/age/complete` | browser | Fetch and apply the age verdict |
+| `POST` | `/age/selfie` | browser | Florida's anonymous route: one raw image in the body, a verdict in the response. No inquiry, no polling, nothing retained |
 | `POST` | `/enrol` | browser | Record consent, open a provider inquiry |
 | `POST` | `/enrol/complete` | browser | Fetch and apply the enrolment verdict; returns an unlock if it clears |
 | `POST` | `/portal/unlock` | browser | Start the face check owed before going on air |

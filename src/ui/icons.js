@@ -7,6 +7,12 @@ const svg = (paths, opts = {}) =>
 
 export const icons = {
     play: (o) => svg('<polygon points="6 3 20 12 6 21 6 3"/>', { fill: 'currentColor', ...o }),
+    film: (o) =>
+        svg(
+            '<rect x="2" y="4" width="20" height="16" rx="2"/>' +
+                '<path d="M7 4v16M17 4v16M2 12h20M2 8h5M2 16h5M17 8h5M17 16h5"/>',
+            o
+        ),
     pause: (o) => svg('<rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/>', { fill: 'currentColor', ...o }),
     info: (o) => svg('<circle cx="12" cy="12" r="9"/><path d="M12 16v-4M12 8h.01"/>', o),
     plus: (o) => svg('<path d="M12 5v14M5 12h14"/>', o),
@@ -25,5 +31,6 @@ export const icons = {
     headset: (o) => svg('<path d="M4 14a8 8 0 0 1 16 0"/><rect x="2" y="13" width="20" height="7" rx="3"/><path d="M9 20v-3M15 20v-3"/>', o),
     cast: (o) => svg('<path d="M2 16a6 6 0 0 1 6 6M2 20a2 2 0 0 1 2 2"/><rect x="2" y="4" width="20" height="12" rx="2"/>', o),
     external: (o) => svg('<path d="M14 4h6v6M20 4l-9 9"/><path d="M18 13v6a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h6"/>', o),
+    users: (o) => svg('<path d="M16 19v-1a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v1"/><circle cx="9" cy="7" r="4"/><path d="M22 19v-1a4 4 0 0 0-3-3.9"/><path d="M16 3.1a4 4 0 0 1 0 7.8"/>', o),
     settings: (o) => svg('<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-2.9 1.2 2 2 0 1 1-4 0 1.7 1.7 0 0 0-2.9-1.2l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1A1.7 1.7 0 0 0 3 15a2 2 0 1 1 0-4 1.7 1.7 0 0 0 1.5-2.6l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1A1.7 1.7 0 0 0 10 4.6a2 2 0 1 1 4 0 1.7 1.7 0 0 0 2.9 1.2l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1A1.7 1.7 0 0 0 21 11a2 2 0 1 1 0 4z"/>', o)
 };

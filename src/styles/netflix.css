@@ -23,6 +23,21 @@
      * Everything under the fixed header clears it off this token, so the
      * billboard and the rows follow on their own. */
     --header-h: 96px;
+
+    /* The column the page gives up on the right for the skyscraper, and the
+     * only place its three parts are added together: the 4vw page gutter its
+     * right edge aligns to, the 160px creative, and air between it and the
+     * last thing in the content column.
+     *
+     * The gutter has to be in here. With a flat 200px the content would clear
+     * the unit at 1280 and be underneath it at 1600, because the unit's offset
+     * from the edge grows with the viewport and a fixed reservation does not.
+     *
+     * 160 is `top-skyscraper`'s creative width in `src/ads/zones.js` and is
+     * the one number here that has to track something else; `test/ads.test.js`
+     * fails if they stop matching. */
+    --sky-rail-w: calc(4vw + 160px + 28px);
+
     --ease: cubic-bezier(0.25, 0.46, 0.45, 0.94);
 }
 
@@ -205,6 +220,153 @@ body.is-immersive #render-canvas {
 
 .search-box input::placeholder {
     color: var(--text-faint);
+}
+
+/* ------------------------------------------- the affiliate-only header --
+ *
+ * Same bar, different contents: the brand, the two live pills with their
+ * disclosure, and a dead copy of the catalogue controls under a Coming Soon
+ * sign. Markup in `BrowseUI._headerHtml` and `_headerSoonHtml`.
+ *
+ * ## The whole block is a height budget
+ *
+ * `--header-h` is 96px and the brand lockup is a 68px image, so there are
+ * about 28px of slack for everything else in the row. The browse group is
+ * two stacked lines — pills over disclosure — and at the body sizes that
+ * stack is 45 + 13 + 19 = 77px, which fits but leaves nothing. So the pills
+ * come down to a 36px button and the disclosure to 11px on a 4px gap: 57px,
+ * comfortably inside the bar at both header heights.
+ *
+ * Shrinking the disclosure is the one thing here that needs justifying,
+ * because it is a legal notice. 11px is small, not hidden: it is the same
+ * colour as the rest of the secondary text, directly under the links it
+ * covers, and never clipped. What it must not become is `display: none` at
+ * some breakpoint while the pills stay — see the breakpoints below, where
+ * the whole group goes or stays together.
+ */
+.site-header-lite .browse-nav-group {
+    gap: 4px;
+    flex-shrink: 0;
+}
+
+.site-header-lite .browse-disclosure {
+    max-width: none;
+    font-size: 11px;
+    line-height: 1.35;
+}
+
+.site-header-lite .browse-nav {
+    flex-wrap: nowrap;
+    gap: 12px;
+}
+
+.site-header-lite .browse-nav .pill {
+    padding: 9px 17px;
+    font-size: 14px;
+}
+
+/*
+ * ## The Coming Soon group
+ *
+ * `margin-left: auto` puts it at the right-hand end, which is where these
+ * controls live in full mode — a reader who comes back when they are real
+ * finds them where they already were.
+ *
+ * `position: relative` is the anchor for the veil, and the veil is a real
+ * element rather than a `::after` so it can hold the site's own `.badge`.
+ */
+.header-soon {
+    position: relative;
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 24px;
+    min-width: 0;
+}
+
+/*
+ * Dimmed, blurred and unclickable.
+ *
+ * `pointer-events: none` is belt and braces over the `disabled` attribute in
+ * the markup — it also stops the text cursor and the hover affordances, so
+ * nothing about the group invites a click that will not happen.
+ *
+ * The blur is deliberately slight. Enough that the controls read as not-yet
+ * rather than as broken, not so much that the words stop being legible —
+ * the point of drawing them at all is that a reader can see *what* is
+ * coming, and an unreadable smear says nothing a grey box would not.
+ */
+.header-soon > .site-nav,
+.header-soon > .header-right {
+    opacity: 0.4;
+    filter: blur(0.4px);
+    pointer-events: none;
+    user-select: none;
+}
+
+/* `margin-left` is the parent's job here — this is one of two children in a
+   flex row, not the row's right-hand end. Left as `auto` it would push the
+   search box away from the nav and spread the dead group across the bar. */
+.header-soon > .header-right {
+    margin-left: 0;
+}
+
+/*
+ * The label, and the reason the rest of this is honest rather than broken.
+ *
+ * ## The badge leads the group; it does not sit on top of it
+ *
+ * Centred — the obvious first try — the badge lands squarely on "180° dome"
+ * and "360° sphere" and hides them. Which defeats the entire point: these
+ * controls are drawn so a reader can see *what* is coming, and the two
+ * format filters are the most specific thing the header says about this
+ * site. A label that obscures its subject is worse than no label.
+ *
+ * So the veil extends to the left of the controls into space the row has
+ * spare, and the badge sits at that leading edge: "Coming Soon!" and then,
+ * dimmed, the things that are. It reads in the same direction as the row.
+ *
+ * `--soon-lead` is that extension and it is sized to the badge, not picked:
+ * the label renders about 120px wide, and the rest is the gap that keeps it
+ * off "Home". Measured, because a lead shorter than the badge does not
+ * overflow or wrap — it quietly reinstates the bug, with the badge's tail
+ * sitting over the first filter.
+ *
+ * It is also why the group's lower breakpoint is 1280 and not 1180. At 1180
+ * there are only 115px between the live pills and the first filter, so the
+ * lead would have to eat into the affiliate disclosure. The extra width has
+ * to come from somewhere, and dropping a decorative group early is cheaper
+ * than crowding a legal notice. (1280 is the skyscraper's floor as well,
+ * which is a coincidence — different constraint, same round number.)
+ *
+ * The right inset is 0 and not negative. The controls already end on the
+ * 4vw gutter, so anything bled off that side puts the veil outside the
+ * column every other row on the page lines up with.
+ */
+.header-soon {
+    --soon-lead: 140px;
+}
+
+.header-soon-veil {
+    position: absolute;
+    inset: -7px 0 -7px calc(-1 * var(--soon-lead));
+    display: grid;
+    place-items: center start;
+    border-radius: 8px;
+    background: linear-gradient(
+        90deg,
+        rgba(10, 10, 12, 0.72) 0%,
+        rgba(10, 10, 12, 0.62) 62%,
+        rgba(10, 10, 12, 0) 100%
+    );
+    pointer-events: none;
+}
+
+/* Left at `.badge.soon`'s own 11px. It was bumped to 12 to read as a label
+   rather than a tag, and the 8px that bought cost more in lead than it was
+   worth. The shadow does the same job: it lifts the badge off the scrim. */
+.header-soon-veil .badge {
+    box-shadow: 0 2px 10px rgba(0, 0, 0, 0.5);
 }
 
 .icon-btn {
@@ -955,6 +1117,50 @@ body.is-immersive .player-shell .avr-video {
  */
 
 /*
+ * Two tiers for the Coming Soon group, above everything else, because it is
+ * the one thing in the header that can be dropped without cost.
+ *
+ * The rule at the top of this section — never hide a control that is not
+ * reachable elsewhere on the same screen — does not bind here, and this is
+ * the only place in the file that is true. These controls are not reachable
+ * anywhere, by anyone, on any screen: they are disabled copies. Dropping
+ * them costs a reader nothing and buys the live navigation its room back.
+ *
+ * So the order of concession for the affiliate-only header is: the dead
+ * search and Send to headset first, then the dead filters, and the brand,
+ * the two pills and the disclosure never. A Coming Soon sign is the first
+ * thing to go when the bar runs short, not the last.
+ *
+ * **Both numbers are set by the badge, not by the controls.** That is the
+ * non-obvious part and it is worth stating once: the measured widths say
+ * the full row fits down to about 1660 and the filters alone down to about
+ * 1150. Neither is the breakpoint. The veil reaches 140px to the left of
+ * the controls to seat its label, and that lead is what runs out first.
+ *
+ * - **1720** — below it the lead crosses into the affiliate disclosure.
+ *   Measured at 1661, where the badge landed on "Paid link. We earn…".
+ * - **1280** — below it the lead crosses the disclosure again, this time
+ *   with the filters alone.
+ *
+ * In both cases the group goes rather than the lead shrinking, because a
+ * shorter lead does not fail visibly: it puts the badge's tail back on
+ * "Home" and quietly hides the first filter. An unlabelled set of dimmed
+ * controls is a bug report, so if the label does not fit, neither does the
+ * group. See `--soon-lead`.
+ */
+@media (max-width: 1720px) {
+    .header-soon > .header-right {
+        display: none;
+    }
+}
+
+@media (max-width: 1280px) {
+    .header-soon {
+        display: none;
+    }
+}
+
+/*
  * A header-only tier above the three below.
  *
  * The brand is a 237px-wide pair of images that cannot reflow or abbreviate,
@@ -1069,6 +1275,52 @@ body.is-immersive .player-shell .avr-video {
         flex: 1 0 100%;
         font-size: 13px;
         padding-bottom: 2px;
+    }
+
+    /*
+     * The lite header wraps to brand-over-pills here, and what sits below it
+     * is reserved by a flat `--header-h` — `#browse-main.affiliates-only`
+     * pads by exactly that. A header taller than its own reservation tucks
+     * the first shelf heading underneath it, so this tier is not cosmetic:
+     * it is what keeps the two numbers true.
+     *
+     * Untrimmed the stack measures 137px against a 128px reservation. The
+     * brand gives up 8px and the padding 4, which lands it at 123 and leaves
+     * a little room — enough that the disclosure can take a second line on a
+     * narrow phone without the heading below going under the gradient.
+     *
+     * The disclosure's own size is not in here. It is a legal notice, it is
+     * already at 11px, and shrinking it further to win back a few pixels of
+     * layout is the wrong thing to trade.
+     */
+    .site-header-lite {
+        gap: 4px 14px;
+        padding: 7px 4vw 7px;
+    }
+
+    .site-header-lite .brand-symbol {
+        height: 48px;
+    }
+
+    .site-header-lite .brand-word {
+        height: 30px;
+    }
+
+    /*
+     * The disclosure wraps here rather than being clipped.
+     *
+     * `flex-shrink: 0` up at the desktop sizes is what stops the group
+     * giving way to the Coming Soon controls. On a phone there are no
+     * Coming Soon controls and nothing to protect it from, and keeping it
+     * meant the sentence stayed one 323px line inside a 294px column — so
+     * at 320px the last few words were cut off by the body's
+     * `overflow-x: hidden`. A clipped affiliate disclosure is not a
+     * disclosure, and it is clipped silently, which is worse: it costs
+     * nothing on the 390px phone anyone would check it on.
+     */
+    .site-header-lite .browse-nav-group {
+        flex-shrink: 1;
+        min-width: 0;
     }
 
     .header-right {
@@ -1199,6 +1451,7 @@ body.is-immersive .player-shell .avr-video {
     .site-nav {
         gap: 14px;
     }
+
 
     /* Narrowed, not removed. Search is the only way to reach a title that is
        not on a shelf, so hiding it here would strand part of the catalogue. */
@@ -3125,6 +3378,33 @@ body.is-profile {
     padding-top: var(--header-h);
 }
 
+/*
+ * The one width where the header outgrows its own reservation.
+ *
+ * `--header-h` is a flat 128px on phones and the lite header is trimmed to
+ * land at 123. Below about 340px the disclosure takes a second line, the
+ * header becomes 138, and the first shelf heading ends up under it.
+ *
+ * Overridden here rather than by raising `--header-h`, because that variable
+ * is also the offset for the billboard, the body masthead and the
+ * skyscraper, none of which are on the page in this mode. This is the only
+ * consumer that needs the bigger number, so it is the only one that gets it.
+ *
+ * ## It has to be below the rule it overrides, not up in the 480 tier
+ *
+ * Written there — which is where the rest of the narrow-phone rules live and
+ * where this one reads better — it lost. Both selectors are
+ * `#browse-main.affiliates-only`, a media query adds no specificity, and the
+ * base rule above is later in the file. The result was a 128px reservation
+ * under a 138px header and the heading ten pixels beneath it, which is
+ * exactly the bug this rule exists to fix.
+ */
+@media (max-width: 480px) {
+    #browse-main.affiliates-only {
+        padding-top: 146px;
+    }
+}
+
 /* The panel's borders exist to separate paid rows from our own. In this mode
    there is nothing above it to separate from, and a rule across the top of an
    otherwise empty page just reads as a seam. */
@@ -3139,6 +3419,376 @@ body.is-profile {
 .affiliates-disclosure {
     color: var(--text-dim);
     font-size: 13px;
+}
+
+/* ======================================================================
+   The browse controls: the two places a visitor can go, and the sentence
+   that discloses one of them. Built in `BrowseUI._browseNavHtml`.
+
+   One group, two mount points. Affiliate-only mode renders it inside
+   `.site-header` beside the brand; full mode renders it in the body inside
+   `.masthead`. The sizing below is the body treatment — the header variant
+   overrides it in the header block above, where the 96px budget is.
+   ====================================================================== */
+
+.masthead {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 24px 40px;
+    padding: 30px 4vw 10px;
+}
+
+.browse-nav-group {
+    display: flex;
+    flex-direction: column;
+    gap: 13px;
+    min-width: 0;
+}
+
+.browse-nav {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 14px;
+}
+
+/*
+ * The disclosure that makes the button above it legal.
+ *
+ * It is directly under the links it covers and in the page's normal
+ * secondary colour, not in a smaller or fainter one. See the note on
+ * `_browseNavHtml` for why it travels with them; the short version is that
+ * these are the first links on the page, so this has to be the first
+ * disclosure, in every mode and at every scroll position.
+ */
+.browse-disclosure {
+    margin: 0;
+    max-width: 46ch;
+    color: var(--text-dim);
+    font-size: 13px;
+    line-height: 1.45;
+}
+
+/*
+ * ## The pills
+ *
+ * One shape for both controls so they read as a pair, and two treatments so
+ * they do not read as the same destination: the catalogue is the accent
+ * gradient, live is a dark surface with a pulsing dot. An `<a>` and a
+ * `<button>` are styled identically on purpose — the difference between them
+ * matters to the browser, not to the reader.
+ *
+ * `overflow: hidden` clips the sheen sweep below to the rounded shape, and
+ * `border: 1px solid transparent` is on the base rather than only on the
+ * variant that uses a visible border, so the two are exactly the same height.
+ */
+.pill {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    padding: 13px 26px;
+    border: 1px solid transparent;
+    border-radius: 999px;
+    font: inherit;
+    font-size: 15px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    color: var(--text);
+    text-decoration: none;
+    white-space: nowrap;
+    cursor: pointer;
+    overflow: hidden;
+    transition:
+        transform 0.22s var(--ease),
+        box-shadow 0.22s var(--ease),
+        background-color 0.22s var(--ease),
+        border-color 0.22s var(--ease);
+}
+
+/*
+ * The sheen: a diagonal highlight parked off the left edge that sweeps
+ * across on hover.
+ *
+ * No `z-index`, so it paints over the label as it passes — which is the
+ * point, it is a gloss on the whole control and not a backlight behind it.
+ * `pointer-events: none` keeps it from eating the click it is decorating.
+ */
+.pill::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(
+        100deg,
+        transparent 25%,
+        rgba(255, 255, 255, 0.26) 50%,
+        transparent 75%
+    );
+    transform: translateX(-120%);
+    pointer-events: none;
+    transition: transform 0.65s var(--ease);
+}
+
+.pill:hover::after,
+.pill:focus-visible::after {
+    transform: translateX(120%);
+}
+
+.pill:active {
+    transform: translateY(0) scale(0.975);
+}
+
+.pill:focus-visible {
+    outline: 2px solid var(--text);
+    outline-offset: 3px;
+}
+
+/* The icon leans into the hover a few milliseconds behind the lift, which is
+   what stops the whole control reading as one rigid block that moved. */
+.pill-icon {
+    display: inline-flex;
+    transition: transform 0.3s var(--ease) 0.03s;
+}
+
+.pill:hover .pill-icon {
+    transform: scale(1.12) rotate(-7deg);
+}
+
+.pill-movies {
+    background: linear-gradient(135deg, var(--accent) 0%, var(--accent-hot) 100%);
+    box-shadow: 0 6px 18px rgba(124, 92, 255, 0.3);
+}
+
+.pill-movies:hover,
+.pill-movies:focus-visible {
+    transform: translateY(-2px);
+    box-shadow: 0 12px 30px rgba(124, 92, 255, 0.45);
+}
+
+.pill-cams {
+    background: rgba(255, 255, 255, 0.06);
+    border-color: rgba(255, 255, 255, 0.16);
+}
+
+.pill-cams:hover,
+.pill-cams:focus-visible {
+    transform: translateY(-2px);
+    background: rgba(255, 255, 255, 0.1);
+    border-color: rgba(255, 59, 59, 0.5);
+    box-shadow: 0 12px 30px rgba(0, 0, 0, 0.5);
+}
+
+/*
+ * The live dot, and the ring that leaves it.
+ *
+ * Same red as the badge on a cam card, deliberately — it is the same claim
+ * about the same rooms, and a second shade of "live" on one page would read
+ * as two different states. The expanding ring is a `box-shadow` rather than
+ * a pseudo-element because the pill already spends `::after` on the sheen.
+ */
+.pill-live {
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    background: #ff3b3b;
+    animation: pill-live-pulse 2.2s var(--ease) infinite;
+}
+
+@keyframes pill-live-pulse {
+    0% {
+        box-shadow: 0 0 0 0 rgba(255, 59, 59, 0.55);
+    }
+    70% {
+        box-shadow: 0 0 0 10px rgba(255, 59, 59, 0);
+    }
+    100% {
+        box-shadow: 0 0 0 0 rgba(255, 59, 59, 0);
+    }
+}
+
+/*
+ * The arrival.
+ *
+ * `backwards`, not `both`. With `both` the animation's final keyframe sticks
+ * as the element's state, and that state includes a `transform` — which
+ * would win against the hover lift above and leave a button that highlights
+ * but never moves. `backwards` applies only the opening frame during the
+ * delay and hands the element back to its own rules when it finishes.
+ */
+.browse-nav .pill {
+    animation: pill-in 0.5s var(--ease) backwards;
+}
+
+.browse-nav .pill:nth-child(2) {
+    animation-delay: 0.09s;
+}
+
+@keyframes pill-in {
+    from {
+        opacity: 0;
+        transform: translateY(9px);
+    }
+}
+
+/* The jump target for the Live Cams button. The header is fixed and is one
+   of two heights depending on the breakpoint, so the offset is declared here
+   where both are already known rather than computed in the click handler. */
+#cam-shelf {
+    scroll-margin-top: calc(var(--header-h) + 20px);
+}
+
+/* Full mode puts the hero behind the transparent fixed header on purpose.
+   The masthead is above the hero and is text, so it needs the clearance the
+   hero does not. */
+#browse-main:not(.affiliates-only) .masthead {
+    padding-top: calc(var(--header-h) + 22px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .pill,
+    .pill::after,
+    .pill-icon,
+    .pill-live,
+    .browse-nav .pill {
+        animation: none;
+        transition: none;
+    }
+
+    /* The sheen is parked off-canvas by a transform. With the transition
+       gone it would still jump across on hover, so it is removed outright
+       rather than left to snap. */
+    .pill::after {
+        content: none;
+    }
+}
+
+/* ======================================================================
+   Coming Soon: our own rows, shown as not-here-yet.
+   Content and reasoning in `src/site-mode.js`; markup in
+   `BrowseUI._comingSoonHtml`. Delete both with this block when
+   `AFFILIATES_ONLY` goes back to false.
+   ====================================================================== */
+
+.coming-soon-shelves {
+    padding-top: 10px;
+}
+
+/*
+ * The whole shelf is dimmed, not just the cards.
+ *
+ * `opacity` on the section rather than a muted colour on each child: the
+ * point is that this row is behind glass, and a heading at full strength
+ * over faded artwork reads as content that failed to load instead. It lifts
+ * slightly on hover, which is the only interaction these have — enough to
+ * say the row is not broken, not enough to suggest it is clickable.
+ */
+.soon-shelf {
+    opacity: 0.55;
+    transition: opacity 0.4s var(--ease);
+}
+
+.soon-shelf:hover {
+    opacity: 0.72;
+}
+
+.soon-head {
+    align-items: center;
+}
+
+/*
+ * The badge.
+ *
+ * Accent-tinted rather than grey. Grey on a dimmed row disappears, and this
+ * is the one element on the shelf that has to be read — the dimming says
+ * "not available" on its own and would otherwise read as "broken".
+ */
+.badge.soon {
+    padding: 4px 10px;
+    border: 1px solid rgba(124, 92, 255, 0.5);
+    border-radius: 999px;
+    background: rgba(124, 92, 255, 0.14);
+    color: var(--accent-hot);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    white-space: nowrap;
+}
+
+/*
+ * The line of copy under each heading.
+ *
+ * This is the only first-party prose on the page in affiliate-only mode, so
+ * it is set as body text and not as a caption: `--text-dim` at 14px, with a
+ * measure short enough to actually be read.
+ */
+.soon-blurb {
+    margin: 0 0 4px;
+    padding: 0 4vw;
+    max-width: 68ch;
+    color: var(--text-dim);
+    font-size: 14px;
+    line-height: 1.5;
+}
+
+/* Nothing in the track is a control. The hover-dim the real shelves apply to
+   unhovered siblings is off too — it exists to pick one card out of a row,
+   and there is nothing here to pick. */
+.soon-track {
+    pointer-events: none;
+}
+
+.soon-track:hover .soon-card,
+.soon-track .soon-card:hover {
+    opacity: 1;
+    transform: none;
+    box-shadow: none;
+}
+
+.soon-card {
+    width: 220px;
+}
+
+/*
+ * The placeholder itself: the card's 16:9 artwork box, filled with a slow
+ * sheen instead of an image.
+ *
+ * Staggered by `--soon-i` so the row reads as one surface catching the light
+ * rather than six separate loading spinners. The delay is negative, which
+ * starts each card partway into the cycle instead of holding it still for
+ * the first few hundred milliseconds.
+ */
+.soon-art {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    aspect-ratio: 16 / 9;
+    padding: 0 12px;
+    background: linear-gradient(100deg, #17171f 30%, #22222c 50%, #17171f 70%) 0 0 / 220% 100%;
+    animation: cam-shimmer 2.8s linear infinite;
+    animation-delay: calc(var(--soon-i, 0) * -0.35s);
+}
+
+/* Only the format shelf has these. They are the names the pipeline and the
+   player already use — `PROJECTION_LABELS` and `STEREO_LABELS` — and not a
+   second vocabulary invented for a placeholder. */
+.soon-label {
+    color: var(--text-dim);
+    font-size: 13px;
+    font-weight: 600;
+    text-align: center;
+    letter-spacing: -0.01em;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .soon-art {
+        animation: none;
+        background: #1b1b24;
+    }
+
+    .soon-shelf {
+        transition: none;
+    }
 }
 
 .affiliate-group + .affiliate-group {
@@ -3400,14 +4050,641 @@ body.is-profile {
     align-items: flex-start;
 }
 
+/* ------------------------------------------------------------- age gate --
+   The interstitial a signed-out visitor meets before any adult artwork is
+   drawn. See `src/ui/age-gate.js`, and `docs/STATE-AGE-LAWS.md` for which of
+   its two faces a given visitor gets.
+
+   `z-index: 95` is above everything else in this sheet including the
+   performer card at 90, and that is not a tie to be broken later: this is the
+   one element on the page whose entire job is to be the thing in front. It is
+   attached to `<body>`, so no stacking context caps it. */
+
+.age-gate {
+    position: fixed;
+    inset: 0;
+    z-index: 95;
+    display: grid;
+    place-items: center;
+    padding: 24px;
+    background: rgba(4, 4, 8, 0.97);
+
+    /* The page behind is blank at this point — nothing has been fetched yet —
+       but a blur costs nothing and covers the case where it is not. */
+    backdrop-filter: blur(8px);
+}
+
+body.age-gate-open {
+    overflow: hidden;
+}
+
+.age-gate-box {
+    width: min(540px, 100%);
+    max-height: 100%;
+    overflow: auto;
+    padding: 26px 28px 22px;
+    border-radius: 10px;
+    background: var(--bg-raised);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    box-shadow: 0 24px 60px rgba(0, 0, 0, 0.8);
+    text-align: center;
+}
+
+.age-gate-mark {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    margin-bottom: 16px;
+}
+
+.age-gate-box h1 {
+    margin: 0 0 10px;
+    font-size: 22px;
+    letter-spacing: -0.015em;
+}
+
+.age-gate-lede {
+    margin: 0 0 14px;
+    font-size: 14px;
+    line-height: 1.5;
+    color: var(--text-dim);
+}
+
+/* The sentence being confirmed, set apart from the explanation around it. A
+   declaration buried in a paragraph is one nobody can say they read. */
+.age-gate-attest {
+    margin: 0 0 18px;
+    padding: 12px 14px;
+    border-radius: 6px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    background: rgba(255, 255, 255, 0.03);
+    font-size: 13px;
+    line-height: 1.5;
+    text-align: left;
+}
+
+.age-gate-cite {
+    margin: 0 0 14px;
+    font-size: 12px;
+    color: var(--text-faint);
+}
+
+.age-gate-methods {
+    margin: 0 0 14px;
+    padding: 0 0 0 18px;
+    text-align: left;
+    font-size: 13px;
+    line-height: 1.5;
+    color: var(--text-dim);
+}
+
+.age-gate-methods li + li {
+    margin-top: 5px;
+}
+
+/* Florida requires the viewer to pick between a standard and an anonymous
+   route, so there the same block is a fieldset of radios rather than a list
+   of things we are about to do to them. */
+fieldset.age-gate-methods {
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 8px;
+    padding: 12px 14px;
+    list-style: none;
+}
+
+.age-gate-methods legend {
+    padding: 0 6px;
+    font-size: 12px;
+    color: var(--text-faint);
+}
+
+.age-gate-method {
+    display: flex;
+    gap: 9px;
+    align-items: flex-start;
+    cursor: pointer;
+}
+
+.age-gate-method + .age-gate-method {
+    margin-top: 9px;
+}
+
+.age-gate-method input {
+    margin: 3px 0 0;
+    flex: none;
+}
+
+/* A method the server cannot run is dimmed rather than removed: Florida's
+   statute is about what the viewer is offered, so a missing option would hide
+   a fault that this makes visible. */
+.age-gate-method.is-unavailable {
+    cursor: not-allowed;
+    opacity: 0.45;
+}
+
+.age-gate-method em {
+    font-style: normal;
+    color: var(--accent-hot);
+}
+
+/* Collapsed, because it is four paragraphs about a third party's retention
+   schedule and putting it inline would bury the two sentences that matter.
+   Open before the checkbox can be ticked is the visitor's choice, not ours
+   to pre-empt. */
+.age-gate-consent {
+    margin: 0 0 12px;
+    text-align: left;
+    font-size: 12px;
+    line-height: 1.55;
+    color: var(--text-faint);
+}
+
+.age-gate-consent summary {
+    cursor: pointer;
+    color: var(--text-dim);
+}
+
+.age-gate-consent p {
+    margin: 10px 0 0;
+}
+
+.age-gate-agree {
+    display: flex;
+    gap: 9px;
+    align-items: flex-start;
+    margin: 0 0 14px;
+    text-align: left;
+    font-size: 13px;
+    line-height: 1.5;
+    color: var(--text-dim);
+    cursor: pointer;
+}
+
+.age-gate-agree input {
+    margin: 3px 0 0;
+    flex: none;
+}
+
+/* The camera, for Florida's anonymous route. Hidden until the visitor has
+   agreed and pressed the button, because a gate that turns a camera on while
+   somebody is still reading what it does for has answered the question for
+   them. */
+.age-gate-camera[hidden] {
+    display: none;
+}
+
+.age-gate-camera {
+    margin: 0 0 14px;
+}
+
+.age-gate-cam {
+    display: block;
+    width: 100%;
+    max-height: 320px;
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 10px;
+    background: #000;
+    object-fit: cover;
+    /* Mirrored, because an unmirrored preview is the one thing that makes
+       people unable to centre their own face. The capture is not mirrored —
+       see `frameFrom`. */
+    transform: scaleX(-1);
+}
+
+.age-gate-camhint {
+    margin: 9px 0 0;
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--text-faint);
+}
+
+/* Empty until there is something to say, and `aria-live` so that a screen
+   reader hears the popup being blocked rather than the visitor waiting on a
+   window that never opened. */
+.age-gate-status:not(:empty) {
+    margin: 0 0 14px;
+    font-size: 13px;
+    line-height: 1.5;
+    color: var(--text-dim);
+}
+
+.age-gate-status a {
+    color: var(--accent-hot);
+}
+
+.age-gate-note {
+    margin: 0 0 18px;
+    font-size: 12px;
+    line-height: 1.5;
+    color: var(--text-faint);
+}
+
+.age-gate-actions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 10px;
+}
+
+/* "Leave" is a real, reachable control at the same size as the other one.
+   An exit styled as fine print is the pattern these statutes were written
+   about, and it costs nothing to not do it. */
+.age-gate-foot {
+    margin: 18px 0 0;
+    font-size: 11px;
+    line-height: 1.6;
+    color: var(--text-faint);
+}
+
+.age-gate-foot a {
+    color: var(--text-dim);
+}
+
+/* --------------------------------------------------------------- cams --
+   A partner's live rooms. Same shelf chrome as everything else on the page,
+   with three differences that are all deliberate.
+
+   The art is **4:3**, not the catalogue's 16:9 and not the affiliate rows'
+   portrait. That is the shape the partner's thumbnails actually are, and
+   cropping a live frame to a wider box cuts off the half of it worth seeing.
+   It also means this row cannot be mistaken for either of the other two at a
+   glance, which is the same separation argument the affiliate panel makes.
+
+   The cards are **a uniform height**, enforced by a two-line min-height on
+   `.cam-subject` whether there is a subject or not. Rooms arrive with and
+   without one, and a flex row of mixed heights looks broken in a way a
+   catalogue of fixed-length titles never does.
+
+   And the shelf **reserves its space before it loads** — see `cams.js`. The
+   skeleton below is structurally identical to a real card rather than a box
+   of a guessed height, so the reservation stays exact through the 900px
+   breakpoint that narrows `.card` without anything here knowing about it. */
+
+.cam-shelf {
+    margin-bottom: 28px;
+}
+
+.cam-head {
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+/* Pushed to the end of the heading line rather than placed after the filter,
+   so it stays on the same line as the disclosure on the partner panel below
+   and wraps to its own line on a phone instead of squeezing the buttons. */
+.cam-disclosure {
+    margin-left: auto;
+}
+
+.cam-card {
+    display: block;
+    color: inherit;
+    text-decoration: none;
+}
+
+.cam-art {
+    position: relative;
+    aspect-ratio: 4 / 3;
+    background: #23232e;
+    overflow: hidden;
+}
+
+.cam-art img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+}
+
+/* The one thing on the card that says this is happening now rather than
+   sitting in a catalogue. The dot pulses; `prefers-reduced-motion` stops it
+   along with the thumbnail refresh the badge is advertising. */
+.cam-live {
+    position: absolute;
+    top: 8px;
+    left: 8px;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 3px 7px;
+    border-radius: 3px;
+    background: rgba(8, 8, 12, 0.78);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+}
+
+.cam-live > i {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: #ff3b3b;
+    animation: cam-pulse 2s var(--ease) infinite;
+}
+
+@keyframes cam-pulse {
+    50% {
+        opacity: 0.25;
+    }
+}
+
+.cam-viewers {
+    position: absolute;
+    right: 8px;
+    bottom: 8px;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 7px;
+    border-radius: 3px;
+    background: rgba(8, 8, 12, 0.78);
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+}
+
+.cam-badges {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    display: flex;
+    gap: 4px;
+}
+
+.cam-badge {
+    padding: 2px 6px;
+    border-radius: 3px;
+    background: rgba(8, 8, 12, 0.78);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+}
+
+/* The row is sorted VR-first and opens filtered to it, so this badge is the
+   one carrying the claim the shelf is organised around. It gets the accent. */
+.cam-badge.vr {
+    color: var(--accent-hot);
+    border-color: var(--accent-hot);
+}
+
+.cam-card .card-body,
+.cam-card:hover .card-body {
+    padding: 8px 9px 10px;
+    max-height: none;
+    opacity: 1;
+}
+
+.cam-card .card-title {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    font-size: 14px;
+}
+
+.cam-age {
+    color: var(--text-faint);
+    font-size: 12px;
+    font-weight: 400;
+}
+
+/* Room subjects are written by broadcasters, run to any length, and are the
+   one piece of third-party text on this page that lands inside our layout.
+   Two lines, clipped, with the height reserved whether it is filled or not. */
+.cam-subject {
+    margin: 3px 0 0;
+    font-size: 12px;
+    line-height: 1.35;
+    min-height: 2.7em;
+    color: var(--text-dim);
+    white-space: normal;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
+/* No lift, for the reason the affiliate cards have none: this row sits near
+   the top of the page and a card that scales on hover overlaps the leaderboard
+   above it. The hovered card is already distinguished — it is the one whose
+   thumbnail starts refreshing every two and a half seconds. */
+.shelf-track .cam-card:hover {
+    transform: none;
+    box-shadow: 0 10px 26px rgba(0, 0, 0, 0.6);
+}
+
+.cam-card:focus-visible {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
+}
+
+.cam-skeleton {
+    pointer-events: none;
+}
+
+.cam-skeleton .cam-art {
+    background: linear-gradient(100deg, #1d1d26 30%, #26262f 50%, #1d1d26 70%) 0 0 / 220% 100%;
+    animation: cam-shimmer 1.6s linear infinite;
+}
+
+.cam-skeleton .card-title::after,
+.cam-skeleton .cam-subject::after {
+    content: '';
+    display: block;
+    height: 0.8em;
+    border-radius: 3px;
+    background: #1d1d26;
+}
+
+.cam-skeleton .cam-subject::after {
+    width: 70%;
+}
+
+@keyframes cam-shimmer {
+    to {
+        background-position: -220% 0;
+    }
+}
+
+/* ------------------------------------------------------------- the theatre --
+   The partner's embeddable player, in a dialog, which is the whole point of
+   the white label: a live room on our page rather than a click away from it.
+
+   `z-index: 75` sits above the portal dialog at 70 and below the toast at 80,
+   which is the order those two want with a modal open. It is attached to
+   `<body>` by `cams.js` rather than to the shelf, because the shelf lives
+   inside `.affiliates` and that section is a `z-index: 2` stacking context —
+   nested in there this number would be meaningless, which is the trap
+   documented at `.star-bio` below. */
+
+.cam-theatre {
+    position: fixed;
+    inset: 0;
+    z-index: 75;
+    display: grid;
+    place-items: center;
+    padding: 24px;
+}
+
+.cam-theatre-backdrop {
+    position: absolute;
+    inset: 0;
+    background: rgba(4, 4, 8, 0.82);
+    backdrop-filter: blur(3px);
+}
+
+.cam-theatre-box {
+    position: relative;
+    width: min(960px, 100%);
+    max-height: 100%;
+    overflow: auto;
+    border-radius: 10px;
+    background: var(--bg-raised);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    box-shadow: 0 24px 60px rgba(0, 0, 0, 0.75);
+}
+
+.cam-theatre-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 12px 14px;
+}
+
+.cam-theatre-head h2 {
+    margin: 0;
+    font-size: 17px;
+}
+
+.cam-theatre-viewers {
+    margin-left: auto;
+    font-size: 12px;
+    color: var(--text-dim);
+    font-variant-numeric: tabular-nums;
+}
+
+.cam-theatre-close {
+    display: grid;
+    place-items: center;
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    color: var(--text);
+    background: rgba(255, 255, 255, 0.08);
+}
+
+.cam-theatre-close:hover {
+    background: rgba(255, 255, 255, 0.16);
+}
+
+/* 16:9 and sized by us. The partner's snippet ships its own width and height
+   attributes; letting those decide would put a fixed-pixel frame in a fluid
+   dialog and overflow it on a phone. */
+.cam-theatre-stage {
+    position: relative;
+    aspect-ratio: 16 / 9;
+    background: #000;
+}
+
+.cam-theatre-stage iframe {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    border: 0;
+}
+
+.cam-theatre-foot {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 14px 4px;
+}
+
+.cam-theatre-foot .cam-subject {
+    min-height: 0;
+    margin: 0;
+    -webkit-line-clamp: 1;
+}
+
+.cam-theatre-out {
+    margin-left: auto;
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+    color: var(--accent-hot);
+    text-decoration: none;
+}
+
+.cam-theatre-out:hover {
+    text-decoration: underline;
+}
+
+/* Same argument as `.affiliates-disclosure`: the visitor is now watching a
+   stream we are paid for inside our own frame, which is the moment the
+   disclosure matters most and the moment it is least obvious. */
+.cam-theatre-note {
+    margin: 0;
+    padding: 4px 14px 12px;
+    font-size: 12px;
+    color: var(--text-faint);
+}
+
+/* The page behind a modal must not scroll under it. */
+body.cam-theatre-open {
+    overflow: hidden;
+}
+
+@media (max-width: 720px) {
+    .cam-theatre {
+        padding: 0;
+    }
+
+    .cam-theatre-box {
+        width: 100%;
+        height: 100%;
+        max-height: none;
+        border-radius: 0;
+        border: 0;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .cam-live > i,
+    .cam-skeleton .cam-art {
+        animation: none;
+    }
+}
+
 /* ----------------------------------------------------- performer profile --
    Fixed, not absolute: the shelf it belongs to is a scroll container, so an
    absolutely positioned child would be clipped at exactly the first and last
    card. `browse.js` does the placement; everything here is appearance, except
-   `max-width`, which the placement code measures. */
+   `max-width`, which the placement code measures.
+
+   This used to carry `pointer-events: none`, which is right for a card that
+   is only ever read and closes when the pointer leaves the portrait. It is
+   wrong for one holding an ad: the pointer has to be able to land on the
+   card, so the card has to be able to receive it. The dismissal changed with
+   it — `browse.js` now closes on an outside click rather than on pointer-out,
+   because the old behaviour would have hidden the ad on the way to clicking
+   it.
+
+   `z-index: 90` puts it above every other layer in this sheet — the header at
+   30, the player at 45, the modal backdrop at 50, the portal and profile at
+   55 and 56, the menu at 60, the portal dialog at 70, the toast at 80. It used
+   to be 40, which both tied with `#render-canvas` and, more to the point, was
+   being measured inside `.affiliates` — a `z-index: 2` stacking context that
+   capped the whole card at level 2 however high this number went. `browse.js`
+   now renders the card outside that section; this number is what it is worth
+   once it is out. */
 .star-bio {
     position: fixed;
-    z-index: 40;
+    z-index: 90;
     width: 340px;
     max-width: calc(100vw - 24px);
     padding: 14px 16px 12px;
@@ -3415,10 +4692,19 @@ body.is-profile {
     background: var(--bg-raised);
     border: 1px solid rgba(255, 255, 255, 0.12);
     box-shadow: 0 18px 44px rgba(0, 0, 0, 0.72);
-    pointer-events: none;
 }
 
 .star-bio[hidden] {
+    display: none;
+}
+
+/* The ad and the disclaimer are permanent children, so while the biography
+   above them is still being fetched they would otherwise sit under a spinner
+   — an advertisement and a note about AI-written text, attached to no text.
+   Hidden rather than not built, because building the slot per hover is what
+   would file an impression per hover. */
+.star-bio.is-loading .ad-slot-bio-card,
+.star-bio.is-loading .star-bio-source {
     display: none;
 }
 
@@ -3510,6 +4796,21 @@ body.is-profile {
 
     /* Reserved: the creative, plus the label above it. */
     min-height: calc(var(--ad-h) + 17px);
+
+    /* A slot is a sealed box in the paint order as well as in layout.
+     *
+     * `overflow: hidden` above stops a creative drawing outside the slot's
+     * bounds; this stops one drawing *above* things outside it. A creative
+     * that sets a large z-index on something it injects — and they do, because
+     * the format that pays best is the one that covers the page — would
+     * otherwise be competing with the rest of the document on equal terms and
+     * winning. Isolated, its z-index is resolved against its own slot and the
+     * slot keeps its place in the flow, which is the bottom.
+     *
+     * This does not reach an ad script that appends to `<body>` directly. That
+     * is an interstitial format rather than a banner, nothing in a stylesheet
+     * contains it, and the answer to it is to not enable it in the dashboard. */
+    isolation: isolate;
 }
 
 /*
@@ -3568,6 +4869,77 @@ body.is-profile {
 
 .ad-strip .ad-slot {
     width: auto;
+    margin: 0;
+}
+
+/* Inside the performer profile card.
+ *
+ * The 26px the other slots get is page spacing, and this one is not on the
+ * page — it is in a 340px popup where that much air either side would make
+ * the ad the tallest thing in it. The rule above it is the same separator
+ * the disclaimer below uses, so the card reads as biography, then a line,
+ * then the two things that are not the biography. */
+.ad-slot-bio-card {
+    margin: 12px 0 0;
+    padding-top: 11px;
+    border-top: 1px solid rgba(255, 255, 255, 0.09);
+}
+
+/* Which leaves the disclaimer's own rule drawing a second line immediately
+   below the first. It keeps the line when the ad is not there to draw one. */
+.ad-slot-bio-card + .star-bio-source {
+    margin-top: 9px;
+    padding-top: 0;
+    border-top: 0;
+}
+
+/* ----------------------------------------------- the skyscraper rail --
+ *
+ * `top-skyscraper` in `src/ads/zones.js`, emitted by `BrowseUI._render`.
+ *
+ * ## It has to be below `.ad-slot`, not up with the masthead
+ *
+ * Every selector here is one class deep, and so is `.ad-slot` — equal
+ * specificity, so the later rule wins. Written next to the masthead block
+ * where it reads better, these lost to the base slot's `width: 100%` and
+ * `margin: 26px 0`, and the result was a 1600px-wide advertisement hanging
+ * 64px off the left edge of the page. Moving it up again brings that back.
+ *
+ * ## The page gives up a column and the unit is positioned into it
+ *
+ * Every other slot on this site is a band the content flows around, and a
+ * 160x600 cannot be one: in the masthead it is a 600px strip with two
+ * buttons adrift in the middle of it, and between two shelves it is a
+ * narrow column with dead space either side. So it leaves the flow
+ * entirely and the main column is inset by exactly the room it needs,
+ * which is the only arrangement where the rail is never over content and
+ * the content never has to know the rail is there.
+ *
+ * `has-sky-rail` is set by `_render` from whether the slot produced any
+ * markup at all, rather than by a media query repeating the placement's
+ * 1280 floor. One number, one file. See the note there.
+ */
+#browse-main.has-sky-rail {
+    position: relative;
+    padding-right: var(--sky-rail-w);
+}
+
+/*
+ * `right: 4vw` is the gutter every shelf head and row on this page already
+ * uses, so the unit's right edge lines up with the content above and below
+ * it instead of floating at an arbitrary inset. `--sky-rail-w` is derived
+ * from it; changing one without the other puts the ad on top of a shelf.
+ *
+ * `top` clears the fixed header. In affiliate-only mode `#browse-main`
+ * carries `padding-top: var(--header-h)` already, but an absolutely
+ * positioned child is placed against the padding box's *top edge*, above
+ * that padding, so the clearance has to be stated again here.
+ */
+.ad-slot-top-skyscraper {
+    position: absolute;
+    top: calc(var(--header-h) + 22px);
+    right: 4vw;
+    width: var(--ad-w);
     margin: 0;
 }
 

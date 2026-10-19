@@ -3,9 +3,16 @@ import { brandLockup } from './brand-mark.js';
 import { isCreator } from '../auth/roles.js';
 import { icons } from './icons.js';
 import { formatDuration, pickHero, searchCatalog } from '../catalog/catalog.js';
-import { AFFILIATE_GROUPS, AFFILIATE_LINK_REL, fetchAffiliates } from '../catalog/affiliates.js';
-import { AFFILIATES_ONLY } from '../site-mode.js';
-import { adSlotHtml, fillAdSlots, nativeStripHtml } from '../ads/juicyads.js';
+import {
+    AFFILIATE_GROUPS,
+    AFFILIATE_LINK_REL,
+    AFFILIATE_STOREFRONTS,
+    fetchAffiliates,
+    storefrontUrl
+} from '../catalog/affiliates.js';
+import { AFFILIATES_ONLY, COMING_SOON_SHELVES } from '../site-mode.js';
+import { adSlotHtml, bioCardAdHtml, fillAdSlots, nativeStripHtml } from '../ads/juicyads.js';
+import { CamShelf, camSkeletonHtml, camsExpected } from './cams.js';
 import {
     PROJECTION,
     PROJECTION_DETAIL,
@@ -21,11 +28,16 @@ import { api } from '../api/client.js';
 const PITCH_INTERVAL_MS = 3000;
 
 /**
- * How long a pointer must rest on a performer before their profile is bought.
+ * How long a pointer must rest on a performer before their profile opens.
  *
- * The first hover of any given star costs a generated biography, so this is a
- * spending control as much as a UI nicety. Long enough that crossing the row
- * buys nothing, short enough that stopping to look feels like it responded.
+ * Profiles are now preloaded in a single request on first render, so in the
+ * ordinary case this buys nothing and is purely a UI control: long enough
+ * that dragging the pointer across the row does not flash ten cards, short
+ * enough that stopping to look feels like it responded.
+ *
+ * It remains a spending control for the one case a preload cannot cover — a
+ * performer the chart has added since the last biography was written, whose
+ * first hover anywhere in the world buys one.
  */
 const HOVER_DELAY_MS = 350;
 
@@ -58,11 +70,38 @@ export class BrowseUI extends pc.EventHandler {
     _render() {
         this.hero = pickHero(this.catalog.items);
 
+        // Decided once, used twice. `adSlotHtml` returns '' below the
+        // placement's own floor, so this is also the answer to "is there a
+        // skyscraper on this page" — and `has-sky-rail` hands that one answer
+        // to the stylesheet, which uses it to inset the main column by the
+        // width of the rail.
+        //
+        // Deliberately not a media query. The floor would then be the same
+        // number written in `zones.js` and in `netflix.css`, and the failure
+        // when those drift is either a 200px gutter reserved for nothing or
+        // an advertisement sitting on top of a shelf.
+        const skyscraper = adSlotHtml('top-skyscraper');
+        const mainClass = [AFFILIATES_ONLY && 'affiliates-only', skyscraper && 'has-sky-rail']
+            .filter(Boolean)
+            .join(' ');
+
         this.mount.innerHTML = `
             ${this._headerHtml()}
-            <main id="browse-main" class="${AFFILIATES_ONLY ? 'affiliates-only' : ''}">
+            <main id="browse-main" class="${mainClass}">
+                <!-- Full mode only. In affiliate-only mode the same group is
+                     in the header next to the brand, and emitting it here as
+                     well would put both pills on the page twice. -->
+                ${AFFILIATES_ONLY ? '' : this._mastheadHtml()}
                 ${AFFILIATES_ONLY ? '' : '<div id="billboard-slot"></div>'}
+                ${this._camShelfHtml()}
+
+                <!-- Below the cam shelf, not above it. The skyscraper is
+                     already drawing at the top of this screen, and a 728x90
+                     directly under the header would make the first two
+                     things on the page both advertisements. See the note on
+                     this placement in \`zones.js\`. -->
                 ${adSlotHtml('top-leaderboard')}
+
                 <section class="affiliates" id="affiliates" hidden>
                     <div class="shelf-head affiliates-head">
                         <h2>Partner sites</h2>
@@ -72,11 +111,26 @@ export class BrowseUI extends pc.EventHandler {
                     </div>
                     <div id="affiliate-pitch"></div>
                     <div id="affiliate-groups"></div>
-                    <div id="star-bio" class="star-bio" role="tooltip" hidden></div>
                 </section>
-                ${AFFILIATES_ONLY ? '' : this._ownContentHtml()}
+                ${AFFILIATES_ONLY ? this._comingSoonHtml() : this._ownContentHtml()}
+
+                <!-- Last in the document and first on the screen: it is
+                     positioned, so where it paints has nothing to do with
+                     where it sits here. This is the reading order, and an
+                     advertisement belongs at the end of it. -->
+                ${skyscraper}
             </main>
             ${AFFILIATES_ONLY ? '' : this._modalHtml()}
+
+            <!-- Outside <main>, and specifically outside .affiliates, which
+                 carries \`position: relative; z-index: 2\` and so is a stacking
+                 context. Nested in there, the card's own z-index was scoped to
+                 that context and the whole card painted at level 2 — under
+                 anything on the page above it, including an ad. It is
+                 \`position: fixed\` and placed by script, so being a descendant
+                 of the section bought it nothing to begin with. -->
+            <div id="star-bio" class="star-bio" role="dialog"
+                 aria-label="Performer profile" hidden></div>
         `;
 
         this.header = this.mount.querySelector('.site-header');
@@ -86,13 +140,25 @@ export class BrowseUI extends pc.EventHandler {
         this.recordingsEl = this.mount.querySelector('#recordings-shelf');
         this.billboardEl = this.mount.querySelector('#billboard-slot');
         this.affiliatesEl = this.mount.querySelector('#affiliates');
+        this.camShelfEl = this.mount.querySelector('#cam-shelf');
 
         // Not queried: `_renderFootAds` creates it. Cleared here because the
         // line above has just replaced the whole mount, so anything a previous
         // pass built is now detached.
         this.footAdsEl = null;
 
+        // Timers, an IntersectionObserver and two document-level listeners,
+        // all pointing at nodes the line above just detached.
+        this.cams?.destroy();
+        this.cams = this.camShelfEl ? new CamShelf(this.camShelfEl) : null;
+
         this._renderAffiliates();
+
+        // Before the early return: the browse controls are emitted in both
+        // site modes — in the header in one and in `.masthead` in the other —
+        // so binding them after it would leave the cam button dead in the one
+        // mode that is currently live.
+        this._bindMasthead();
 
         // Again here, because `_renderAffiliates` returns immediately when
         // there is no affiliate section at all — and the top leaderboard is a
@@ -119,6 +185,73 @@ export class BrowseUI extends pc.EventHandler {
         this._bindShelves();
     }
 
+    /**
+     * Our own surfaces, in the mode where none of them have anything in them.
+     *
+     * Rendered instead of `_ownContentHtml`, never alongside it — the two
+     * carry the same headings, and the one thing worse than an empty Live
+     * Creators row is two of them. See `COMING_SOON_SHELVES` in
+     * `src/site-mode.js` for the content and for the rules it was written
+     * under; this method is only the markup.
+     *
+     * ## Inert, and inert in the ways that matter
+     *
+     * - `aria-hidden` on the track and nothing focusable inside it, so a
+     *   keyboard tabs straight past the placeholders instead of landing on
+     *   six identical empty cards.
+     * - No ids. The real shelves own `#live-creators`, `#recordings-shelf`
+     *   and `#shelves`, and `_renderCreators` and friends look those up by
+     *   id. Reusing them here would let a stray call in the wrong mode write
+     *   real content into a placeholder.
+     * - `pointer-events: none` in the CSS rather than a click handler that
+     *   swallows events, because there is nothing to swallow: these are
+     *   `<div>`s, not controls.
+     *
+     * The section itself stays reachable to a screen reader by its heading
+     * and its "Coming Soon!" badge — the point is that the site does this,
+     * not yet, and a visitor using a screen reader needs that as much as a
+     * visitor looking at a dimmed row does.
+     */
+    _comingSoonHtml(shelves = COMING_SOON_SHELVES) {
+        if (!shelves.length) return '';
+
+        return `
+            <div class="shelves coming-soon-shelves">
+                ${shelves.map((s) => this._comingSoonShelfHtml(s)).join('')}
+            </div>`;
+    }
+
+    /** One inert shelf: a heading, the badge, a line of copy, and shapes. */
+    _comingSoonShelfHtml({ title, blurb, cards }) {
+        // A count draws blank cards; a list of strings draws labelled ones.
+        // The labelled form exists for the format shelf, where the words are
+        // facts about the pipeline rather than a sample of a catalogue.
+        const labels = Array.isArray(cards) ? cards : Array.from({ length: cards }, () => '');
+
+        const deck = labels
+            .map(
+                (label, i) => `
+                <div class="card soon-card" style="--soon-i:${i}">
+                    <div class="soon-art">${
+                        label ? `<span class="soon-label">${escapeHtml(label)}</span>` : ''
+                    }</div>
+                </div>`
+            )
+            .join('');
+
+        return `
+            <section class="shelf soon-shelf">
+                <div class="shelf-head soon-head">
+                    <h2>${escapeHtml(title)}</h2>
+                    <span class="badge soon">Coming Soon!</span>
+                </div>
+                <p class="soon-blurb">${escapeHtml(blurb)}</p>
+                <div class="shelf-viewport">
+                    <div class="shelf-track soon-track" aria-hidden="true">${deck}</div>
+                </div>
+            </section>`;
+    }
+
     /** Our own surfaces: the billboard's neighbours, and the catalogue. */
     _ownContentHtml() {
         return `
@@ -141,6 +274,44 @@ export class BrowseUI extends pc.EventHandler {
             </section>
             <div class="shelves" id="shelves"></div>
         `;
+    }
+
+    /* ----------------------------------------------------------- cams -- */
+
+    /**
+     * The live cam shelf, reserved at its final height before it has loaded.
+     *
+     * In the first-paint template rather than created later because it sits
+     * above the partner section: a shelf that appears after the page has
+     * painted pushes everything below it down, which is the layout shift
+     * `_renderFootAds` goes to some length to avoid further down the page.
+     * The rest of the reasoning, including why this is sometimes skipped
+     * entirely, is in `camsExpected`.
+     */
+    _camShelfHtml() {
+        if (!camsExpected()) return '';
+
+        return `
+            <section class="shelf cam-shelf is-loading" id="cam-shelf" data-nosnippet>
+                ${camSkeletonHtml()}
+            </section>`;
+    }
+
+    /**
+     * Rooms broadcasting right now, from a partner's affiliate feed.
+     *
+     * Separate from `refreshAffiliates` because the two have nothing in
+     * common but the word partner: that one is a static catalogue fetched
+     * once, this one is a list that is wrong within the minute and is
+     * proxied by our own server. A failure in either must not take the other
+     * down, which is why they are not awaited together.
+     */
+    async refreshCams() {
+        await this.cams?.refresh();
+
+        // The shelf hides itself when the feed is empty or the partner is
+        // unconfigured, and the Live Cams button points at it.
+        this._syncCamsButton();
     }
 
     /* ------------------------------------------------------- the market -- */
@@ -375,6 +546,17 @@ export class BrowseUI extends pc.EventHandler {
             const billboard = adSlotHtml('mid-billboard');
             if (billboard && groups.length > 1) groups.splice(1, 0, billboard);
 
+            // And `pitch-billboard` at the head of them, which puts it
+            // directly under the promo banner in `#affiliate-pitch`.
+            //
+            // Built here rather than written into `_render`'s template for
+            // the reason `_renderFootAds` explains at length: this section
+            // ships `hidden` and un-hides when the feed answers. An `<ins>`
+            // registered while its section is `display: none` is an
+            // impression for an advertisement nobody could have seen.
+            const pitch = adSlotHtml('pitch-billboard');
+            if (pitch) groups.unshift(pitch);
+
             this.affiliatesEl.querySelector('#affiliate-groups').innerHTML = groups.join('');
 
             this._bindShelfArrows(this.affiliatesEl);
@@ -558,6 +740,178 @@ export class BrowseUI extends pc.EventHandler {
             </a>`;
     }
 
+    /* ------------------------------------------------ the browse controls -- */
+
+    /**
+     * The two places a visitor can go, and the sentence that discloses one.
+     *
+     * ## The disclosure travels with the links. It is not optional
+     *
+     * The storefront links used to live in the partner section's head, and
+     * the reason was compliance rather than layout: `AFFILIATE_LINK_REL`
+     * declares a link paid to a crawler, but a reader needs telling too, and
+     * the sentence that does it is in that head. Moving the links above it
+     * would have made them undisclosed paid links to everyone who had not
+     * scrolled down yet — which is now everyone, because they are the first
+     * thing on the page.
+     *
+     * So the disclosure comes with them, in this one group, in whichever
+     * place the group is mounted. Delete `.browse-disclosure` and these
+     * become the most prominent undisclosed affiliate links on the site. It
+     * renders only when there is a storefront to disclose, so the rule and
+     * the thing it covers appear and disappear together and cannot drift.
+     *
+     * That coupling is also the whole reason this is one builder rather than
+     * two. In affiliate-only mode the group sits inside `.site-header`, which
+     * is `position: fixed` — so had the links gone up alone and the sentence
+     * stayed in the body, the paid links would be on screen at every scroll
+     * position and their disclosure would not. Keeping them in one subtree
+     * makes that failure impossible to introduce by moving a mount point.
+     *
+     * ## Two mount points, one group
+     *
+     * Affiliate-only mode puts it in the header, beside the brand: these are
+     * the only navigation that mode has, and the header is where a reader
+     * looks for navigation. Full mode keeps it in the body as `.masthead`,
+     * below a header that is already full of catalogue controls.
+     *
+     * In full mode it lands above the hero, which is worth a second look
+     * whenever `AFFILIATES_ONLY` is turned off — an affiliate link above our
+     * own hero is the wrong ranking once there is something of our own to
+     * rank against. `src/site-mode.js` says the same about the partner
+     * section, for the same reason.
+     */
+    _browseNavHtml(storefronts = AFFILIATE_STOREFRONTS) {
+        const buttons = this._storefrontButtonsHtml(storefronts) + this._camsButtonHtml();
+        if (!buttons) return '';
+
+        // Singular or plural with the count, because one link reading "Paid
+        // links" is the kind of boilerplate a reader learns to skip.
+        const noun = storefronts.length === 1 ? 'link' : 'links';
+        const disclosure = storefronts.length
+            ? `<p class="browse-disclosure">
+                   Paid ${noun}. We earn a commission on sales, at no extra cost to you.
+               </p>`
+            : '';
+
+        return `
+            <div class="browse-nav-group">
+                <nav class="browse-nav" aria-label="Browse">${buttons}</nav>
+                ${disclosure}
+            </div>`;
+    }
+
+    /**
+     * The body mount for the browse controls, used in full mode only.
+     *
+     * Affiliate-only mode renders the same group into `.site-header` instead
+     * — see `_headerHtml` — so this wrapper is never emitted there and the
+     * two pills never appear twice.
+     *
+     * There is no advertisement in this row. There was for part of
+     * 2026-10-18, a 908x258 at the right-hand end called `top-billboard`;
+     * it is a 160x600 positioned down the right of the first screen now, not
+     * in this row and not in the flow at all. See `top-skyscraper` in
+     * `src/ads/zones.js`.
+     */
+    _mastheadHtml(storefronts = AFFILIATE_STOREFRONTS) {
+        const nav = this._browseNavHtml(storefronts);
+        return nav ? `<div class="masthead">${nav}</div>` : '';
+    }
+
+    /**
+     * The partners' own storefronts, as primary buttons.
+     *
+     * An `<a>` and not a `<button>`: it navigates, so it must be
+     * middle-clickable, copyable and visible to a crawler as the paid link
+     * it is. `AFFILIATE_LINK_REL` carries the declaration.
+     *
+     * `label` is printed and `partner` is announced — see the note on the
+     * two fields in `affiliates.js`. The `title` and the `aria-label` say
+     * the same full sentence so a hover and a screen reader agree.
+     *
+     * Drawn from configuration, so no storefront configured means no markup
+     * at all rather than an empty button.
+     */
+    _storefrontButtonsHtml(storefronts = AFFILIATE_STOREFRONTS) {
+        return storefronts
+            .map((s) => {
+                const full = `${s.label} at ${s.partner} — paid link, opens in a new tab`;
+                return `
+                    <a class="pill pill-movies" href="${escapeHtml(storefrontUrl(s))}"
+                       target="_blank" rel="${AFFILIATE_LINK_REL}"
+                       title="${escapeHtml(full)}" aria-label="${escapeHtml(full)}">
+                        <span class="pill-icon">${icons.film({ size: 18 })}</span>
+                        <span class="pill-text">${escapeHtml(s.label)}</span>
+                    </a>`;
+            })
+            .join('');
+    }
+
+    /**
+     * The jump to the live cam shelf.
+     *
+     * A `<button>` and not an `<a href="#cam-shelf">`, because it scrolls
+     * within this page and a hash in the address bar would survive a reload
+     * into a position the shelf may no longer occupy.
+     *
+     * Gated on `camsExpected()` — the same call that decides whether the
+     * shelf is reserved at all — so the button and its destination are never
+     * out of step on first paint. They can still diverge *after* the feed
+     * answers, because an empty feed hides the shelf; `_syncCamsButton`
+     * closes that gap, and is called from the same place the shelf is
+     * refreshed.
+     *
+     * It deliberately does not link `cams.lustxr.com`. That host is the
+     * Chaturbate white label, and linking it from an indexed page is the one
+     * thing `docs/SEARCH.md` §4 rules out — `test/cams.test.js` fails the
+     * build if our own hostnames ever become a cam link.
+     */
+    _camsButtonHtml() {
+        if (!camsExpected()) return '';
+
+        return `
+            <button class="pill pill-cams" type="button" data-masthead="cams">
+                <span class="pill-live" aria-hidden="true"></span>
+                <span class="pill-text">Live Cams</span>
+            </button>`;
+    }
+
+    /**
+     * Hide the cam button when the shelf it points at has gone.
+     *
+     * `CamShelf._render` hides its mount when the partner is unconfigured or
+     * nobody is broadcasting. A button that scrolls to a hidden element
+     * scrolls nowhere, which reads as a broken control rather than as a
+     * quiet night, so it follows the shelf exactly.
+     */
+    _syncCamsButton() {
+        const btn = this.mount.querySelector('[data-masthead="cams"]');
+        if (btn) btn.hidden = !this.camShelfEl || this.camShelfEl.hidden;
+    }
+
+    /**
+     * Wire the masthead's one scripted control.
+     *
+     * Only the cam button needs anything: the storefront is an `<a>` and the
+     * browser handles it.
+     *
+     * `scroll-margin-top` on the shelf does the offsetting, not an arithmetic
+     * `scrollTo` here — the header is fixed and 96px or 128px depending on
+     * the breakpoint, and duplicating that number in JavaScript is how it
+     * ends up wrong at one of them. `behavior: 'smooth'` is left to the
+     * browser, which already drops it for `prefers-reduced-motion`.
+     */
+    _bindMasthead() {
+        const btn = this.mount.querySelector('[data-masthead="cams"]');
+        if (!btn) return;
+
+        btn.addEventListener('click', () => {
+            if (!this.camShelfEl || this.camShelfEl.hidden) return;
+            this.camShelfEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        });
+    }
+
     _affiliateShelfHtml({ program, items }) {
         const stars = program.kind === 'stars';
         const card = stars
@@ -647,22 +1001,35 @@ export class BrowseUI extends pc.EventHandler {
      * That is incidental rather than designed, and it is not what the guard
      * is for — the guard is for the unbounded listener growth behind it.
      *
-     * **Resting, not passing.** Each card is one OpenAI call the first time
-     * anybody in the world hovers it, and dragging the pointer across the row
-     * crosses all ten in about a second. `HOVER_DELAY_MS` is what makes the
-     * difference between an intent to read and a mouse on its way somewhere
-     * else, and the in-flight request is aborted on the way out, so a sweep
-     * costs nothing.
+     * **Resting, not passing.** `HOVER_DELAY_MS` is what makes the difference
+     * between an intent to read and a mouse on its way somewhere else. With
+     * profiles preloaded it is mostly a flicker control, but it is still a
+     * spending control for a performer the chart added after the last
+     * biography was written, and the in-flight request is aborted on the way
+     * out, so a sweep costs nothing either way.
      *
      * Keyboard gets the same thing on focus, with no delay — arriving by tab
      * is already deliberate, and there is no sweeping to protect against.
+     *
+     * **The card is a dialog now, not a tooltip.** It holds an ad, which is a
+     * link, and a tooltip containing something clickable is a tooltip nobody
+     * can click: the role is wrong for assistive technology and the old
+     * `pointer-events: none` made it literally true. Both are changed, and
+     * the dismissal had to change with them — a card that vanishes on
+     * `pointerout` cannot be reached by the pointer that would click it.
+     * Outside click, Escape, or scrolling the row closes it.
      */
     _bindStarBios() {
+        // Two different scopes on purpose. `root` is the section the performer
+        // cards live in and is what the delegated listeners bind to; the card
+        // itself is a sibling of that section rather than a child, so it has
+        // to be looked up from the mount. See `_render` for why.
         const root = this.affiliatesEl;
-        const card = root?.querySelector('#star-bio');
+        const card = this.mount.querySelector('#star-bio');
         if (!root || !card) return;
 
         this.starBios ??= new Map();
+        this._preloadStarBios();
 
         // Transient state is reset on every render; the listeners below are
         // not. A row that was being hovered when the refresh landed should
@@ -675,6 +1042,18 @@ export class BrowseUI extends pc.EventHandler {
         if (this._bioBoundTo === root) return;
         this._bioBoundTo = root;
 
+        // Built once, for the lifetime of the card. Only `.star-bio-body` is
+        // rewritten per performer — see `BIO_CARD_AD` in `zones.js` for why
+        // the ad must not be, and `_showBio` for the one call that registers
+        // it. `bioCardAdHtml()` is `''` when the zone is unconfigured, which
+        // leaves the biography sitting directly above its disclaimer.
+        card.innerHTML =
+            '<div class="star-bio-body"></div>' +
+            bioCardAdHtml() +
+            '<p class="star-bio-source">Written by AI. May be incomplete or wrong.</p>';
+
+        const body = card.querySelector('.star-bio-body');
+
         const hide = () => {
             clearTimeout(this._bioTimer);
             this._bioAbort?.abort();
@@ -683,20 +1062,33 @@ export class BrowseUI extends pc.EventHandler {
             this._bioFor = null;
         };
 
+        // Registered the first time the card is shown rather than at bind
+        // time. `fillAdSlots` marks what it has pushed, so calling it on every
+        // open is one impression per page load and not one per hover — but a
+        // slot pushed while its container is `display: none` is a slot the
+        // network can decline to draw, and the card ships hidden.
+        const show = (anchor) => {
+            this._place(card, anchor);
+            card.hidden = false;
+            fillAdSlots(card);
+        };
+
         const open = async (anchor) => {
             const starId = Number(anchor.dataset.starId);
             if (!starId) return;
 
             this._bioFor = starId;
 
-            // A profile already in hand renders in the same frame as the
-            // pointer arriving; only a cold one gets a spinner.
+            // Preloading means this is a hit for every performer the chart
+            // had a profile for when the page loaded, and the card opens in
+            // the same frame as the pointer arriving. The spinner is left in
+            // for the one that was added since.
             let bio = this.starBios.get(starId);
 
             if (!bio) {
-                card.innerHTML = '<p class="star-bio-loading">Looking up…</p>';
-                this._place(card, anchor);
-                card.hidden = false;
+                card.classList.add('is-loading');
+                body.innerHTML = '<p class="star-bio-loading">Looking up…</p>';
+                show(anchor);
 
                 this._bioAbort = new AbortController();
 
@@ -726,9 +1118,9 @@ export class BrowseUI extends pc.EventHandler {
                 return;
             }
 
-            card.innerHTML = this._starBioHtml(bio, anchor);
-            this._place(card, anchor);
-            card.hidden = false;
+            card.classList.remove('is-loading');
+            body.innerHTML = this._starBioHtml(bio, anchor);
+            show(anchor);
         };
 
         const enter = (event) => {
@@ -741,6 +1133,10 @@ export class BrowseUI extends pc.EventHandler {
             const delay = event.type === 'focusin' ? 0 : HOVER_DELAY_MS;
             this._bioTimer = setTimeout(() => open(anchor), delay);
         };
+
+        /** Anything inside the card, or the performer it is describing. */
+        const inside = (node) =>
+            Boolean(node) && (card.contains(node) || Boolean(node.closest?.('.star-card')));
 
         // `pointerover` rather than `pointerenter`: it bubbles, which is what
         // makes one listener on the section work for every card in it.
@@ -756,13 +1152,28 @@ export class BrowseUI extends pc.EventHandler {
 
         root.addEventListener('focusin', enter);
 
-        root.addEventListener('pointerout', (event) => {
-            const anchor = event.target.closest?.('.star-card');
-            if (anchor && !anchor.contains(event.relatedTarget)) hide();
+        // Outside click, not `pointerout`. The card holds an ad, and the only
+        // way to reach an ad in a card that closes when the pointer leaves the
+        // portrait is to not let go of the mouse — which is to say there is no
+        // way to reach it.
+        //
+        // `pointerdown` rather than `click` so the card is gone before a
+        // navigation starts, and on `document` because an outside click is by
+        // definition not in this section.
+        //
+        // Note what this deliberately does *not* catch: a click inside the ad.
+        // Events in a cross-origin iframe do not cross into this document, so
+        // there is no event here to mistake for an outside click, and the card
+        // stays put while the ad opens its own tab.
+        document.addEventListener('pointerdown', (event) => {
+            if (!card.hidden && !inside(event.target)) hide();
         });
-        root.addEventListener('focusout', (event) => {
-            const anchor = event.target.closest?.('.star-card');
-            if (anchor && !anchor.contains(event.relatedTarget)) hide();
+
+        // The keyboard equivalent, and the replacement for the `focusout`
+        // handler that used to do this. Focus landing somewhere else on the
+        // page is as deliberate as clicking there.
+        document.addEventListener('focusin', (event) => {
+            if (!card.hidden && !inside(event.target)) hide();
         });
 
         // A card pinned to a position in the viewport is wrong the moment the
@@ -772,13 +1183,57 @@ export class BrowseUI extends pc.EventHandler {
     }
 
     /**
-     * The card's contents.
+     * Fetch every biography the server already has, in one request.
      *
-     * The "Written by AI" line is not decoration. A paragraph of confident
-     * career history about a real person, in our own styling, under our own
-     * heading, reads as something we are asserting — and it is a language
-     * model's recollection, which is a different claim with a different error
-     * rate. Saying so is the honest minimum, and it is why the model is also
+     * Hovering used to be the only thing that fetched, which meant the first
+     * rest on each of ten performers was ten round trips and ten spinners —
+     * for text that, in the overwhelming majority of cases, was already
+     * written and sitting on disk.
+     *
+     * **One request, not ten.** The per-star route is rate limited at 30 a
+     * minute, so preloading by firing ten of it would spend a third of a
+     * visitor's budget on page load and lock out anyone who reloads three
+     * times. `/api/stars/bios` answers the whole row at once.
+     *
+     * **It cannot spend anything.** The bulk route serves what is cached and
+     * nothing else; a performer it has no profile for is simply absent from
+     * the response and falls through to the hover path, which is still the
+     * only thing in this system that can commission a biography. That is what
+     * keeps a page load from ever being able to cost ten OpenAI calls.
+     *
+     * Failure is silent and leaves the map empty, because the fallback is the
+     * behaviour this site had yesterday.
+     */
+    _preloadStarBios() {
+        if (this._bioPreload) return this._bioPreload;
+
+        this._bioPreload = fetch('/api/stars/bios', { headers: { Accept: 'application/json' } })
+            .then((res) => (res.ok ? res.json() : null))
+            .then((payload) => {
+                for (const [id, bio] of Object.entries(payload?.bios ?? {})) {
+                    const starId = Number(id);
+                    if (starId && !this.starBios.has(starId)) this.starBios.set(starId, bio);
+                }
+            })
+            .catch(() => {});
+
+        return this._bioPreload;
+    }
+
+    /**
+     * The per-performer part of the card.
+     *
+     * Only this is replaced on each hover. The ad below it and the "Written
+     * by AI" line below that are built once in `_bindStarBios` and outlive
+     * every performer shown in the card — the ad because re-rendering it
+     * would file an impression per hover, the disclaimer because it is a
+     * fixed statement about the card and not about any one profile.
+     *
+     * That line is not decoration. A paragraph of confident career history
+     * about a real person, in our own styling, under our own heading, reads
+     * as something we are asserting — and it is a language model's
+     * recollection, which is a different claim with a different error rate.
+     * Saying so is the honest minimum, and it is why the model is also
      * allowed to answer "I don't know" rather than fill the space.
      */
     _starBioHtml(bio, anchor) {
@@ -793,8 +1248,7 @@ export class BrowseUI extends pc.EventHandler {
                           .map((h) => `<li>${escapeHtml(h)}</li>`)
                           .join('')}</ul>`
                     : ''
-            }
-            <p class="star-bio-source">Written by AI. May be incomplete or wrong.</p>`;
+            }`;
     }
 
     /**
@@ -1054,17 +1508,38 @@ export class BrowseUI extends pc.EventHandler {
         });
     }
 
+    /**
+     * The fixed header.
+     *
+     * ## Affiliate-only mode carries navigation now, and did not before
+     *
+     * It was the brand and nothing else, because every other control here
+     * acts on a catalogue this mode does not draw. Two things changed that
+     * on 2026-10-18:
+     *
+     * The two places a visitor can actually go — the partner storefront and
+     * the live cam shelf — came up here from a row in the body. They are
+     * site navigation, and the header is where a reader looks for site
+     * navigation; a row of pills below the fixed header was a second one.
+     *
+     * And the catalogue controls came back **inert**: drawn, dimmed, not
+     * focusable, under a Coming Soon overlay. Same reasoning as the
+     * placeholder shelves in `src/site-mode.js` — a page that shows only
+     * paid partner rows reads as a site that does nothing of its own, and
+     * the filters name the one thing this site does that no partner does.
+     *
+     * There is still no account control. That is not a Coming Soon: signing
+     * in works today, `/creator` and `/profile` open the auth modal, and
+     * putting "Coming Soon" over a feature that already exists would be the
+     * one false label on the page.
+     */
     _headerHtml() {
-        // Affiliate-only mode leaves the brand and nothing else. Every other
-        // control here acts on the catalogue — the filters, My List, search
-        // and "Send to headset" all need titles to act on, and the account
-        // controls would offer a signup for a service with nothing in it.
-        // Signing in is still reachable: `/creator` and `/profile` open the
-        // auth modal. See `src/site-mode.js`.
         if (AFFILIATES_ONLY) {
             return `
-                <header class="site-header">
+                <header class="site-header site-header-lite">
                     <div class="brand">${brandLockup({ symbolHeight: 68, wordmarkHeight: 42 })}</div>
+                    ${this._browseNavHtml()}
+                    ${this._headerSoonHtml()}
                 </header>
             `;
         }
@@ -1094,6 +1569,76 @@ export class BrowseUI extends pc.EventHandler {
                 </div>
             </header>
         `;
+    }
+
+    /**
+     * The catalogue controls in affiliate-only mode: drawn, dead, labelled.
+     *
+     * ## Why show a control that does nothing
+     *
+     * Because the alternative reads worse. With only partner rows on the
+     * page, a header holding nothing but a logo says this is a links page.
+     * The filters are the one thing here that no partner offers — sorting a
+     * library by 180° dome, 360° sphere and flat — so drawing them, greyed,
+     * says what the site is for rather than what it currently has. The
+     * placeholder shelves in `src/site-mode.js` make the same trade.
+     *
+     * The honesty of it rests entirely on the overlay. A dimmed control with
+     * no label is a bug; a dimmed control under "Coming Soon" is a roadmap.
+     * `.header-soon-veil` is the label, it is a sibling rather than a
+     * `::after` so it can carry the badge markup the rest of the site uses,
+     * and it is the part of this that must not be deleted.
+     *
+     * ## These are copies, and they must not be mistaken for the originals
+     *
+     * Two attributes are deliberately absent, and a test pins each:
+     *
+     * - **No `data-filter`.** `_bindHeader` binds every `[data-filter]` in
+     *   the mount. Today it is never called in this mode, but if
+     *   `AFFILIATES_ONLY` is ever flipped back these would be wired up
+     *   alongside the real nav and clicking a dead button would filter the
+     *   page from behind a Coming Soon sign.
+     * - **No `id="search-input"`.** That id is queried by exactly one
+     *   `querySelector`, which returns the first match in document order —
+     *   so a duplicate here would hand every search keystroke to the
+     *   disabled copy.
+     *
+     * `disabled` stops the click, `tabindex="-1"` keeps them out of the tab
+     * order, and `aria-hidden` on the groups keeps the whole dead set out of
+     * the accessibility tree. The badge is outside that and stays readable,
+     * with a `title` that says which features it covers — otherwise a screen
+     * reader gets "Coming Soon" attached to nothing.
+     */
+    _headerSoonHtml() {
+        const filter = (label) => `<button type="button" disabled tabindex="-1">${label}</button>`;
+
+        return `
+            <div class="header-soon">
+                <nav class="site-nav" aria-hidden="true">
+                    ${filter('Home')}
+                    ${filter('VR')}
+                    ${filter('180° dome')}
+                    ${filter('360° sphere')}
+                    ${filter('Standard')}
+                    ${filter('My List')}
+                </nav>
+                <div class="header-right" aria-hidden="true">
+                    <div class="search-box">
+                        ${icons.search({ size: 16 })}
+                        <input type="search" placeholder="Titles, formats, genres"
+                            disabled tabindex="-1" />
+                    </div>
+                    <button class="icon-btn labelled" type="button" disabled tabindex="-1">
+                        ${icons.cast({ size: 18 })}<span>Send to headset</span>
+                    </button>
+                </div>
+                <div class="header-soon-veil">
+                    <span class="badge soon"
+                        title="Our own library, search and headset casting are not live yet">
+                        Coming Soon!
+                    </span>
+                </div>
+            </div>`;
     }
 
     /**

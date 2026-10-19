@@ -34,10 +34,13 @@
  * being written and the first id being pasted into `zones.js`, and costs
  * nothing again if the ids are ever taken back out.
  *
- * **It loads once.** `_scriptPromise` is the guard. `_renderAffiliates()` runs
- * again on every refresh and re-writes the slot markup each time, and without
- * this each of those would append another copy of a third-party script to the
- * head.
+ * **It loads only when there is a new slot to fill.** Not once — once was
+ * wrong, and `drainQueue()` below is the long version of why: the network's
+ * loader reads its queue a single time per execution, so slots this site
+ * inserts after the first paint need a fresh copy or they never fill. What
+ * replaces the one-shot guard is `data-ad-filled`, which bounds the loads to
+ * batches of genuinely new slots. `_renderAffiliates()` re-writing the same
+ * markup on every refresh costs nothing.
  *
  * ## The tag shape is in one function, on purpose
  *
@@ -47,9 +50,10 @@
  * `adsbyjuicy` queue. It is reconstructed rather than pasted because pasting
  * the block once per slot puts the loader in the page once per slot.
  *
- * Checked against all seven generated tags (zones 1129394, 1129396, 1129397,
- * 1129398, 1129400, 1129401 and 1129402, 2026-10-18), which differ from each
- * other only in the id and the two dimensions:
+ * Checked against all twelve generated tags (zones 1129394, 1129396, 1129397,
+ * 1129398, 1129400, 1129401, 1129402, 1129404, 1129405, 1129407, 1129419 and
+ * 1129440, 2026-10-18), which differ from each other only in the id and the
+ * two dimensions:
  *
  *     <script type="text/javascript" data-cfasync="false" async
  *             src="https://poweredby.jads.co/js/jads.js"></script>
@@ -69,7 +73,7 @@
  * things in it that encode the format.
  */
 
-import { AD_HOSTS, AD_PLACEMENTS, MOBILE_BREAKPOINT_PX, NATIVE_STRIP } from './zones.js';
+import { AD_HOSTS, AD_PLACEMENTS, BIO_CARD_AD, MOBILE_BREAKPOINT_PX, NATIVE_STRIP } from './zones.js';
 
 /**
  * The network's loader.
@@ -83,8 +87,6 @@ export const AD_SCRIPT_SRC = 'https://poweredby.jads.co/js/jads.js';
 
 /** The global the loader drains, named the way the network's own tag names it. */
 const AD_QUEUE = 'adsbyjuicy';
-
-let _scriptPromise = null;
 
 /* ------------------------------------------------------------ selection -- */
 
@@ -135,14 +137,20 @@ function viewport() {
 /**
  * Whether anything at all is configured.
  *
- * The gate on fetching `jads.js`. Checks the strip as well as the placements,
- * because a site running only native units is a legitimate configuration.
+ * The gate on fetching `jads.js`. Checks the strip and the profile card as
+ * well as the placements, because a site running only native units — or only
+ * the one unit inside the hover card — is a legitimate configuration, and a
+ * gate that missed it would leave a configured zone permanently unfilled.
  */
 export function anyZonesConfigured() {
     const inPlacements = AD_PLACEMENTS.some(
         (p) => cleanZone(p.desktop.zone) || cleanZone(p.mobile.zone)
     );
-    return inPlacements || NATIVE_STRIP.zones.some((z) => cleanZone(z));
+    return (
+        inPlacements ||
+        NATIVE_STRIP.zones.some((z) => cleanZone(z)) ||
+        Boolean(cleanZone(BIO_CARD_AD.zone))
+    );
 }
 
 /**
@@ -219,6 +227,24 @@ export function nativeStripHtml(strip = NATIVE_STRIP) {
 }
 
 /**
+ * The unit inside the performer profile card, as HTML.
+ *
+ * No viewport argument, because there is only one size — see `BIO_CARD_AD` in
+ * `zones.js`. Still returns `''` when unconfigured, so the card is built
+ * without an ad in it rather than with an empty labelled box in the middle of
+ * somebody's biography.
+ *
+ * @param {{zone: number|null, width: number, height: number}} [unit]
+ * @returns {string}
+ */
+export function bioCardAdHtml(unit = BIO_CARD_AD) {
+    const zone = cleanZone(unit.zone);
+    if (!zone) return '';
+
+    return slotHtml(zone, unit.width, unit.height, 'ad-slot-bio-card');
+}
+
+/**
  * The markup the network's own tag uses, with the label this site adds.
  *
  * The label is not decoration. An ad sitting directly beneath a row of paid
@@ -240,30 +266,60 @@ function slotHtml(zone, width, height, className) {
 /* --------------------------------------------------------------- fill -- */
 
 /**
- * Fetch the loader, once.
+ * Hand the queue to the network, once per batch of newly-registered slots.
  *
- * Resolves when the script is in the head, not when it has drawn anything —
- * the queue is drained asynchronously by the network's own code and there is
- * no callback for "filled". A failure resolves rather than rejects: an ad
- * network being unreachable is not a reason for a caller to take a branch,
- * and there is nothing to retry that the browser is not already retrying.
+ * ## `jads.js` is not a resident drainer, and this module used to assume it was
  *
- * @returns {Promise<void>}
+ * The loader reads `window.adsbyjuicy` exactly once — at the moment it
+ * executes — fills every zone whose `<ins>` is in the DOM right then, and
+ * never looks again. There is no callback, no second pass and no observer. A
+ * zone pushed after that moment stays in the array for the life of the page
+ * and never fills, silently, because from the network's side nothing asked
+ * for it.
+ *
+ * That is fatal here, because this site inserts most of its slots after the
+ * first paint. Only `top-skyscraper` and `top-leaderboard` are in the initial
+ * render; the pitch billboard and the mid billboard arrive when the partner
+ * feed answers, the native strip and the footer leaderboard arrive with the
+ * content rows, and the profile card's unit is not built until somebody hovers
+ * a performer. Loading the script once — which this module did, deliberately,
+ * to keep one copy in the head — filled the two early slots and abandoned the
+ * rest. The symptom is the one `zones.js` warns is hardest to read: a
+ * labelled, correctly-sized, permanently empty box, indistinguishable from an
+ * ad that no advertiser bid on.
+ *
+ * So a fresh copy is appended per batch. Three things make that safe rather
+ * than a way to bill an advertiser twice:
+ *
+ *   - **It re-runs.** The loader's guard is `if (!a || !a.loaded)`, and the
+ *     flag it sets on the way out is `a.adsbyjuicy.loaded` — a different
+ *     property, which `a.loaded` never becomes. A second copy therefore
+ *     drains again, which is the behaviour relied on here.
+ *   - **It cannot fill the same zone twice.** It finishes each one by
+ *     replacing the `<ins>` with its own children, so the element
+ *     `getElementById(zone)` would have found is gone and that entry is
+ *     skipped on every later pass, however many times the queue is re-read.
+ *   - **It is not asked to.** `data-ad-filled` stops this module pushing a
+ *     zone it has already pushed, so the re-read is over old entries plus the
+ *     new batch, never a duplicate of the new batch.
+ *
+ * The tag removes itself once it has run. The fill happens synchronously
+ * inside its own execution, so there is nothing left to keep, and a page where
+ * every hover appends a permanent `<script>` to the head is a leak. What does
+ * accumulate is the network's own `message` listener and its 1x1 position
+ * probe, one per drain — theirs to own, cheap, and not worth fighting.
  */
-export function loadAdScript() {
-    if (_scriptPromise) return _scriptPromise;
+function drainQueue() {
+    const tag = document.createElement('script');
+    tag.async = true;
+    tag.src = AD_SCRIPT_SRC;
+    tag.setAttribute('data-cfasync', 'false');
 
-    _scriptPromise = new Promise((resolve) => {
-        const tag = document.createElement('script');
-        tag.async = true;
-        tag.src = AD_SCRIPT_SRC;
-        tag.setAttribute('data-cfasync', 'false');
-        tag.addEventListener('load', () => resolve());
-        tag.addEventListener('error', () => resolve());
-        document.head.appendChild(tag);
-    });
+    const done = () => tag.remove();
+    tag.addEventListener('load', done);
+    tag.addEventListener('error', done);
 
-    return _scriptPromise;
+    document.head.appendChild(tag);
 }
 
 /**
@@ -278,6 +334,13 @@ export function loadAdScript() {
  * would otherwise push the same zone again on every refresh and have the
  * network count it twice.
  *
+ * The queue is pushed to *before* the drainer is appended, and both happen in
+ * one synchronous pass. That ordering is the whole contract: the loader fills
+ * from the array as it finds it at execution time, so a zone queued after it
+ * runs is a zone that never fills, and an `<ins>` inserted after it runs is a
+ * zone it could not find. Doing both here, together, is what guarantees
+ * neither can happen.
+ *
  * @param {ParentNode} [root]
  */
 export function fillAdSlots(root = document) {
@@ -286,20 +349,19 @@ export function fillAdSlots(root = document) {
     const slots = [...root.querySelectorAll('ins.adsbyjuicy:not([data-ad-filled])')];
     if (!slots.length) return;
 
-    loadAdScript();
-
     window[AD_QUEUE] = window[AD_QUEUE] || [];
 
+    let queued = 0;
     for (const ins of slots) {
         const zone = cleanZone(ins.id);
         if (!zone) continue;
 
         ins.setAttribute('data-ad-filled', '');
         window[AD_QUEUE].push({ adzone: zone });
+        queued++;
     }
-}
 
-/** Test seam: forget the one-shot script guard. */
-export function resetAdScriptForTests() {
-    _scriptPromise = null;
+    // Nothing new to fill means nothing to ask for. Without this, a refresh
+    // that re-rendered only unconfigured slots would still fetch the loader.
+    if (queued) drainQueue();
 }

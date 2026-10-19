@@ -3,7 +3,21 @@ import { api } from '../api/client.js';
 import { sleepUntilReturn } from '../api/identity-return.js';
 import { brandLockup } from './brand-mark.js';
 import { icons } from './icons.js';
+import {
+    cameraAvailable,
+    cameraProblem,
+    declineText,
+    frameFrom,
+    openSelfieCamera,
+    stopSelfieCamera
+} from './selfie-capture.js';
 import './auth-modal.css';
+
+/**
+ * Florida's statutory name for the route that keeps nothing, and the only
+ * method here that is not a document handed to a popup.
+ */
+const SELFIE_METHOD = 'anonymous';
 
 /**
  * Sign in, sign up, and the identity step that follows signing up.
@@ -20,7 +34,8 @@ import './auth-modal.css';
  *   register      who are you going to be - as a user, or as a creator
  *   creator       the publisher agreement on its own, for Become a creator
  *   attest        a button, for a viewer in a state with no statute
- *   age           a document check, for a viewer in one of the twenty-seven
+ *   age           a document check, for a viewer in one of the twenty-seven,
+ *                 or in Florida alone a photograph instead, if they pick it
  *   enrol         a document *and* a face, for a creator, once, here at signup
  *
  * The split between the last three is the whole design.
@@ -49,6 +64,8 @@ export class AuthModal {
         this.jurisdiction = null;
         this._resolve = null;
         this._terms = null;
+        /** Live only during the camera step; see {@link _stopCamera}. @type {MediaStream|null} */
+        this._stream = null;
     }
 
     /**
@@ -102,6 +119,10 @@ export class AuthModal {
     }
 
     close(user = null) {
+        // Before anything else: a dialog dismissed with the camera open would
+        // otherwise leave the light on behind it. Escape reaches this too.
+        this._stopCamera();
+
         this.el?.classList.remove('open');
         document.body.style.overflow = '';
         this._resolve?.(user);
@@ -145,6 +166,16 @@ export class AuthModal {
         });
 
         el.addEventListener('change', (e) => {
+            // Picking a route swaps which disclosure is on screen, by hand
+            // rather than through `_render`: a re-render would rebuild the
+            // consent checkbox and silently untick it, so somebody who agreed
+            // and then changed their mind about the method would press a
+            // button that told them to agree first.
+            if (e.target.closest('input[name="checkMethod"]')) {
+                this._showDisclosure();
+                return;
+            }
+
             // The role toggle re-renders the form, so anything already typed
             // has to survive it.
             const role = e.target.closest('input[name="signupRole"]');
@@ -172,6 +203,20 @@ export class AuthModal {
             }
             if (e.target.closest('[data-age="start"]')) {
                 this._runAgeCheck();
+                return;
+            }
+            if (e.target.closest('[data-age="capture"]')) {
+                this._captureSelfie();
+                return;
+            }
+            if (e.target.closest('[data-age="cancel"]')) {
+                // Back to the choice with the camera off, not out of the
+                // dialog: somebody who thought better of being photographed
+                // still owes this state a check, and the document route is
+                // the other half of the offer.
+                this._stopCamera();
+                this.checkState = { ...this.checkState, step: 'consent' };
+                this._render();
                 return;
             }
             if (e.target.closest('[data-enrol="start"]')) {
@@ -480,18 +525,37 @@ export class AuthModal {
             : `${BRAND} is an adult platform.${because} One document check and you are in — it takes
                about a minute.`;
 
+        // The choice comes before the wording, not after, because in Florida
+        // the two routes have different disclosures and only the one that
+        // matches the choice is shown. Everywhere else there is no choice and
+        // `_methodsHtml` renders nothing, so this is the usual single block.
         const body = {
             consent: `
                 <p class="auth-reason">${intro}</p>
-                <div class="consent-text">${escapeHtml(state.text ?? '').replace(/\n\n/g, '</p><p>')}</div>
                 ${enrolling ? '' : this._methodsHtml()}
+                ${
+                    enrolling
+                        ? `<div class="consent-text">${escapeHtml(state.text ?? '').replace(/\n\n/g, '</p><p>')}</div>`
+                        : this._disclosuresHtml(state)
+                }
                 <label class="checkbox">
                     <input name="checkConsent" type="checkbox" />
                     <span>${enrolling ? 'I agree to the check described above.' : 'I agree, and I am over 18.'}</span>
                 </label>
-                <button type="button" class="btn btn-primary auth-submit" data-${kind}="start">Start the check</button>`,
+                <button type="button" class="btn btn-primary auth-submit" data-${kind}="start">${
+                    this._selfiePicked() ? 'Start the camera' : 'Start the check'
+                }</button>`,
 
             starting: '<p class="auth-reason">Opening the check…</p>',
+
+            // The one step that must not be re-rendered while it is on screen:
+            // rebuilding `innerHTML` would replace the `<video>` and drop the
+            // stream with it. Every path out of here stops the camera first.
+            camera: `
+                <p class="auth-reason">${escapeHtml(state.message ?? 'When your face fills the frame, take the photo.')}</p>
+                <div class="age-gate-camera"><video class="age-gate-cam" data-cam playsinline muted></video></div>
+                <button type="button" class="btn btn-primary auth-submit" data-age="capture">Take the photo</button>
+                <button type="button" class="btn auth-submit" data-age="cancel">Use a document instead</button>`,
 
             waiting: `
                 <p class="auth-reason">Follow the steps in the window that just opened.</p>
@@ -536,17 +600,81 @@ export class AuthModal {
         if (!where?.requiresChoice) return '';
 
         const options = (where.methods ?? [])
-            .map(
-                (m) => `
-                <label class="checkbox">
-                    <input name="checkMethod" type="radio" value="${escapeHtml(m.id)}" />
-                    <span>${escapeHtml(m.label)}<small>${escapeHtml(m.describe)}</small></span>
-                </label>`
-            )
+            .map((m) => {
+                // The anonymous route needs an endpoint this deployment may
+                // not have. Shown and disabled rather than dropped, because
+                // the statute is about what was *offered*: a viewer who was
+                // told two routes exist and finds one of them greyed out
+                // knows the offer was real and that this server cannot run
+                // it, where a silently shorter list reads as a choice nobody
+                // was given.
+                const off = m.id === SELFIE_METHOD && !where.selfieReady;
+                const on = m.id === this.checkState?.method;
+
+                return `
+                <label class="checkbox${off ? ' is-unavailable' : ''}">
+                    <input name="checkMethod" type="radio" value="${escapeHtml(m.id)}"${off ? ' disabled' : ''}${
+                        on ? ' checked' : ''
+                    } />
+                    <span>${escapeHtml(m.label)}<small>${escapeHtml(m.describe)}${
+                        off ? ' <em>Not available on this server.</em>' : ''
+                    }</small></span>
+                </label>`;
+            })
             .join('');
 
         return `<p class="auth-reason">Choose how you would like to be verified.</p>
                 <div class="method-choice">${options}</div>`;
+    }
+
+    /**
+     * The disclosure, or both of them where there are two routes to pick from.
+     *
+     * Reusing the document wording over a camera capture would be a consent
+     * record naming a check that did not happen - it promises a document is
+     * what is read and that a viewer is never asked for their face, and on the
+     * anonymous route neither is true. So each route carries its own text and
+     * its own version, and only the one matching the current choice is
+     * visible. Until something is picked, neither is.
+     */
+    _disclosuresHtml(state) {
+        const asBlock = (kind, text) =>
+            `<div class="consent-text" data-consent-for="${kind}"${
+                this._disclosureKind() === kind ? '' : ' hidden'
+            }>${escapeHtml(text ?? '').replace(/\n\n/g, '</p><p>')}</div>`;
+
+        if (!this.jurisdiction?.requiresChoice) return asBlock('document', state.text);
+
+        return asBlock('document', state.text) + asBlock(SELFIE_METHOD, state.selfieText);
+    }
+
+    /**
+     * Which route is picked right now, or null before anything is.
+     *
+     * The radios only exist on the consent step, so the remembered choice is
+     * the answer on the camera and decline steps - where it is what decides
+     * whether "try again" means the camera or a document. On the consent step
+     * the remembered choice is rendered as a checked radio, so the DOM
+     * answers first and the fallback never contradicts it.
+     */
+    _pickedMethod() {
+        return (
+            this.el?.querySelector('input[name="checkMethod"]:checked')?.value ??
+            this.checkState?.method ??
+            null
+        );
+    }
+
+    _selfiePicked() {
+        return this._pickedMethod() === SELFIE_METHOD;
+    }
+
+    /** Which disclosure belongs with the current choice; null until one is made. */
+    _disclosureKind() {
+        const picked = this._pickedMethod();
+        if (picked) return picked === SELFIE_METHOD ? SELFIE_METHOD : 'document';
+
+        return this.jurisdiction?.requiresChoice ? null : 'document';
     }
 
     /** Switch into an identity step, loading the disclosure it needs. */
@@ -572,7 +700,18 @@ export class AuthModal {
             this.checkState =
                 kind === 'enrol'
                     ? { step: 'consent', text: consent.text, version: consent.version }
-                    : { step: 'consent', text: consent.age.text, version: consent.age.version };
+                    : {
+                          step: 'consent',
+                          text: consent.age.text,
+                          version: consent.age.version,
+                          // Both disclosures are loaded even where only one is
+                          // offered, for the same reason they are rendered
+                          // together: a Florida viewer picks between them on
+                          // this screen, so both have to be readable before
+                          // the choice, not fetched after it.
+                          selfieText: consent.selfie?.text,
+                          selfieVersion: consent.selfie?.version
+                      };
         } catch (err) {
             this.checkState = { step: 'error', message: err.message };
         }
@@ -602,14 +741,135 @@ export class AuthModal {
     }
 
     _runAgeCheck() {
-        const picked = this.el.querySelector('input[name="checkMethod"]:checked');
+        const picked = this._pickedMethod();
+
+        // Not a variant of the document flow and not routed through it. The
+        // server refuses `method: 'anonymous'` on `/age` outright, because
+        // that route used to accept it and quietly run a document check
+        // instead - which is the failure this branch exists to make
+        // impossible from the client side as well.
+        // Remembered before either branch: the radios live on the consent
+        // step alone, and both of the screens past it need to know which way
+        // "try again" goes.
+        this.checkState = { ...this.checkState, method: picked };
+
+        if (picked === SELFIE_METHOD) return this._openCamera();
 
         return this._runCheck({
-            start: (version) => api.identity.startAge(version, picked?.value),
+            start: (version) => api.identity.startAge(version, picked),
             poll: () => api.identity.completeAge(),
             windowName: 'avr-age-check',
             flow: 'age'
         });
+    }
+
+    /** Show the disclosure for the chosen route, and name the button for it. */
+    _showDisclosure() {
+        const kind = this._disclosureKind();
+
+        for (const block of this.el.querySelectorAll('[data-consent-for]')) {
+            block.hidden = block.dataset.consentFor !== kind;
+        }
+
+        const button = this.el.querySelector('[data-age="start"]');
+        if (button) button.textContent = kind === SELFIE_METHOD ? 'Start the camera' : 'Start the check';
+    }
+
+    /**
+     * Open the camera for the anonymous route.
+     *
+     * The consent check is the same one `_runCheck` makes, repeated rather
+     * than shared because this path never reaches it - and skipping it here
+     * would mean a photograph taken before anybody agreed to the wording that
+     * describes what happens to it.
+     */
+    async _openCamera() {
+        const agreed = this.el.querySelector('input[name="checkConsent"]');
+        if (agreed && !agreed.checked) {
+            this.checkState = { ...this.checkState, step: 'error', message: 'You have to agree before the check can start.' };
+            this._render();
+            return;
+        }
+
+        if (!cameraAvailable()) {
+            this.checkState = {
+                ...this.checkState,
+                step: 'error',
+                message: 'This browser will not let the page use a camera. Choose the document route instead.'
+            };
+            this._render();
+            return;
+        }
+
+        // Rendered first so the `<video>` exists to attach to, and not
+        // re-rendered again until the camera is stopped.
+        this.checkState = { ...this.checkState, step: 'camera', message: 'Starting the camera…' };
+        this._render();
+
+        try {
+            this._stream = await openSelfieCamera(this.el.querySelector('[data-cam]'));
+        } catch (err) {
+            this._stream = null;
+            this.checkState = { ...this.checkState, step: 'error', message: cameraProblem(err) };
+            this._render();
+            return;
+        }
+
+        const hint = this.el.querySelector('.auth-reason');
+        if (hint) hint.textContent = 'When your face fills the frame, take the photo.';
+    }
+
+    /**
+     * One frame, one request, one answer.
+     *
+     * No polling and no popup: the estimate is synchronous, so unlike every
+     * other check in this dialog there is nothing to come back for. The
+     * camera is stopped before the request rather than after - the frame is
+     * already in hand, and nobody should be watching themselves on camera
+     * while the answer arrives.
+     */
+    async _captureSelfie() {
+        const button = this.el.querySelector('[data-age="capture"]');
+        if (button) button.disabled = true;
+
+        const photo = await frameFrom(this.el.querySelector('[data-cam]'));
+        this._stopCamera();
+
+        if (!photo) {
+            this.checkState = { ...this.checkState, step: 'rejected', message: 'The photo could not be taken. Try again.' };
+            this._render();
+            return;
+        }
+
+        const version = this.checkState?.selfieVersion;
+        this.checkState = { ...this.checkState, step: 'starting' };
+        this._render();
+
+        try {
+            const result = await api.identity.submitSelfie(photo, version);
+
+            if (result.status === 'verified') {
+                await api.restore();
+                this.close(api.user);
+                return;
+            }
+
+            this.checkState = { ...this.checkState, step: 'rejected', message: declineText(result) };
+        } catch (err) {
+            // A decline arrives as a 200 and lands above; anything thrown
+            // here is the request failing, which is not the viewer's doing
+            // and should not be reported as a verdict on their face.
+            this.checkState = { ...this.checkState, step: 'error', message: err.message };
+        }
+
+        this._render();
+    }
+
+    /** Idempotent, and called from every path out of the camera step. */
+    _stopCamera() {
+        if (!this._stream) return;
+        stopSelfieCamera(this._stream, this.el?.querySelector('[data-cam]'));
+        this._stream = null;
     }
 
     _runEnrolment() {

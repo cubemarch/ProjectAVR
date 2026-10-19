@@ -1,15 +1,25 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import {
     AD_SCRIPT_SRC,
     adSlotHtml,
     anyZonesConfigured,
+    bioCardAdHtml,
     cleanZone,
     nativeStripHtml,
     pickSize
 } from '../src/ads/juicyads.js';
-import { AD_HOSTS, AD_PLACEMENTS, MOBILE_BREAKPOINT_PX, NATIVE_STRIP } from '../src/ads/zones.js';
+import {
+    AD_HOSTS,
+    AD_PLACEMENTS,
+    BIO_CARD_AD,
+    MOBILE_BREAKPOINT_PX,
+    NATIVE_STRIP
+} from '../src/ads/zones.js';
 
 /**
  * Ad slots.
@@ -59,6 +69,15 @@ test('every mobile creative fits the narrowest phone', () => {
     }
 
     assert.ok(NATIVE_STRIP.width <= 320, 'the native unit fits a phone too');
+
+    // The profile card has no mobile tier to fall back to — it is one size at
+    // every width — so this is the only thing standing between it and being
+    // clipped on a phone. The card itself is `calc(100vw - 24px)` at its
+    // widest, and the unit sits inside 16px of padding either side.
+    assert.ok(
+        BIO_CARD_AD.width <= 320 - 24 - 32,
+        `the profile card unit is ${BIO_CARD_AD.width}px, too wide for the card on a 320px phone`
+    );
 });
 
 test('no zone id is used twice', () => {
@@ -74,6 +93,7 @@ test('no zone id is used twice', () => {
         }
     }
     ids.push(...NATIVE_STRIP.zones);
+    if (BIO_CARD_AD.zone !== null) ids.push(BIO_CARD_AD.zone);
 
     assert.equal(new Set(ids).size, ids.length, `a zone id repeats in ${ids.join(', ')}`);
 });
@@ -238,6 +258,32 @@ test('an empty strip is no strip', () => {
     assert.equal(nativeStripHtml(junk), '', 'and nothing a bad paste left behind');
 });
 
+test('the profile card unit draws at its one size', () => {
+    const html = bioCardAdHtml();
+
+    assert.match(html, /id="1129407"/);
+    assert.match(html, /class="ad-slot ad-slot-bio-card"/);
+    assert.match(html, /data-width="178"/);
+    assert.match(html, /data-height="30"/);
+    assert.match(html, /--ad-w:178px/);
+    assert.match(html, /--ad-h:30px/);
+
+    // The class the card's own stylesheet hangs the in-popup spacing on, and
+    // the hook `_bindStarBios` relies on being able to hide while a biography
+    // is still being fetched.
+    assert.equal(html.match(/class="adsbyjuicy"/g).length, 1, 'one unit, not a strip');
+    assert.match(html, />Advertisement</, 'disclosed, like every other slot');
+});
+
+test('an unconfigured profile card unit renders nothing', () => {
+    // The card is built from a string concatenation rather than a template
+    // with a hole in it, so `''` here is the difference between a biography
+    // sitting above its disclaimer and one with an empty labelled box wedged
+    // into the middle of it.
+    assert.equal(bioCardAdHtml({ zone: null, width: 178, height: 30 }), '');
+    assert.equal(bioCardAdHtml({ zone: 'nope', width: 178, height: 30 }), '');
+});
+
 /* -------------------------------------------------------------- gates -- */
 
 test('something is configured, so the loader is allowed to run', () => {
@@ -262,4 +308,216 @@ test('the loader is the network\'s own, over https', () => {
     const url = new URL(AD_SCRIPT_SRC);
     assert.equal(url.protocol, 'https:');
     assert.equal(url.host, 'poweredby.jads.co');
+});
+
+/* ------------------------------------------------------- paint order -- */
+
+/*
+ * An ad that covers a popup is worth less than no ad at all: the reader loses
+ * the thing they asked for, and the advertiser is billed for an impression
+ * that made the site worse. The two properties below are what keep that from
+ * happening, and both are one line of CSS that nothing visibly depends on —
+ * so both are deletable while tidying and neither fails loudly when deleted.
+ */
+
+const CSS = fs.readFileSync(
+    path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'src', 'styles', 'netflix.css'),
+    'utf8'
+);
+
+const BROWSE = fs.readFileSync(
+    path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'src', 'ui', 'browse.js'),
+    'utf8'
+);
+
+/** Every `z-index: <n>` in the sheet, as numbers. */
+function zIndexes() {
+    return [...CSS.matchAll(/z-index:\s*(-?\d+)\s*;/g)].map((m) => Number(m[1]));
+}
+
+test('the age gate is the top layer and the profile card is next', () => {
+    // Two assertions and one ordering, because there is exactly one element
+    // on this page allowed above the profile card and it is the age gate.
+    // Anything else appearing up there is an ad format that has escaped its
+    // slot, which is the bug this section exists to catch.
+    const gate = CSS.match(/\.age-gate\s*\{[^}]*?z-index:\s*(\d+)/)?.[1];
+    const card = CSS.match(/\.star-bio\s*\{[^}]*?z-index:\s*(\d+)/)?.[1];
+
+    assert.ok(gate, '.age-gate has no z-index at all');
+    assert.ok(card, '.star-bio has no z-index at all');
+
+    const all = zIndexes();
+    assert.equal(
+        Number(gate),
+        Math.max(...all),
+        'something in the sheet now paints at or above the age gate'
+    );
+
+    // The gate is what stands between a minor and the page. A popup over it
+    // is not a cosmetic defect.
+    assert.ok(Number(gate) > Number(card), 'the profile card can cover the age gate');
+
+    const others = all.filter((n) => n !== Number(gate));
+    assert.equal(
+        Number(card),
+        Math.max(...others),
+        'something other than the age gate now paints at or above the profile card'
+    );
+});
+
+test('the profile card is not nested inside a stacking context', () => {
+    // `.affiliates` is `position: relative; z-index: 2`, which makes it one.
+    // The card used to be rendered inside it, and the effect was that its
+    // z-index was resolved against its siblings in that section rather than
+    // against the page - so the whole card painted at level 2 and an ad
+    // sitting above level 2 covered it, however high the number above went.
+    //
+    // This is a source check because `browse.js` imports CSS and assets and
+    // cannot be loaded in Node. It is worth having anyway: the markup is one
+    // template string, and moving the card back inside the section is a
+    // two-line edit that looks tidier than it is.
+    const browse = fs.readFileSync(
+        path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'src', 'ui', 'browse.js'),
+        'utf8'
+    );
+
+    const section = browse.indexOf('<section class="affiliates"');
+    const endOfSection = browse.indexOf('</section>', section);
+    const bio = browse.indexOf('id="star-bio"');
+
+    assert.ok(section > 0 && endOfSection > 0 && bio > 0, 'the template moved');
+    assert.ok(bio > endOfSection, 'the profile card is back inside .affiliates');
+});
+
+test('an ad creative cannot paint outside its own slot', () => {
+    // Without this, a creative that sets a large z-index on something it
+    // injects competes with the rest of the document on equal terms, and the
+    // formats that pay best are exactly the ones that try.
+    const slot = CSS.match(/^\.ad-slot\s*\{[\s\S]*?\n\}/m)?.[0];
+    assert.ok(slot, '.ad-slot rule not found');
+    assert.match(slot, /isolation:\s*isolate/, 'ad slots are no longer isolated');
+});
+
+test('the skyscraper is the 160x600 zone, and only there', () => {
+    const sky = AD_PLACEMENTS.find((p) => p.id === 'top-skyscraper');
+
+    assert.ok(sky, 'the skyscraper placement exists');
+    assert.equal(sky.desktop.zone, 1129440);
+    assert.equal(sky.desktop.width, 160);
+    assert.equal(sky.desktop.height, 600);
+
+    const uses = AD_PLACEMENTS.filter(
+        (p) => p.desktop.zone === 1129440 || p.mobile.zone === 1129440
+    );
+    assert.equal(uses.length, 1, 'zone 1129440 is in exactly one placement');
+});
+
+test('the skyscraper is not served where the page cannot give up the column', () => {
+    // The only placement whose floor is about the page rather than about the
+    // creative. 160px fits anywhere; the reserved column plus a 908px
+    // `mid-billboard` inside a 4vw gutter does not, below roughly 1190.
+    const sky = AD_PLACEMENTS.find((p) => p.id === 'top-skyscraper');
+    const mid = AD_PLACEMENTS.find((p) => p.id === 'mid-billboard');
+
+    assert.ok(sky.desktopMinWidth >= 1280, 'the floor leaves room for a page');
+
+    // At the floor: viewport, less the reserved rail, less a gutter either
+    // side of what is left, still fits the widest unit below it.
+    const w = sky.desktopMinWidth;
+    const rail = 0.04 * w + sky.desktop.width + 28;
+    assert.ok(w - rail - 2 * (0.04 * w) >= mid.desktop.width, 'the content column is too narrow');
+
+    assert.equal(adSlotHtml('top-skyscraper', { viewportWidth: w - 1 }), '', 'served below its floor');
+    assert.notEqual(adSlotHtml('top-skyscraper', { viewportWidth: w }), '', 'not served at its floor');
+});
+
+test('the reserved column and the creative it is reserved for agree', () => {
+    // `--sky-rail-w` adds the creative width to a gutter and some air. It is
+    // the one number in the stylesheet that has to track `zones.js`, and the
+    // failure when it drifts is an advertisement painted over a shelf.
+    const sky = AD_PLACEMENTS.find((p) => p.id === 'top-skyscraper');
+    const rail = CSS.match(/--sky-rail-w:\s*calc\(([^)]*)\)/)?.[1];
+
+    assert.ok(rail, '--sky-rail-w is no longer a calc()');
+    assert.match(rail, /\b4vw\b/, 'the rail does not include the page gutter it aligns to');
+    assert.ok(
+        rail.includes(`${sky.desktop.width}px`),
+        `--sky-rail-w (${rail}) does not reserve the creative's ${sky.desktop.width}px`
+    );
+});
+
+test('the skyscraper is positioned out of the flow, and the page insets for it', () => {
+    // Two halves of one arrangement. Either without the other is a 600px
+    // hole in the layout or an ad on top of the content.
+    const slot = CSS.match(/^\.ad-slot-top-skyscraper\s*\{[\s\S]*?\n\}/m)?.[0];
+    const main = CSS.match(/^#browse-main\.has-sky-rail\s*\{[\s\S]*?\n\}/m)?.[0];
+
+    assert.ok(slot, '.ad-slot-top-skyscraper rule not found');
+    assert.ok(main, '#browse-main.has-sky-rail rule not found');
+
+    assert.match(slot, /position:\s*absolute/, 'the skyscraper is back in the flow');
+    assert.match(main, /position:\s*relative/, 'nothing anchors the skyscraper');
+    assert.match(main, /padding-right:\s*var\(--sky-rail-w\)/, 'the column is not reserved');
+});
+
+test('the class that reserves the column is set from the markup, not a second breakpoint', () => {
+    // `has-sky-rail` has to come from whether the slot rendered. A media
+    // query would be the 1280 floor written in `zones.js` and again in the
+    // stylesheet, and they drift.
+    assert.match(
+        BROWSE,
+        /const skyscraper = adSlotHtml\('top-skyscraper'\)/,
+        'the skyscraper is no longer rendered once and reused'
+    );
+    assert.match(BROWSE, /skyscraper && 'has-sky-rail'/, 'the class no longer follows the markup');
+    assert.doesNotMatch(CSS, /@media[^{]*1280[^{]*\{[^}]*has-sky-rail/, 'the floor is in the CSS too');
+});
+
+test('no slot is written into the partner section while it is still hidden', () => {
+    // `.affiliates` ships `hidden` and un-hides when the feed answers, about
+    // 700ms in. `fillAdSlots` has run by then, so an `<ins>` sitting in the
+    // template inside that section is registered — and the impression
+    // counted — while the section is `display: none`.
+    //
+    // `pitch-billboard` is the one this catches: its natural home is right
+    // under `<div id="affiliate-pitch">`, three lines up from here, and it
+    // is built in `_renderAffiliates` instead.
+    const start = BROWSE.indexOf('<section class="affiliates"');
+    const end = BROWSE.indexOf('</section>', start);
+
+    assert.ok(start > 0 && end > start, 'the partner section moved or was renamed');
+    assert.doesNotMatch(
+        BROWSE.slice(start, end),
+        /adSlotHtml\(/,
+        'an ad slot is in the template inside the section that ships hidden'
+    );
+});
+
+test('1129419 came back to the pitch band rather than being left on the floor', () => {
+    // It was `top-billboard` for part of a day. The skyscraper taking the
+    // top slot with an id of its own is what freed it, and a live zone that
+    // is in no placement earns nothing.
+    const pitch = AD_PLACEMENTS.find((p) => p.id === 'pitch-billboard');
+
+    assert.ok(pitch, 'the pitch placement exists');
+    assert.equal(pitch.desktop.zone, 1129419);
+    assert.ok(pitch.desktopMinWidth >= pitch.desktop.width, 'the floor clears the creative');
+
+    const uses = AD_PLACEMENTS.filter(
+        (p) => p.desktop.zone === 1129419 || p.mobile.zone === 1129419
+    );
+    assert.equal(uses.length, 1, 'zone 1129419 is in exactly one placement');
+});
+
+test('the placements are in page order', () => {
+    const ids = AD_PLACEMENTS.map((p) => p.id);
+    const expected = [
+        'top-skyscraper',
+        'top-leaderboard',
+        'pitch-billboard',
+        'mid-billboard',
+        'footer-leaderboard'
+    ];
+
+    assert.deepEqual(ids, expected, 'the list is read top to bottom as the page is');
 });

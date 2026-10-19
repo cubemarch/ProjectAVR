@@ -28,11 +28,30 @@ const DEFAULT_AGE = {
     declineReason: null
 };
 
+const DEFAULT_ESTIMATE = {
+    status: 'verified',
+    adultConfirmed: true,
+    estimatedAge: 31,
+    declineReason: null
+};
+
 const state = {
     counter: 0,
     enrolment: { ...DEFAULT_ENROLMENT },
     face: { ...DEFAULT_FACE },
     age: { ...DEFAULT_AGE },
+    estimate: { ...DEFAULT_ESTIMATE },
+    /**
+     * How big the last selfie was, and what it was labelled.
+     *
+     * The bytes themselves are deliberately not kept. A test asserting that an
+     * image reached the provider needs to know one arrived, not to hold it -
+     * and a mock that retained face images would be the one place in this
+     * codebase where they are stored.
+     *
+     * @type {{bytes: number, mimeType: string}[]}
+     */
+    selfies: [],
     /** @type {Map<string, {kind: string, userId: string, subjectId: string|null}>} */
     inquiries: new Map(),
     /** @type {string[]} Subject ids the provider was told to forget. */
@@ -93,14 +112,14 @@ export function mockProvider() {
             return { ...state.face };
         },
 
-        async startAgeCheck({ userId, redirectUrl = null, anonymous = false }) {
+        async startAgeCheck({ userId, redirectUrl = null }) {
             const inquiryId = nextId('mock_age');
-            state.inquiries.set(inquiryId, { kind: 'age', userId, subjectId: null, anonymous });
+            state.inquiries.set(inquiryId, { kind: 'age', userId, subjectId: null });
 
             // Recorded on the handoff so a test can assert that the Florida
             // choice actually reached the provider, rather than that the
             // server accepted the word and ran the same flow either way.
-            state.handoffs.push({ kind: 'age', redirectUrl, anonymous });
+            state.handoffs.push({ kind: 'age', userId, redirectUrl });
 
             return { inquiryId, clientUrl: `https://example.invalid/mock/${inquiryId}`, clientToken: null };
         },
@@ -110,6 +129,13 @@ export function mockProvider() {
                 return { status: 'rejected', adultConfirmed: false, documentCountry: null, declineReason: 'unknown inquiry' };
             }
             return { ...state.age };
+        },
+
+        async estimateAge({ image, mimeType = 'image/jpeg' }) {
+            if (!image?.length) throw new Error('no selfie was supplied');
+
+            state.selfies.push({ bytes: image.length, mimeType });
+            return { ...state.estimate };
         },
 
         async forget(subjectId) {
@@ -130,6 +156,12 @@ export function mockControls() {
         setAgeCheck(verdict) {
             state.age = { ...DEFAULT_AGE, ...verdict };
         },
+        setEstimate(verdict) {
+            state.estimate = { ...DEFAULT_ESTIMATE, ...verdict };
+        },
+        selfies() {
+            return [...state.selfies];
+        },
         forgotten() {
             return [...state.forgotten];
         },
@@ -142,7 +174,9 @@ export function mockControls() {
             state.enrolment = { ...DEFAULT_ENROLMENT };
             state.face = { ...DEFAULT_FACE };
             state.age = { ...DEFAULT_AGE };
+            state.estimate = { ...DEFAULT_ESTIMATE };
             state.inquiries.clear();
+            state.selfies.length = 0;
             state.forgotten.length = 0;
             state.handoffs.length = 0;
         }

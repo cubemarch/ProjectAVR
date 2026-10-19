@@ -792,6 +792,62 @@ export const ageAssurances = {
     },
 
     /**
+     * Record a check that was already decided by the time we heard about it.
+     *
+     * The anonymous estimate is one request and one answer, so there is no
+     * pending phase to open and nothing to come back for. That makes this the
+     * only row in the table written straight to `verified`, and the only one
+     * whose `provider_inquiry_id` is null - deliberately, because the whole
+     * claim of that route is that no session exists at the provider to hold an
+     * id of. A null here is not a missing value; it is the evidence.
+     *
+     * Consent is written in the same statement rather than a prior `start`,
+     * which is the same ordering guarantee for a different reason: with no
+     * pending phase, a two-statement version could leave a consent row behind
+     * for a check that was declined, and a declined estimate is supposed to
+     * leave nothing at all.
+     *
+     * @param {{userId: string, provider: string, consentVersion: string,
+     *          consentIp?: string|null, method?: string, jurisdiction?: string|null,
+     *          expiresAt?: string|null}} input
+     */
+    recordEstimate({ userId, provider, consentVersion, consentIp, method = 'anonymous', jurisdiction, expiresAt }) {
+        getDb()
+            .prepare(
+                `INSERT INTO age_assurances
+                     (user_id, provider, provider_inquiry_id, status, adult_confirmed,
+                      consent_version, consent_at, consent_ip, method, jurisdiction,
+                      verified_at, expires_at)
+                 VALUES (?, ?, NULL, 'verified', 1, ?, datetime('now'), ?, ?, ?, datetime('now'), ?)
+                 ON CONFLICT (user_id) DO UPDATE SET
+                     provider            = excluded.provider,
+                     provider_inquiry_id = NULL,
+                     status              = 'verified',
+                     adult_confirmed     = 1,
+                     decline_reason      = NULL,
+                     consent_version     = excluded.consent_version,
+                     consent_at          = excluded.consent_at,
+                     consent_ip          = excluded.consent_ip,
+                     method              = excluded.method,
+                     jurisdiction        = excluded.jurisdiction,
+                     verified_at         = excluded.verified_at,
+                     expires_at          = excluded.expires_at,
+                     updated_at          = datetime('now')`
+            )
+            .run(
+                userId,
+                provider,
+                consentVersion,
+                consentIp ?? null,
+                method,
+                jurisdiction ?? null,
+                expiresAt ?? null
+            );
+
+        return this.byUser(userId);
+    },
+
+    /**
      * @param {string} userId
      * @param {{status: string, adultConfirmed?: boolean, documentCountry?: string|null,
      *          declineReason?: string|null, expiresAt?: string|null}} result
@@ -1985,6 +2041,33 @@ export const channelSlugs = {
                 isPrimary: row.is_primary === 1,
                 createdAt: row.created_at
             }));
+    },
+
+    /**
+     * Every address the site wants found, for the sitemap.
+     *
+     * Primary names only. An alias resolves to the same channel, so listing
+     * both would be asking a search engine to index one page at two URLs and
+     * then split the ranking between them — which is the exact problem
+     * `resolveChannel` returns `canonical` to avoid.
+     *
+     * Disabled accounts are excluded here rather than filtered by the caller,
+     * because a sitemap is a public assertion that an address is worth
+     * fetching, and a disabled channel answers 404.
+     *
+     * @returns {{slug: string, updatedAt: string|null}[]}
+     */
+    publicPrimaries() {
+        return getDb()
+            .prepare(
+                `SELECT s.slug AS slug, s.created_at AS created_at
+                   FROM channel_slugs s
+                   JOIN users u ON u.id = s.user_id
+                  WHERE s.is_primary = 1 AND u.disabled = 0
+                  ORDER BY s.created_at ASC`
+            )
+            .all()
+            .map((row) => ({ slug: row.slug, updatedAt: row.created_at ?? null }));
     },
 
     /** The name to build links out of, or null for a channel with no name yet. */

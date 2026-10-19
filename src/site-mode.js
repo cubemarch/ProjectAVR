@@ -35,3 +35,76 @@
  * there are real creators to rank against paid rows.
  */
 export const AFFILIATES_ONLY = true;
+
+/**
+ * The surfaces hidden above, shown as what they are: not here yet.
+ *
+ * This is the other half of the decision above, and it reverses part of it.
+ * Hiding our own rows outright was right about the empty shelf and wrong
+ * about the silence: a visitor who only ever sees paid partner rows has no
+ * reason to think this site does anything itself, and the one thing it does
+ * that no partner does — stereoscopic capture delivered to a headset — was
+ * the thing being hidden.
+ *
+ * So the rows come back inert. Dimmed, unclickable, labelled **Coming
+ * Soon!**, fetching nothing and bound to nothing.
+ *
+ * ## The rules these had to be written under
+ *
+ * - **No invented inventory.** No performer names, no titles, no counts, no
+ *   dates. The cards are blank shapes on purpose. A placeholder that reads
+ *   as a real listing is a lie about what is on the site, and the one shelf
+ *   here that does carry card labels — the catalogue — labels them with
+ *   format names, which are facts about the pipeline rather than claims
+ *   about a library.
+ * - **No promise with a date on it.** "Coming Soon!" is what was asked for
+ *   and it is as far as this goes. Nothing here says when.
+ * - **The blurbs are the point.** They are first-party description of our
+ *   own engineering, which is the one kind of writing this page has none of
+ *   — see `docs/SEARCH.md` on why a page of nothing but affiliate rows is a
+ *   thin-affiliate problem no amount of generated filler would fix.
+ *
+ * Vocabulary is from `PROJECTION_LABELS` and `STEREO_LABELS` in
+ * `catalog/media-format.js` and must stay that way: that table exists
+ * because this product previously had four names for 180° across four
+ * screens.
+ *
+ * **When `AFFILIATES_ONLY` goes back to `false`**, delete this and the
+ * `_comingSoonHtml` that renders it. These shelves and the real ones carry
+ * the same headings, and two Live Creators rows on one page is worse than
+ * either problem this file was opened to solve.
+ *
+ * @typedef {{title: string, blurb: string, cards: number|string[]}} ComingSoonShelf
+ * @type {ComingSoonShelf[]}
+ */
+export const COMING_SOON_SHELVES = [
+    {
+        title: 'Live Creators',
+        blurb:
+            'One-to-one streams in a stereoscopic 180° dome, sent to your headset ' +
+            'as the camera captured them rather than flattened to a single image first.',
+        cards: 6
+    },
+    {
+        title: 'Recorded 1:1s',
+        blurb:
+            'Private sessions recorded server-side from the creator’s own camera, ' +
+            'priced by the creator. The 2D or 3D tag is read off the file, so it ' +
+            'says what was actually shot.',
+        cards: 6
+    },
+    {
+        // The one shelf with labelled cards. These are the formats the
+        // pipeline encodes and the player reads — see `media-format.js` —
+        // not a sample of a catalogue that does not exist.
+        title: 'Every format your headset reads',
+        // No repo paths in here. An earlier draft ended "What the headset
+        // gets is in docs/DELIVERY.md", which is true, internal, and means
+        // nothing to the person reading the page.
+        blurb:
+            'Quest, Vision Pro, Pico and anything that speaks WebXR, each offered ' +
+            'the rendition it can actually decode rather than one file scaled to ' +
+            'fit all of them.',
+        cards: ['180° dome', '360° sphere', 'Stereo Side-by-Side', 'Standard']
+    }
+];

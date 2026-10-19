@@ -20,6 +20,9 @@ document check where one is required, and a single button everywhere else.
 | `verified` | the twenty-seven | a document or records check at the identity provider | `age_assurances` |
 | `attest` | everywhere else | one button: *I am 18 or over* | `age_attestations` |
 
+The same two tiers answer for a visitor with no account, where nothing is
+recorded at all — see [the visitor gate](#the-visitor-gate-the-same-two-tiers-with-no-account).
+
 Asking every viewer in the country for a government document would be
 collecting one because we could rather than because we had to. Twenty-three
 states and the District of Columbia have decided they do not want that trade,
@@ -70,6 +73,47 @@ These headers are trivially forgeable by a client that can reach this process
 directly. **`AVR_TRUST_PROXY` must match the real number of hops and the origin
 must not be reachable except through the edge**, or a viewer sets their own
 state. This is the one operational requirement the gate cannot check for itself.
+
+### How production satisfies that
+
+nginx on the lustxr.com box is the edge — there is no CDN in front of it — so it
+is the thing that has to resolve the state, and it is also the thing that has to
+make a forged header not work. Both come from the same two lines:
+
+```nginx
+proxy_set_header x-geo-country $geoip2_country_code;
+proxy_set_header x-geo-region  $geo_region_code;
+```
+
+`proxy_set_header` *replaces* a header the client sent, so a visitor who sends
+their own `x-geo-region` has it overwritten rather than forwarded. They are on
+**every** proxied location, not only the one the gate reads, because a location
+that forwarded them untouched would be a one-header bypass of the whole gate.
+The origin's port is firewalled, so there is no route to the app that skips
+this. That is the "must not be reachable except through the edge" requirement
+above, discharged.
+
+The lookup is `libnginx-mod-http-geoip2` over **DB-IP IP-to-City Lite**, in
+`/etc/nginx/conf.d/geoip2.conf`. DB-IP rather than MaxMind GeoLite2 because it
+downloads with no account and no licence key, so the refresh can run unattended
+with no credential on the box to leak or expire. `/usr/local/sbin/refresh-geoip-db`
+fetches it weekly under a systemd timer, verifies the MMDB marker before
+installing it, and moves it into place atomically; nginx has `auto_reload 7d` on
+the path and picks up the replacement without a reload.
+
+**The Lite tier strips `iso_code` from subdivisions** and leaves only the English
+name, so `subdivisions 0 iso_code` is empty for every record in the file and the
+obvious configuration silently resolves nobody to a state. What is there instead
+is a `map` from `"$country:$subdivision_name"` to the code — `"US:Florida"` to
+`FL`. It is keyed on the country as well as the name because Georgia is both a
+US state with a statute and a country with subdivisions of its own.
+
+The map covers all fifty states and DC, which is exactly the set the database
+contains: a walk of all 5.3 million US networks in it finds 51 distinct
+subdivision names, all 51 in the map, and no US network without one. An
+unrecognised name would fall to the empty default, and nginx omits an empty
+header, so the failure mode is `us-state-unresolved` — a document check rather
+than a free pass.
 
 ### Unresolvable means covered
 
@@ -184,11 +228,69 @@ a method on the viewer's behalf would satisfy the letter of "we offered two" and
 none of its purpose. The refusal carries the policy, so the browser can render
 the chooser from the same data that caused the refusal.
 
-**Operator obligation:** set `AVR_DIDIT_AGE_ANON_WORKFLOW_ID` (or
-`AVR_PERSONA_AGE_ANON_TEMPLATE_ID`) to a workflow that actually runs at a
-qualifying third party. Leave it unset and a viewer who picks anonymous is run
-through the standard workflow instead — the server logs a warning, but the
-warning is the only thing that distinguishes that from compliance.
+#### The anonymous route is a different endpoint, not a flag
+
+It used to be a flag. `POST /api/identity/age` accepted `method: 'anonymous'`
+and passed `anonymous: true` to the provider, which looked for an optional
+second workflow and, not finding one, ran the ordinary document workflow and
+logged a warning. The viewer was verified, the row recorded that they had
+chosen anonymous, and a session existed at the provider holding their document
+images. A warning in a log is not a compliance control, and the screen in front
+of the viewer said their check would keep nothing.
+
+Both age endpoints now refuse `method: 'anonymous'` outright with **400
+`use_selfie_route`**, and the route that honours the choice is separate:
+
+| | |
+| --- | --- |
+| `POST /api/identity/gate/verify/selfie` | signed out — the pass is a cookie |
+| `POST /api/identity/age/selfie` | signed in — the pass is an `age_assurances` row |
+
+The body is one JPEG, PNG or WebP, up to 2 MB, raw. The consent version travels
+in the `X-AVR-Consent-Version` header rather than the body, because the body is
+the photograph; that it also forces a CORS preflight, and so stops another
+origin minting a pass by posting a picture of an adult, is a second reason.
+Both are served by [`server/identity/selfie.js`](../server/identity/selfie.js),
+which is one file precisely so the two cannot drift on a promise about what is
+not recorded.
+
+**What makes it anonymous.** Not a shorter retention schedule — a mechanism.
+The server calls Didit's standalone Age Estimation endpoint with
+`save_api_request: false`: no stored image, no derived face template, and no
+session at the provider at all. There is nothing to delete because nothing was
+written. Nothing identifying is sent with the photograph: no `vendor_data`, no
+account id, no per-attempt reference. Nothing identifying is written here
+either — no pending row, no `identity_events` entry, and on the signed-in route
+no consent IP. A decline leaves no trace whatsoever; a pass leaves the fact
+that one happened, where, and when.
+
+**The floor is 25, not 18.** The model's error is widest near the limit and the
+limit is exactly where the check is used, so the threshold is set where the
+margin falls on the safe side — the Challenge 25 convention. An adult who reads
+young is declined and offered the document route, which costs them a minute;
+the reverse error costs a minor access. `AVR_AGE_ESTIMATION_MIN` can change it
+and should not. An estimate of more than one face is refused outright, because
+the estimate describes the largest face and a child beside a nearer adult would
+otherwise be passed on the adult's reading.
+
+**A pass earned this way does not travel.** Florida is the only state whose
+statute names the anonymous method. The signed-out cookie is bound to the place
+that issued it and simply stops meaning anything elsewhere; the signed-in row
+would otherwise travel with the account, so `assuranceSatisfies()` refuses an
+assurance whose `method` is `anonymous` in a state that does not list it —
+`method_not_accepted_here`. The row stays current and `adultConfirmed` stays
+true; it is *this request* the row does not answer. Back in Florida it works
+again. No other method is place-bound, because the other method names are our
+taxonomy of statutory wording rather than a description of what the provider
+did — the same Didit document check is `government_id` in Alabama and
+`digitized_id` in Indiana, and re-asking a traveller for an identical document
+would benefit nobody.
+
+**Operator obligation:** none beyond `AVR_DIDIT_API_KEY`. Where the estimate
+cannot run — no key, or a provider with no such endpoint, which is Persona —
+the route is not offered. The chooser still renders it, disabled and labelled
+"Not available on this server", because the statute is about what was offered
+and a silently shorter list hides the fault.
 
 ### Tennessee — the hour
 
@@ -247,15 +349,76 @@ re-label what somebody clicked.
 
 ---
 
+## The visitor gate: the same two tiers, with no account
+
+Everything above is about accounts. The front page has none: `AFFILIATES_ONLY`
+made it a directory of partner cover art and live cam thumbnails, shown to
+whoever arrives. That artwork is what these statutes are about, so it needs a
+gate that works before anybody has signed in — `server/identity/visitor-gate.js`
+and `src/ui/age-gate.js`.
+
+It asks each state for **its own minimum and nothing more**, which is the same
+rule as above with one difference that matters:
+
+**No tier requires an account.** The verified tier used to hand the visitor to
+the sign-in modal, because the document flow lived on `/api/identity/age`,
+which carries `requireAuth`. That was an implementation detail leaking out as a
+policy. No statute in the table asks for registration; every one asks for a
+reasonable check that the person is an adult, and an email address and a
+password establish nothing about that. Requiring an account to satisfy an age
+law would collect more identity than the law asks for, from more people, and
+leave it in a database. So the signed-out flow runs the same provider, the same
+document workflow and the same Florida choice, for somebody who never signs in.
+
+### Nothing is stored
+
+| | Account gate | Visitor gate |
+| --- | --- | --- |
+| A button press | `age_attestations` row | signed cookie, grade `a` |
+| A document check | `age_assurances` row | signed cookie, grade `v` |
+| The check while it runs | `provider_inquiry_id` on the row | signed cookie, 30 min |
+
+There is no table. The in-flight cookie holds the provider's own reference,
+which is what makes a signed-out check untraceable at this end: there is
+nothing to join a verdict back to, because the only copy of the reference is on
+the visitor's machine and it expires. That is strictly less retention than the
+account flow and is what the no-retention states ask for.
+
+### The pass is bound to where it was earned
+
+The cookie carries its jurisdiction and is rejected anywhere else — the same
+reason the region is re-resolved per request rather than stored on a user row.
+It holds for a verified pass too, not only an attested one, because the states
+differ in which methods they accept and in how long a session may last.
+
+Grades are not interchangeable. A `v` pass is good in both tiers, since a
+document check is strictly more than a button. An `a` pass is good only where a
+button is the law, so a state moving into the twenty-seven invalidates every
+attested pass held in it without anything having to be revoked.
+
+Where a state caps a session — Tennessee's sixty minutes, the only one — the
+cookie expires on the cap rather than on our thirty days.
+
+---
+
 ## Endpoints and responses
 
 | Method | Path | Auth | Purpose |
 | --- | --- | --- | --- |
 | `GET` | `/api/identity/jurisdiction` | none | The policy for this request: tier, state, citation, statute URL, methods, and the attestation wording where one applies |
 | `POST` | `/api/identity/attest` | yes | Record a button press. **403** where a statute requires a check |
+| `GET` | `/api/identity/gate` | none | What a signed-out visitor owes, plus the disclosure and provider where a document is owed |
+| `POST` | `/api/identity/gate/attest` | none | A button press with no account. **403** where a statute requires a check |
+| `POST` | `/api/identity/gate/verify` | none | Start a document check with no account. **400** where none is required, or where the consent version or Florida's choice is missing |
+| `POST` | `/api/identity/gate/verify/complete` | none | Ask the provider for the verdict. **409** with no check in flight |
+| `POST` | `/api/identity/gate/clear` | none | Drop both cookies |
 
-`/jurisdiction` is served `private, no-store`. One cached copy served to the
-next viewer is how a Texan gets Oregon's gate.
+`/jurisdiction` and all of `/gate` are served `private, no-store`. One cached
+copy served to the next viewer is how a Texan gets Oregon's gate.
+
+`/api/cams` enforces the visitor gate itself and answers an empty row to anyone
+who has not passed it. A page that merely declines to draw what an open
+endpoint will hand out is not a gate.
 
 Every response that establishes a session — `register`, `login`, `refresh`,
 `/api/auth/me`, `/api/identity/status` — carries two more fields:
@@ -286,6 +449,15 @@ provider, which is the over-collection this whole design exists to avoid.
   statutes ask for commercially reasonable methods, not for defeating
   deliberate evasion.
 - **Non-US regimes are not implemented.** See above.
+- **The affiliate rows are gated in the browser only.** The cam shelf goes
+  through `/api/cams`, which enforces the gate server-side; the AEBN partner
+  rows are fetched by the browser direct from the partner, so for those the
+  only enforcement point is `main.js` awaiting the gate before it fetches. A
+  visitor who runs the fetch by hand gets the rows. Moving them behind our own
+  endpoint would close it.
+- **The verified tier is only as real as the provider behind it.** With
+  `AVR_IDENTITY_PROVIDER=mock` every document passes, and that is as true of
+  the signed-out flow as of the account one.
 - **`/media` and `/stream` are still not gated.** The catalogue is, under
   `AVR_IDENTITY_ENFORCE=1`, so nothing is discoverable — but anyone holding a
   media URL can fetch it. This predates the jurisdiction work and is tracked in

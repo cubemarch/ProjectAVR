@@ -1,0 +1,158 @@
+/* Styling for the policy pages.
+ *
+ * Deliberately not the app's stylesheet. These pages are the ones a Safe
+ * Browsing reviewer, a payment processor's compliance desk and a crawler
+ * without JavaScript will read, and all three should get them even if the
+ * application bundle is broken, missing or still downloading. Nothing here
+ * depends on anything the SPA builds.
+ *
+ * The colours match `netflix.css` by hand rather than by import, for the same
+ * reason. If the palette there changes, these will look slightly dated, which
+ * is a far smaller problem than a terms page that fails to render. */
+
+:root {
+    color-scheme: dark;
+    --bg: #0b0b0f;
+    --raised: #16161d;
+    --text: #f2f2f5;
+    --dim: #b6b6c2;
+    --faint: #8a8a99;
+    --accent: #7c5cff;
+    --line: rgba(255, 255, 255, 0.1);
+}
+
+* {
+    box-sizing: border-box;
+}
+
+body {
+    margin: 0;
+    padding: 0 20px 80px;
+    background: var(--bg);
+    color: var(--dim);
+    font: 16px/1.65 -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+}
+
+.wrap {
+    max-width: 720px;
+    margin: 0 auto;
+}
+
+header.site {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    flex-wrap: wrap;
+    padding: 22px 0;
+    border-bottom: 1px solid var(--line);
+    margin-bottom: 36px;
+}
+
+.brand {
+    font-size: 20px;
+    font-weight: 800;
+    letter-spacing: -0.01em;
+    color: var(--text);
+    text-decoration: none;
+}
+
+.brand span {
+    color: var(--accent);
+}
+
+h1 {
+    font-size: 30px;
+    line-height: 1.2;
+    margin: 0 0 6px;
+    color: var(--text);
+    letter-spacing: -0.02em;
+}
+
+.updated {
+    margin: 0 0 32px;
+    font-size: 13px;
+    color: var(--faint);
+}
+
+h2 {
+    font-size: 19px;
+    margin: 36px 0 10px;
+    color: var(--text);
+    letter-spacing: -0.01em;
+}
+
+h3 {
+    font-size: 15px;
+    margin: 24px 0 6px;
+    color: var(--text);
+}
+
+p,
+li {
+    margin: 0 0 14px;
+}
+
+ul,
+ol {
+    padding-left: 22px;
+}
+
+a {
+    color: var(--accent);
+}
+
+strong {
+    color: var(--text);
+    font-weight: 600;
+}
+
+dl {
+    margin: 0 0 14px;
+    padding: 16px 18px;
+    background: var(--raised);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+}
+
+dt {
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--faint);
+    margin-top: 12px;
+}
+
+dt:first-child {
+    margin-top: 0;
+}
+
+dd {
+    margin: 2px 0 0;
+    color: var(--text);
+}
+
+.notice {
+    padding: 16px 18px;
+    margin: 0 0 28px;
+    background: rgba(124, 92, 255, 0.09);
+    border: 1px solid rgba(124, 92, 255, 0.3);
+    border-radius: 8px;
+    color: var(--text);
+}
+
+footer.site {
+    margin-top: 56px;
+    padding-top: 22px;
+    border-top: 1px solid var(--line);
+    font-size: 13px;
+    color: var(--faint);
+}
+
+footer.site nav {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 18px;
+    margin-bottom: 14px;
+}

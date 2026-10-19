@@ -364,6 +364,26 @@ class ApiClient extends EventTarget {
             }),
         completeAge: () => this.post('/api/identity/age/complete').then((d) => d.ageAssurance),
 
+        /**
+         * Florida's anonymous route: one photograph, an estimate, no record.
+         *
+         * No `complete` to pair with it, because there is nothing to come back
+         * for - the answer is in this response. The consent version travels as
+         * a header rather than in the body for the plain reason that the body
+         * is the image; that it also forces a preflight, and so stops any
+         * other origin posting a picture of an adult into this endpoint, is a
+         * second reason to keep it there.
+         *
+         * @param {Blob} photo
+         * @param {string} consentVersion the version of the wording shown
+         */
+        submitSelfie: (photo, consentVersion) =>
+            this.request('/api/identity/age/selfie', {
+                method: 'POST',
+                headers: { 'Content-Type': photo.type || 'image/jpeg', 'X-AVR-Consent-Version': consentVersion },
+                body: photo
+            }),
+
         startEnrolment: (consentVersion) =>
             this.post('/api/identity/enrol', {
                 consent: true,

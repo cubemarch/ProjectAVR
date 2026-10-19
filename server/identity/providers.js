@@ -40,6 +40,12 @@ import { mockProvider } from './mock.js';
  * @property {string|null} documentCountry
  * @property {string|null} declineReason
  *
+ * @typedef {object} EstimateVerdict
+ * @property {'verified'|'rejected'} status - never pending; the call is synchronous
+ * @property {boolean} adultConfirmed
+ * @property {number|null} estimatedAge
+ * @property {string|null} declineReason
+ *
  * @typedef {object} IdentityProvider
  * @property {string} name
  * @property {boolean} isMock
@@ -50,6 +56,11 @@ import { mockProvider } from './mock.js';
  * @property {(input: {userId: string, redirectUrl?: string|null}) => Promise<EnrolmentHandoff>} startAgeCheck
  * @property {(inquiryId: string) => Promise<AgeVerdict>} fetchAgeCheck
  * @property {(subjectId: string) => Promise<void>} forget
+ * @property {((input: {image: Buffer, mimeType?: string}) => Promise<EstimateVerdict>)} [estimateAge]
+ *   Optional, and absent means a provider cannot do it rather than that it
+ *   fails. Florida's anonymous route is the only caller, and where this is
+ *   missing that route is not offered at all - which is honest, where a stub
+ *   that threw or approved would not be. Persona has no equivalent endpoint.
  */
 
 /**
@@ -95,6 +106,42 @@ export const AGE_CONSENT_TEXT = [
     `${BRAND} never receives or stores a scan of your document or your date of birth. We store only whether the provider confirmed you are over 18, the issuing country, and when the check was done.`,
     'This is a one-off check. Unlike creators, viewers do not enrol a photo of their face and are never asked to confirm their face again.',
     'You may ask us to delete your account at any time, which deletes our record of the check and instructs the provider to delete what they hold.'
+].join('\n\n');
+
+/**
+ * The disclosure for the selfie route, which is Florida's anonymous one.
+ *
+ * Separate from {@link AGE_CONSENT_TEXT} rather than a reuse of it, because
+ * that text says two things that are false here: that a government document is
+ * what is read, and that a viewer is never asked for a photo of their face.
+ * Showing it over a camera capture would be a disclosure describing a different
+ * check from the one running, which is the failure the versioning exists to
+ * prevent - a consent record is only worth keeping if it names what actually
+ * happened.
+ *
+ * It is also the stronger promise of the three, and deliberately specific about
+ * why. Fla. Stat. § 501.1737 asks for an independent third party that retains
+ * nothing, and `save_api_request: false` is literally that - the provider never
+ * writes the image, never derives a template, and no session exists afterwards
+ * to go looking for. Saying "we delete it later" would be a weaker claim about
+ * a different mechanism, and this route was chosen over the document one
+ * precisely so the stronger sentence could be true.
+ *
+ * One text covers both surfaces, signed in and signed out, so the wording has
+ * to be true of both: it says where the pass is kept in either case rather
+ * than claiming no account is involved, because on the signed-in route one is.
+ * The last clause is not decoration either - a pass earned this way really
+ * does stop at the state line, and somebody agreeing to a weaker check should
+ * be told that before they take it rather than when it stops working.
+ */
+export const SELFIE_CONSENT_VERSION = '2026-10-18.1';
+
+export const SELFIE_CONSENT_TEXT = [
+    `${BRAND} is an adult platform, and your state requires a check that you are an adult before anything is shown. This route does that from a photograph alone — no document and no name.`,
+    'Your camera takes one photo and sends it to our verification provider, not to us. They estimate an age from the face in it and return a yes or a no. The request asks them to store nothing — no copy of the photograph and no face template — and it carries nothing that identifies you, so there is no handle by which the check could later be traced back to you.',
+    `${BRAND} never receives the photograph and never sees your face. All we end up with is the fact that a check passed, where, and when — held in a cookie in this browser if you are not signed in, or against your account if you are.`,
+    'An estimate is not a date of birth, so it is set to pass only faces that are clearly adult. If you read young it will decline you, and you can confirm with a document instead. A decline is not written down at all.',
+    'A pass earned this way counts in the state you earned it in. There is nothing at the provider to delete afterwards, because nothing was written there.'
 ].join('\n\n');
 
 /** How long a completed verification is good for before re-enrolment. */
@@ -245,7 +292,7 @@ const GAPS = {
  * flows is a provider that reports itself as configured and cannot run a single
  * check.
  *
- * @param {'enrol'|'face'|'age'} [check] one check, or every check if omitted
+ * @param {'enrol'|'face'|'age'|'selfie'} [check] one check, or every check if omitted
  * @returns {string[]}
  */
 export function identityGaps(check) {

@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 
 import { BRAND, DLNA_FRIENDLY_NAME } from '../brand.js';
 import { buildLibrary, localPathFor, MEDIA_DIR } from './library.js';
-import { getDb, sessions } from './db/index.js';
+import { channelSlugs, getDb, sessions } from './db/index.js';
 import { getStorage, assertSafeKey } from './storage/index.js';
 import { attachUser } from './auth/middleware.js';
 import { mountAuth } from './auth/routes.js';
@@ -15,6 +15,7 @@ import { configureSuperuser } from './auth/superuser.js';
 import { assertSigningKeyConfigured } from './auth/tokens.js';
 import { mountIdentity } from './identity/routes.js';
 import { mountIdentityReturn } from './identity/return-page.js';
+import { mountVisitorGate } from './identity/visitor-gate.js';
 import { assertIdentityConfigured, getProvider, identityEnforced, identityGaps } from './identity/providers.js';
 import { jurisdictionBanner } from './identity/jurisdiction.js';
 import { runIdentitySweep } from './identity/retention.js';
@@ -25,6 +26,7 @@ import { mountChannels } from './routes/channels.js';
 import { resolveChannel } from './channels/index.js';
 import { mountRecordings } from './routes/recordings.js';
 import { mountStars } from './routes/stars.js';
+import { mountCams } from './routes/cams.js';
 import { mountCredits } from './credits/index.js';
 import { paymentsBanner } from './credits/providers.js';
 import { mountUnsubscribe } from './mail/unsubscribe.js';
@@ -238,6 +240,11 @@ app.get('/media/by-name/:id/:filename', async (req, res) => {
 
 mountAuth(app);
 mountIdentity(app);
+
+// The signed-out half of the age gate. Separate from `mountIdentity` because
+// nothing under it requires an account and the front page needs it before it
+// has one - see `server/identity/visitor-gate.js`.
+mountVisitorGate(app);
 mountViewer(app);
 mountCreator(app);
 mountProfiles(app);
@@ -245,6 +252,7 @@ mountChannels(app);
 mountCredits(app);
 mountRecordings(app);
 mountStars(app);
+mountCams(app);
 mountLive(app);
 
 // Claims `/live/hls` and `/live/transcode`, so it has to come before the
@@ -314,6 +322,96 @@ if (fs.existsSync(DIST)) {
     app.get(['/live', '/live/:sessionId'], (req, res) => {
         res.set('Cache-Control', 'no-cache');
         res.sendFile(path.join(DIST, 'live.html'));
+    });
+
+    /* ------------------------------------------------------------ policy -- */
+
+    // Plain documents, served as files rather than as routes into the app.
+    //
+    // Three audiences read these and none of them run JavaScript willingly: a
+    // Safe Browsing reviewer, a payment processor's compliance desk, and the
+    // crawlers that feed generative answers. Routing them through the SPA
+    // would mean all three get an empty div and a 2MB download, and would tie
+    // a legally required notice to the application booting correctly.
+    //
+    // Extension-less addresses because that is what gets linked, printed and
+    // typed. The files live under `public/legal/` so the static middleware
+    // above still serves the stylesheet next to them.
+    const POLICY_PAGES = {
+        '/terms': 'terms.html',
+        '/privacy': 'privacy.html',
+        '/2257': '2257.html',
+        '/dmca': 'dmca.html',
+        '/support': 'support.html'
+    };
+
+    for (const [route, file] of Object.entries(POLICY_PAGES)) {
+        app.get(route, (_req, res) => {
+            res.set('Cache-Control', 'public, max-age=3600');
+            res.sendFile(path.join(ROOT, 'public', 'legal', file));
+        });
+    }
+
+    /**
+     * The sitemap.
+     *
+     * Generated rather than checked in, because half of it is channel names
+     * and those are rows in a database — a static file would be stale the
+     * first time somebody claimed one, and a sitemap listing addresses that
+     * 404 is worse than no sitemap at all.
+     *
+     * Primary names only, and only for accounts that are not disabled. Both
+     * of those are enforced in the query (`publicPrimaries`) rather than here.
+     *
+     * Deliberately absent: `/live` and `/live/:id`, which robots.txt already
+     * disallows and which stop existing when a broadcast ends, and `/creator`
+     * and `/profile`, which render nothing without a session.
+     */
+    app.get('/sitemap.xml', (_req, res) => {
+        const base = 'https://lustxr.com';
+
+        // The policy pages are listed, at a low priority, on purpose. They
+        // are not traffic and they are not meant to be, but they are the
+        // pages that answer "is this site what it says it is" - and a crawler
+        // that has never fetched them cannot weigh them.
+        const urls = [
+            { loc: '/', priority: '1.0', changefreq: 'hourly' },
+            { loc: '/terms', priority: '0.4', changefreq: 'yearly' },
+            { loc: '/privacy', priority: '0.4', changefreq: 'yearly' },
+            { loc: '/2257', priority: '0.4', changefreq: 'yearly' },
+            { loc: '/dmca', priority: '0.4', changefreq: 'yearly' },
+            { loc: '/support', priority: '0.5', changefreq: 'monthly' }
+        ];
+
+        let channels = [];
+        try {
+            channels = channelSlugs.publicPrimaries();
+        } catch (err) {
+            // A sitemap missing its channels is still a useful sitemap, and a
+            // 500 here would teach a crawler to stop asking for it.
+            console.warn(`[sitemap] could not list channels: ${err.message}`);
+        }
+
+        for (const { slug } of channels) {
+            urls.push({ loc: `/${slug}`, priority: '0.8', changefreq: 'daily' });
+        }
+
+        const body =
+            '<?xml version="1.0" encoding="UTF-8"?>\n' +
+            '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n' +
+            urls
+                .map(
+                    (u) =>
+                        `    <url><loc>${base}${u.loc}</loc>` +
+                        `<changefreq>${u.changefreq}</changefreq>` +
+                        `<priority>${u.priority}</priority></url>`
+                )
+                .join('\n') +
+            '\n</urlset>\n';
+
+        res.set('Content-Type', 'application/xml; charset=utf-8');
+        res.set('Cache-Control', 'public, max-age=3600');
+        res.send(body);
     });
 
     // Addresses the site actually answers for. Must agree with `APP_PATHS` and

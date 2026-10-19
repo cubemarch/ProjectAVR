@@ -16,6 +16,7 @@ import { api } from './api/client.js';
 import { authModal } from './ui/auth-modal.js';
 import { CreatorPortal } from './ui/creator/portal.js';
 import { ProfilePage } from './ui/profile.js';
+import { ensureAgeGate } from './ui/age-gate.js';
 
 /**
  * Application shell.
@@ -82,11 +83,27 @@ async function boot() {
     const profile = new ProfilePage(document.getElementById('profile-root'));
 
     browse.renderAccount(api.user);
+
+    // Awaited, and before either fetch below. The partner rows and the cam
+    // shelf are adult artwork shown to signed-out visitors, which is exactly
+    // what the twenty-seven statutes in `docs/STATE-AGE-LAWS.md` legislate
+    // about — so a visitor who has not passed the gate must not merely have
+    // it hidden from them, they must not cause it to be requested. It takes
+    // no callback: the gate runs the document check itself and never asks
+    // anybody to sign in. See `src/ui/age-gate.js`.
+    await ensureAgeGate();
+
     // Not awaited: these are other people's servers, and a slow partner must
     // not hold up the page. Called here and nowhere else — the partner rows
     // are the same for every visitor, signed in or not, so no session change
     // can alter them.
     browse.refreshAffiliates();
+
+    // Same reasoning, separately: the cam feed goes through our own server and
+    // is fetched on every load rather than cached, so chaining it behind the
+    // partner rows would make a cold affiliate fetch delay a live shelf.
+    browse.refreshCams();
+
     await syncViewerState();
 
     const state = {

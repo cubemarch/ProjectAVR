@@ -142,6 +142,77 @@ export const AFFILIATE_GROUPS = [
  */
 export const AFFILIATE_LINK_REL = 'sponsored nofollow noopener noreferrer';
 
+/**
+ * A partner's own storefront, as a destination rather than a feed.
+ *
+ * Everything above is a catalogue this page lays out itself. This is the other
+ * half of the same deal: one attributed link to the partner's whole site, for
+ * the visitor who wants more than the slice of it we chose to show.
+ *
+ * It is here, with the feeds, because the ids are the same ids. `refid` pays
+ * us; `salesToolId` and `campaignId` are the partner's own reporting
+ * dimensions, and keeping them in configuration next to the feeds is what
+ * stops a second copy of `AEBN-119817` appearing in a template somewhere.
+ *
+ * ## Known: AEBN strips two of these three before the page loads
+ *
+ * As of 2026-10-19 every entry to `straight.aebn.com/straight/` answers
+ * `302 → /avs/launch?refId=AEBN-119817` — their own age-verification wall —
+ * and the redirect **keeps `refId` and drops `salesToolId` and `campaignId`**.
+ * Verified from two regions, so it is not a state-specific gate.
+ *
+ * The practical effect is narrow but worth writing down rather than
+ * rediscovering: commissions still track, because `refid` is what pays and it
+ * survives. Campaign-level reporting in their dashboard does not, because the
+ * dimensions that would populate it are gone by the time a page renders. That
+ * is theirs to fix, not ours, and the params stay on the link so it starts
+ * working the day they do.
+ *
+ * `base` and `query` are kept apart for the same reason the feeds do it: see
+ * the `refid`/`refId` note above, which this inherits — their storefront reads
+ * the lowercase spelling.
+ *
+ * @typedef {{id: string, partner: string, label: string, base: string,
+ *            query: Record<string,string>}} AffiliateStorefront
+ * @type {AffiliateStorefront[]}
+ */
+export const AFFILIATE_STOREFRONTS = [
+    {
+        id: 'aebn-theater',
+        partner: 'AEBN',
+
+        // Two strings because the masthead button shows one and says the
+        // other. `label` is what is printed — short, because it is a primary
+        // control at the top of the page next to "Live Cams" and not a line
+        // of body copy. `partner` is what the accessible name and the
+        // tooltip carry, so the link is never anonymous: a screen reader
+        // announces where it goes, and so does a hover. Printing "All movies
+        // at AEBN" on the button instead would be clearer and uglier, and
+        // the disclosure beside it already says the link is paid.
+        label: 'All Movies',
+        base: 'https://straight.aebn.com/straight/',
+        query: { refid: 'AEBN-119817', salesToolId: '4', campaignId: '33970' }
+    }
+];
+
+/**
+ * One storefront's outbound URL, with its attribution applied.
+ *
+ * Built rather than stored whole so that the ids above remain the single
+ * place any of them is written, and so a mistyped base cannot silently
+ * produce a link that still looks plausible — `new URL` throws on one.
+ *
+ * @param {AffiliateStorefront} storefront
+ * @returns {string}
+ */
+export function storefrontUrl(storefront) {
+    const url = new URL(storefront.base);
+    for (const [key, value] of Object.entries(storefront.query)) {
+        url.searchParams.set(key, value);
+    }
+    return url.toString();
+}
+
 const ADAPTERS = {
     /**
      * AEBN's movie queue.

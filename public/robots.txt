@@ -14,3 +14,46 @@ Disallow: /live$
 Disallow: /live/
 Disallow: /creator$
 Disallow: /profile$
+
+# Crawlers that feed generative answers rather than a search index.
+#
+# They are listed one by one and allowed on purpose, rather than left to the
+# wildcard above. Three reasons, in order:
+#
+#   - A wildcard `Allow` is an accident waiting to be read as an oversight.
+#     Naming them is a decision on the record: this site wants to be quotable
+#     in an AI answer, and the cost of that is being read for training. That
+#     is a trade worth making for a site nobody can advertise on Google, and
+#     it should be written down as a trade rather than inherited by default.
+#   - Several of these honour their own name and ignore `*` entirely.
+#   - Google-Extended is not Googlebot. Blocking it does not affect ranking in
+#     Search at all, and allowing it does not grant anything Googlebot has -
+#     it is the separate opt-in for AI Overviews and Gemini grounding, and a
+#     site that leaves it out is absent from those specifically.
+#
+# None of them execute JavaScript, which is why `index.html` carries a
+# `<noscript>` summary and a JSON-LD graph. Without those this file is
+# permission to read four empty divs.
+
+User-agent: GPTBot
+User-agent: OAI-SearchBot
+User-agent: ChatGPT-User
+User-agent: ClaudeBot
+User-agent: Claude-SearchBot
+User-agent: Claude-User
+User-agent: PerplexityBot
+User-agent: Perplexity-User
+User-agent: Google-Extended
+User-agent: Applebot-Extended
+User-agent: CCBot
+User-agent: Bytespider
+User-agent: Amazonbot
+User-agent: meta-externalagent
+Allow: /
+Disallow: /api/
+Disallow: /live$
+Disallow: /live/
+Disallow: /creator$
+Disallow: /profile$
+
+Sitemap: https://lustxr.com/sitemap.xml

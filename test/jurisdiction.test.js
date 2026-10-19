@@ -12,8 +12,9 @@ import path from 'node:path';
  * the twenty-seven can be asserted exhaustively rather than sampled. The second
  * drives the real routes, because the properties that matter most are the ones
  * that span layers: that a Texan cannot self-declare, that an Oregon button
- * press does not travel to Texas, and that Florida's choice actually reaches
- * the provider rather than being accepted and discarded.
+ * press does not travel to Texas, and that Florida's anonymous choice runs the
+ * check it promises rather than being accepted and quietly swapped for the
+ * other one - nor, having run, travelling to a state that never offered it.
  *
  * Regions are set per request with `x-geo-*` headers rather than by reassigning
  * `AVR_GEO_DEFAULT_REGION`, so that nothing here depends on test ordering.
@@ -51,6 +52,12 @@ const {
 } = await import('../server/identity/jurisdiction.js');
 
 const mock = mockControls();
+
+/**
+ * Stands in for a photograph. The mock never decodes one - it counts the bytes
+ * and returns a verdict - so what matters here is only that something arrived.
+ */
+const PHOTO = Buffer.alloc(4096, 7);
 
 const server = app.listen(0);
 await new Promise((resolve) => server.once('listening', resolve));
@@ -484,15 +491,205 @@ test('Florida is asked to choose, and the choice reaches the provider', async ()
         'the refusal has to carry the choice it is asking for'
     );
 
-    const chosen = await agent.fetch('/api/identity/age', {
+    const standard = await agent.fetch('/api/identity/age', {
+        method: 'POST',
+        body: JSON.stringify({ consent: true, consentVersion: consent.age.version, method: 'government_id' })
+    });
+    assert.equal(standard.status, 201, JSON.stringify(standard.body));
+    assert.equal(mock.lastHandoff('age').userId, agent.id);
+});
+
+/**
+ * The thing the statute is actually about: that picking anonymous runs a
+ * different check rather than being accepted and then ignored.
+ *
+ * It used to be accepted here with an `anonymous: true` flag the provider had
+ * no way to honour, so a viewer who asked for the route that keeps nothing got
+ * an ordinary document session and a row saying they had chosen otherwise.
+ * Being told where the route went is the only honest answer short of running
+ * it, and running it is what `/age/selfie` is for.
+ */
+test('picking anonymous is sent to the route that can keep that promise', async () => {
+    const agent = makeAgent().travelTo('US', 'FL');
+    await agent.register();
+
+    const { body: consent } = await agent.fetch('/api/identity/consent');
+    mock.reset();
+
+    const res = await agent.fetch('/api/identity/age', {
         method: 'POST',
         body: JSON.stringify({ consent: true, consentVersion: consent.age.version, method: 'anonymous' })
     });
-    assert.equal(chosen.status, 201, JSON.stringify(chosen.body));
 
-    // The thing the statute is actually about: that picking anonymous ran a
-    // different check, rather than being accepted and then ignored.
-    assert.equal(mock.lastHandoff('age').anonymous, true);
+    assert.equal(res.status, 400, JSON.stringify(res.body));
+    assert.equal(res.body.error, 'use_selfie_route');
+    assert.equal(res.body.consentVersion, consent.selfie.version);
+
+    // Nothing was started on the viewer's behalf while telling them that.
+    assert.equal(mock.lastHandoff('age'), null);
+});
+
+test('a selfie earns an account the same pass, with no inquiry behind it', async () => {
+    const agent = makeAgent().travelTo('US', 'FL');
+    await agent.register();
+
+    const { body: consent } = await agent.fetch('/api/identity/consent');
+
+    const before = await agent.fetch('/api/identity/status');
+    assert.equal(before.body.selfieOffered, true, 'Florida should be offered the camera');
+    assert.equal(before.body.ageGate.ok, false);
+
+    const res = await agent.fetch('/api/identity/age/selfie', {
+        method: 'POST',
+        headers: { 'Content-Type': 'image/jpeg', 'X-AVR-Consent-Version': consent.selfie.version },
+        body: PHOTO
+    });
+
+    assert.equal(res.status, 201, JSON.stringify(res.body));
+    assert.equal(res.body.ageAssurance.status, 'verified');
+    assert.equal(res.body.ageAssurance.method, 'anonymous');
+
+    const after = await agent.fetch('/api/identity/status');
+    assert.equal(after.body.ageGate.ok, true);
+
+    // No session at the provider is the whole claim, so the column that would
+    // hold a handle to one has to be empty - and `/age/complete` has to agree
+    // there is nothing to come back for.
+    const row = getDb().prepare('SELECT * FROM age_assurances WHERE user_id = ?').get(agent.id);
+    assert.equal(row.provider_inquiry_id, null);
+    assert.equal(row.jurisdiction, 'FL');
+    assert.equal(row.consent_ip, null, 'the anonymous route records no address');
+
+    const resume = await agent.fetch('/api/identity/age/complete', { method: 'POST', body: '{}' });
+    assert.equal(resume.status, 409);
+});
+
+/**
+ * The hole a place-bound cookie does not have.
+ *
+ * The signed-out pass is bound to the state that issued it and simply stops
+ * meaning anything elsewhere. A row travels with the account, so the binding
+ * has to be written down - otherwise a Florida estimate becomes a Texas pass
+ * by being carried there, and Texas never offered an estimate.
+ */
+test('an estimate does not travel to a state that never offered one', async () => {
+    const agent = makeAgent().travelTo('US', 'FL');
+    await agent.register();
+
+    const { body: consent } = await agent.fetch('/api/identity/consent');
+
+    const res = await agent.fetch('/api/identity/age/selfie', {
+        method: 'POST',
+        headers: { 'Content-Type': 'image/jpeg', 'X-AVR-Consent-Version': consent.selfie.version },
+        body: PHOTO
+    });
+    assert.equal(res.status, 201, JSON.stringify(res.body));
+
+    assert.equal((await agent.fetch('/api/identity/status')).body.ageGate.ok, true);
+
+    agent.travelTo('US', 'TX');
+    const texas = await agent.fetch('/api/identity/status');
+
+    assert.equal(texas.body.ageGate.ok, false, 'Texas does not list the anonymous method');
+    assert.equal(texas.body.ageGate.reason, 'method_not_accepted_here');
+    assert.equal(texas.body.ageGate.owes, 'verification');
+
+    // And the camera is not offered as the way out of it either.
+    assert.equal(texas.body.selfieOffered, false);
+
+    // The account-level fact is untouched: they did pass a check, and the row
+    // is still current. It is this request that it does not answer.
+    assert.equal(texas.body.adultConfirmed, true);
+    assert.equal(texas.body.ageAssurance.status, 'verified');
+
+    // Back in Florida it works again, which is the difference between a pass
+    // that is place-bound and one that was revoked.
+    agent.travelTo('US', 'FL');
+    assert.equal((await agent.fetch('/api/identity/status')).body.ageGate.ok, true);
+});
+
+test('the camera is not offered where the statute did not name it', async () => {
+    const agent = makeAgent().travelTo('US', 'TX');
+    await agent.register();
+
+    const { body: consent } = await agent.fetch('/api/identity/consent');
+    mock.reset();
+
+    assert.equal((await agent.fetch('/api/identity/status')).body.selfieOffered, false);
+
+    const res = await agent.fetch('/api/identity/age/selfie', {
+        method: 'POST',
+        headers: { 'Content-Type': 'image/jpeg', 'X-AVR-Consent-Version': consent.selfie.version },
+        body: PHOTO
+    });
+
+    assert.equal(res.status, 400, JSON.stringify(res.body));
+    assert.equal(res.body.error, 'anonymous_verification_not_offered');
+    assert.equal(mock.selfies().length, 0, 'the photograph must not reach the provider');
+});
+
+test('a photograph is not accepted without consent to the wording that describes it', async () => {
+    const agent = makeAgent().travelTo('US', 'FL');
+    await agent.register();
+    mock.reset();
+
+    const stale = await agent.fetch('/api/identity/age/selfie', {
+        method: 'POST',
+        headers: { 'Content-Type': 'image/jpeg', 'X-AVR-Consent-Version': '2019-01-01.1' },
+        body: PHOTO
+    });
+
+    assert.equal(stale.status, 400, JSON.stringify(stale.body));
+    assert.equal(mock.selfies().length, 0);
+
+    // The document disclosure is not this one, and agreeing to it is not
+    // agreeing to be photographed.
+    const { body: consent } = await agent.fetch('/api/identity/consent');
+    const wrong = await agent.fetch('/api/identity/age/selfie', {
+        method: 'POST',
+        headers: { 'Content-Type': 'image/jpeg', 'X-AVR-Consent-Version': consent.age.version },
+        body: PHOTO
+    });
+
+    assert.equal(wrong.status, 400);
+    assert.equal(mock.selfies().length, 0);
+});
+
+test('a declined estimate leaves the account exactly as it was', async () => {
+    const agent = makeAgent().travelTo('US', 'FL');
+    await agent.register();
+
+    const { body: consent } = await agent.fetch('/api/identity/consent');
+
+    mock.setEstimate({
+        status: 'rejected',
+        adultConfirmed: false,
+        estimatedAge: 19,
+        declineReason: 'age_below_minimum'
+    });
+
+    try {
+        const res = await agent.fetch('/api/identity/age/selfie', {
+            method: 'POST',
+            headers: { 'Content-Type': 'image/jpeg', 'X-AVR-Consent-Version': consent.selfie.version },
+            body: PHOTO
+        });
+
+        assert.equal(res.status, 200, JSON.stringify(res.body));
+        assert.equal(res.body.status, 'rejected');
+        assert.equal(res.body.reason, 'age_below_minimum');
+
+        // Not retryable: the same face returns the same estimate, and the way
+        // out is the document route.
+        assert.equal(res.body.canRetry, false);
+    } finally {
+        mock.reset();
+    }
+
+    // A decline is not written down - not as a rejected row, not as a consent
+    // record, not as anything. The disclosure says so.
+    const row = getDb().prepare('SELECT * FROM age_assurances WHERE user_id = ?').get(agent.id);
+    assert.equal(row, undefined);
 });
 
 test('a method the state does not permit is refused, not quietly substituted', async () => {
@@ -521,7 +718,7 @@ test('everywhere else runs one check and does not ask', async () => {
         body: JSON.stringify({ consent: true, consentVersion: consent.age.version })
     });
     assert.equal(started.status, 201, JSON.stringify(started.body));
-    assert.equal(mock.lastHandoff('age').anonymous, false);
+    assert.equal(mock.lastHandoff('age').userId, agent.id);
 
     const done = await agent.fetch('/api/identity/age/complete', { method: 'POST' });
     assert.equal(done.body.ageAssurance.status, 'verified', JSON.stringify(done.body));

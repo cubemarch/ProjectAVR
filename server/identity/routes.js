@@ -11,10 +11,14 @@ import {
     CONSENT_TEXT,
     AGE_CONSENT_VERSION,
     AGE_CONSENT_TEXT,
+    SELFIE_CONSENT_VERSION,
+    SELFIE_CONSENT_TEXT,
+    AGE_ASSURANCE_DAYS,
     CHALLENGE_TTL_SECONDS,
     VERIFICATION_DAYS
 } from './providers.js';
 import { pullAgeVerdict, adultConfirmed, ageGate } from './age.js';
+import { offersSelfie, runSelfieEstimate, selfieBody, selfieCheckGaps } from './selfie.js';
 import {
     jurisdictionFor,
     publicPolicy,
@@ -310,6 +314,11 @@ export function mountIdentity(app) {
             version: CONSENT_VERSION,
             text: CONSENT_TEXT,
             age: { version: AGE_CONSENT_VERSION, text: AGE_CONSENT_TEXT },
+            // Served unconditionally rather than only where the anonymous
+            // route is on offer: this endpoint is the record of what each
+            // disclosure says, and a client has to be able to show the right
+            // one beside the right check without a second round trip.
+            selfie: { version: SELFIE_CONSENT_VERSION, text: SELFIE_CONSENT_TEXT },
             provider: getProvider().name
         });
     });
@@ -346,6 +355,16 @@ export function mountIdentity(app) {
             portalUnlockExpiresAt: unlock?.expires_at ?? null,
             consentVersion: CONSENT_VERSION,
             ageConsentVersion: AGE_CONSENT_VERSION,
+
+            // Whether the anonymous route is both permitted here and runnable
+            // on this deployment. Two separate facts, reported as one, because
+            // the client does the same thing with either answer: do not draw
+            // the camera option. Drawing it and failing at the end would be
+            // worse than not offering it, since the viewer would have already
+            // been photographed by then.
+            selfieConsentVersion: SELFIE_CONSENT_VERSION,
+            selfieOffered: offersSelfie(gate.policy) && selfieCheckGaps().length === 0,
+
             provider: getProvider().name,
             enforced: identityEnforced()
         });
@@ -368,7 +387,19 @@ export function mountIdentity(app) {
      */
     router.get('/jurisdiction', (req, res) => {
         res.set('Cache-Control', 'private, no-store');
-        res.json(publicPolicy(jurisdictionFor(req)));
+
+        const policy = jurisdictionFor(req);
+
+        res.json({
+            ...publicPolicy(policy),
+
+            // A deployment fact rather than a statutory one, and the only
+            // reason it rides along here: the dialog has to decide whether to
+            // draw the camera option on its first paint, and offering a route
+            // that would fail at the end is worse than not offering it, since
+            // by then the viewer has already been photographed.
+            selfieReady: offersSelfie(policy) && selfieCheckGaps().length === 0
+        });
     });
 
     /**
@@ -458,6 +489,23 @@ export function mountIdentity(app) {
             return;
         }
 
+        // The anonymous choice is not a variant of this flow. It used to be
+        // routed here with an `anonymous: true` flag that the provider had no
+        // way to honour, which meant a viewer who picked "keep nothing" got an
+        // ordinary document session and a row saying they had chosen
+        // otherwise. Refusing outright is the honest version: the route that
+        // can keep that promise is `/age/selfie`, and a client that asks for
+        // the old one is told where it went rather than quietly given the
+        // other check.
+        if (method === 'anonymous') {
+            res.status(400).json({
+                error: 'use_selfie_route',
+                consentVersion: SELFIE_CONSENT_VERSION,
+                jurisdiction: publicPolicy(policy)
+            });
+            return;
+        }
+
         const existing = ageAssurances.byUser(req.user.id);
 
         // `ageGate` rather than `isCurrent`: in Tennessee a current assurance
@@ -474,8 +522,7 @@ export function mountIdentity(app) {
         try {
             handoff = await getProvider().startAgeCheck({
                 userId: req.user.id,
-                redirectUrl: returnUrlFor(req, 'age'),
-                anonymous: method === 'anonymous'
+                redirectUrl: returnUrlFor(req, 'age')
             });
         } catch (err) {
             console.error('[identity] age check could not be started:', err.message);
@@ -503,6 +550,74 @@ export function mountIdentity(app) {
             clientToken: handoff.clientToken
         });
     });
+
+    /**
+     * The same anonymous route as the signed-out gate, for an account.
+     *
+     * A Florida viewer who happens to be signed in is still a Florida viewer,
+     * and § 501.1737 does not make the anonymous option conditional on being a
+     * stranger. Offering it only to signed-out visitors would mean the one
+     * route that keeps nothing was unavailable to exactly the people who had
+     * already given us a name - which is backwards.
+     *
+     * Everything about the check is shared with the gate, deliberately; see
+     * [`selfie.js`](./selfie.js). The difference is the pass. A cookie is
+     * bound to the place that issued it and simply stops meaning anything
+     * elsewhere, whereas a row travels with the account, so the binding has to
+     * be written down: the row records `method: 'anonymous'`, and
+     * `assuranceSatisfies` refuses it in a state whose statute does not list
+     * that method. A Florida estimate is a Florida pass, in both flows, by two
+     * different mechanisms that have to agree.
+     *
+     * No `identityEvents` row is written for either outcome. Every other check
+     * here logs one, and the departure is the point: an event saying this
+     * account ran an age estimate at this time is a record of the check, and
+     * the disclosure says there is not one. The row the pass produces is the
+     * only trace, and it says a check passed rather than how it went.
+     */
+    router.post(
+        '/age/selfie',
+        requireAuth,
+        loadFullUser,
+        rateLimit({ windowMs: 3600_000, max: 8 }),
+        selfieBody(),
+        async (req, res) => {
+            res.set('Cache-Control', 'no-store');
+
+            const policy = jurisdictionFor(req);
+
+            // A current pass is not a reason to photograph somebody again.
+            // `ageGate` rather than `isCurrent`, for the same reason as the
+            // document route above: in Tennessee an assurance whose hour has
+            // run out is the reason to run the check, not to skip it.
+            const existing = ageAssurances.byUser(req.user.id);
+            if (ageAssurances.isCurrent(existing) && ageGate(req).ok) {
+                res.json({ status: 'verified', ageAssurance: ageAssurances.publicView(existing) });
+                return;
+            }
+
+            const verdict = await runSelfieEstimate(req, res, policy);
+            if (!verdict) return;
+
+            const row = ageAssurances.recordEstimate({
+                userId: req.user.id,
+                provider: getProvider().name,
+                consentVersion: SELFIE_CONSENT_VERSION,
+                // No ip, unlike the document route. There the address is part
+                // of proving consent to a collection that really happened and
+                // is held somewhere; here the account, the version and the
+                // timestamp already prove it, and an address would be the one
+                // piece of this row that records where somebody was rather
+                // than that they passed.
+                consentIp: null,
+                method: 'anonymous',
+                jurisdiction: policy.region,
+                expiresAt: new Date(Date.now() + AGE_ASSURANCE_DAYS * 86_400_000).toISOString()
+            });
+
+            res.status(201).json({ status: 'verified', ageAssurance: ageAssurances.publicView(row) });
+        }
+    );
 
     /** As with enrolment: the inquiry id comes from our row, never the request. */
     router.post('/age/complete', requireAuth, loadFullUser, async (req, res) => {

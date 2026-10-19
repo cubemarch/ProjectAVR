@@ -4,11 +4,59 @@
         <meta charset="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
         <meta name="theme-color" content="#0b0b0f" />
-        <title>LustXR</title>
+        <!-- Describes the site as it is today, not as `site-mode.js` will let
+             it be when `AFFILIATES_ONLY` is turned off.
+
+             That distinction is the whole point. The catalogue, the live
+             creator rows and the recordings market are all built and all
+             currently hidden, and a title promising live broadcasts over a
+             page that is a partner directory is a mismatch between the
+             snippet and the landing page - which is both what Google demotes
+             for and what a visitor bounces from. When the flag flips, this
+             block and the `<noscript>` below it change with it. -->
+        <title>LustXR — VR Porn and 3D Adult Video, Curated from Top Sites</title>
         <meta
             name="description"
-            content="Live 2D and 3D broadcasts from creators, watched in a browser or a headset, with private 1:1 sessions and a recordings marketplace."
+            content="A curated directory of VR porn and 3D adult video from leading partner studios and cam sites, with performer profiles. Free to browse. Paid links. 18+."
         />
+        <link rel="canonical" href="https://lustxr.com/" />
+
+        <!-- Tell Google this is an adult site, in the words its own guidelines
+             ask for: developers.google.com/search/docs/specialty/explicit.
+             Without it, classification is left to automated detection of the
+             page's text and images - which on a site whose homepage is mostly
+             an empty div until JavaScript runs is a coin toss, and getting it
+             wrong in either direction is bad. Classified explicit when it is
+             not loses the traffic; classified clean when it is not is the kind
+             of mistake that gets a domain handled manually.
+
+             The second tag says the same thing to everyone else. Google treats
+             the two as interchangeable and asks for only one, but RTA is what
+             parental-control software, device-level filters and several ad
+             networks actually read, and none of those know about the first. -->
+        <meta name="rating" content="adult" />
+        <meta name="rating" content="RTA-5042-1996-1400-1577-RTA" />
+
+        <!-- Indexable and followable, said out loud. The default if this is
+             absent is the same thing, so this is documentation rather than
+             instruction - but `max-image-preview:large` is not the default,
+             and it is what lets a result carry a thumbnail instead of a line
+             of grey text. -->
+        <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1, max-video-preview:-1" />
+
+        <!-- Link previews. Not a ranking signal, but the thing that decides
+             whether a link pasted into a chat window looks like a product or
+             like a bare URL - and increasingly what a generative answer quotes
+             when it has nothing else to go on. -->
+        <meta property="og:type" content="website" />
+        <meta property="og:site_name" content="LustXR" />
+        <meta property="og:title" content="LustXR — VR Porn and 3D Adult Video, Curated from Top Sites" />
+        <meta
+            property="og:description"
+            content="A curated directory of VR porn and 3D adult video from leading partner studios and cam sites, with performer profiles. Paid links. 18+."
+        />
+        <meta property="og:url" content="https://lustxr.com/" />
+        <meta name="twitter:card" content="summary_large_image" />
         <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%237c5cff'/%3E%3Ctext x='16' y='23' font-family='Helvetica,Arial' font-size='19' font-weight='bold' fill='%23fff' text-anchor='middle'%3EL%3C/text%3E%3C/svg%3E" />
 
         <!-- JuicyAds site ownership check. Public by the same reasoning as the
@@ -44,10 +92,102 @@
                 document.head.appendChild(tag);
             }
         </script>
+
+        <!-- What this site is, in a form something that does not run
+             JavaScript can read.
+
+             The reason this is here and not left to the app is specific
+             rather than general. Googlebot renders JavaScript and sees the
+             real catalogue; almost nothing else does. GPTBot, ClaudeBot,
+             PerplexityBot and CCBot fetch the HTML and read it as text, and
+             the HTML of a single-page app is four empty divs - so to every
+             crawler that feeds a generative answer, this domain currently has
+             no content at all and nothing to say about itself.
+
+             Being structured data rather than prose is what makes it legible
+             to Google as well. `isFamilyFriendly: false` is the same
+             declaration the rating tag makes, in the vocabulary a knowledge
+             panel is built from. -->
+        <script type="application/ld+json">
+            {
+                "@context": "https://schema.org",
+                "@graph": [
+                    {
+                        "@type": "WebSite",
+                        "@id": "https://lustxr.com/#website",
+                        "url": "https://lustxr.com/",
+                        "name": "LustXR",
+                        "description": "A curated directory of VR and 3D adult video from partner studios and cam sites, with performer profiles.",
+                        "inLanguage": "en",
+                        "isFamilyFriendly": false,
+                        "publisher": { "@id": "https://lustxr.com/#org" }
+                    },
+                    {
+                        "@type": "Organization",
+                        "@id": "https://lustxr.com/#org",
+                        "name": "LustXR",
+                        "url": "https://lustxr.com/",
+                        "description": "LustXR curates VR and stereoscopic 3D adult video from third-party partner sites. It does not produce or host the content it links to.",
+                        "email": "contact@lustxr.com",
+                        "telephone": "+1-888-383-6767",
+                        "contactPoint": {
+                            "@type": "ContactPoint",
+                            "contactType": "customer support",
+                            "email": "contact@lustxr.com",
+                            "telephone": "+1-888-383-6767",
+                            "availableLanguage": "English"
+                        }
+                    }
+                ]
+            }
+        </script>
     </head>
     <body>
         <!-- Browse experience (DOM). -->
-        <div id="browse-root"></div>
+        <div id="browse-root">
+            <noscript>
+                <h1>LustXR — VR porn and 3D adult video, curated</h1>
+                <p>
+                    LustXR is a directory of adult video shot for virtual reality and
+                    stereoscopic 3D. It collects what is worth watching across a set of partner
+                    studios and cam sites, organises it by studio and by performer, and links
+                    straight through to the site hosting it.
+                </p>
+                <p>
+                    The point of organising it this way is that VR and 3D adult video is scattered
+                    across sites that each stock a little of it, in formats — side-by-side,
+                    over-under, 180 or 360 degrees, monoscopic or stereo — that decide whether a
+                    given headset can play a given file at all. Settling the format before the
+                    click rather than after it is the problem this site exists to solve.
+                </p>
+                <p>
+                    What is on the site today is the partner directory, live cam rooms and
+                    performer profiles. Our own library — every entry tagged with its projection
+                    and its stereo layout, with a filter for each format — is in progress and is
+                    marked on the site as not yet available.
+                </p>
+                <p>
+                    <strong>LustXR does not host or produce any of this video.</strong> Every
+                    title links out to the partner site that hosts it, and those links are paid:
+                    we earn a commission if you subscribe or buy, at no extra cost to you. See the
+                    <a href="/2257">18 U.S.C. 2257 exemption statement</a> for who holds the
+                    records for the material linked from here.
+                </p>
+                <p>
+                    This site is for adults. You must be at least 18 years old, or the age of
+                    majority where you live, whichever is greater, to use it.
+                </p>
+                <p>
+                    Browsing the directory needs JavaScript, because it is an application rather
+                    than a document.
+                    <a href="/2257">2257 exemption statement</a> ·
+                    <a href="/terms">Terms of service</a> ·
+                    <a href="/privacy">Privacy policy</a> ·
+                    <a href="/dmca">Content removal</a> ·
+                    <a href="/support">Support</a>
+                </p>
+            </noscript>
+        </div>
 
         <!-- Flat playback surface. The <video> element is appended here at boot
              and is shared with the WebXR renderer. -->

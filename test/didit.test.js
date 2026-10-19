@@ -249,6 +249,170 @@ test('an age check reads the country without needing a face', async () => {
     });
 });
 
+/* ----------------------------------------------------- the selfie estimate -- */
+
+/**
+ * The live `POST /v3/age-estimation/` envelope, with the fields this adapter
+ * reads. Taken from a real response rather than the documentation: a faceless
+ * image was posted to the production endpoint and this is the shape it came
+ * back in.
+ */
+function estimated(overrides = {}) {
+    return {
+        request_id: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+        age_estimation: {
+            status: 'Approved',
+            method: 'PASSIVE',
+            score: 91.4,
+            age_estimation: 34.2,
+            user_image: { entities: [{ age: 34.2, bbox: [10, 10, 90, 120], confidence: 0.98 }], best_angle: 0 },
+            warnings: [],
+            ...overrides
+        },
+        vendor_data: null,
+        created_at: '2026-10-18T22:50:10.327154+00:00'
+    };
+}
+
+/** As `reply`, but the request body is multipart and is not JSON to parse. */
+function replyToUpload(body, status = 200) {
+    globalThis.fetch = async (url, init) => {
+        calls.push({ url: String(url), method: init.method, form: init.body, headers: init.headers });
+        return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
+    };
+}
+
+test('the selfie estimate needs a key and no workflow at all', () => {
+    // The one check with nothing to configure beyond the key: it is a
+    // standalone endpoint rather than a hosted flow, so a deployment that can
+    // run a document check can always run this one too.
+    assert.deepEqual(diditWorkflowGaps('selfie'), []);
+});
+
+test('an approved estimate is a verdict, and the request keeps nothing', async () => {
+    replyToUpload(estimated());
+
+    const verdict = await provider.estimateAge({ image: Buffer.alloc(32, 3) });
+
+    assert.deepEqual(verdict, {
+        status: 'verified',
+        adultConfirmed: true,
+        estimatedAge: 34.2,
+        declineReason: null
+    });
+
+    assert.match(calls[0].url, /\/age-estimation\/$/);
+
+    const form = calls[0].form;
+
+    // `save_api_request: false` is the whole reason this endpoint is Florida's
+    // anonymous route rather than a second workflow. It is not a retention
+    // schedule, it is the image never being written.
+    assert.equal(form.get('save_api_request'), 'false');
+
+    // And nothing identifying travels with it. A correlation handle would
+    // create the very thing there is otherwise nothing to erase.
+    assert.equal(form.get('vendor_data'), null);
+    assert.equal(form.get('metadata'), null);
+
+    // Challenge 25, sent to the provider as well as checked on the way back.
+    assert.equal(form.get('age_estimation_decline_threshold'), '25');
+
+    // No Content-Type of our own: fetch has to set the multipart boundary.
+    assert.equal(calls[0].headers['Content-Type'], undefined);
+    assert.equal(calls[0].headers['x-api-key'], 'test-key-not-a-real-one');
+});
+
+test('a decline arrives as HTTP 200, so the body is the decision', async () => {
+    // Exactly what the live endpoint returned for an image with no face in it.
+    replyToUpload(
+        estimated({
+            status: 'Declined',
+            score: null,
+            age_estimation: null,
+            user_image: { entities: [], best_angle: 0 },
+            warnings: [
+                { risk: 'NO_FACE_DETECTED', feature: 'LIVENESS' },
+                { risk: 'AGE_NOT_DETECTED', feature: 'LIVENESS' }
+            ]
+        })
+    );
+
+    const verdict = await provider.estimateAge({ image: Buffer.alloc(32, 3) });
+
+    assert.equal(verdict.status, 'rejected');
+    assert.equal(verdict.adultConfirmed, false);
+    assert.equal(verdict.declineReason, 'no_face_detected');
+});
+
+test('an approval with a warning on it is still a decline', async () => {
+    // Didit's rule is that approved means the warnings array is empty. A
+    // reader that trusted `status` alone would pass a presentation attack
+    // that the model had flagged and the envelope had not caught up with.
+    replyToUpload(estimated({ warnings: [{ risk: 'LIVENESS_FACE_ATTACK', feature: 'LIVENESS' }] }));
+
+    const verdict = await provider.estimateAge({ image: Buffer.alloc(32, 3) });
+
+    assert.equal(verdict.status, 'rejected');
+    assert.equal(verdict.declineReason, 'liveness_face_attack');
+});
+
+test('the age floor is applied here too, not only asked for', async () => {
+    // The threshold went out with the request, so a conforming server has
+    // already applied it. This is the only place that knows a pass means an
+    // adult cookie, and a floor enforced somewhere that is not ours is a floor
+    // we cannot prove we applied.
+    replyToUpload(estimated({ age_estimation: 19.6 }));
+
+    const verdict = await provider.estimateAge({ image: Buffer.alloc(32, 3) });
+
+    assert.equal(verdict.status, 'rejected');
+    assert.equal(verdict.declineReason, 'age_below_minimum');
+    assert.equal(verdict.estimatedAge, 19.6);
+});
+
+test('a crowd is refused, because the estimate describes the largest face', async () => {
+    // A minor standing behind an adult who is nearer the lens is handed the
+    // adult's age, and liveness does not catch it because nothing is being
+    // spoofed. Nobody needs a second person in shot to take a selfie.
+    replyToUpload(
+        estimated({
+            user_image: {
+                entities: [
+                    { age: 34.2, bbox: [10, 10, 90, 120], confidence: 0.98 },
+                    { age: 15.1, bbox: [100, 30, 140, 90], confidence: 0.91 }
+                ],
+                best_angle: 0
+            }
+        })
+    );
+
+    const verdict = await provider.estimateAge({ image: Buffer.alloc(32, 3) });
+
+    assert.equal(verdict.status, 'rejected');
+    assert.equal(verdict.declineReason, 'more_than_one_face');
+});
+
+test('an estimate with no age in it is a decline, never a pass', async () => {
+    replyToUpload(estimated({ age_estimation: null }));
+
+    const verdict = await provider.estimateAge({ image: Buffer.alloc(32, 3) });
+
+    assert.equal(verdict.status, 'rejected');
+    assert.equal(verdict.declineReason, 'age_not_detected');
+    assert.equal(verdict.estimatedAge, null);
+});
+
+test('an oversized or absent photograph never reaches the provider', async () => {
+    replyToUpload(estimated());
+
+    await assert.rejects(() => provider.estimateAge({ image: Buffer.alloc(0) }), /no selfie/);
+    await assert.rejects(() => provider.estimateAge({}), /no selfie/);
+    await assert.rejects(() => provider.estimateAge({ image: Buffer.alloc(3 * 1024 * 1024) }), /too large/);
+
+    assert.equal(calls.length, 0);
+});
+
 /* -------------------------------------------------------------- erasure -- */
 
 test('erasure names one person and never asks for everybody', async () => {
