@@ -80,19 +80,39 @@ app.disable('x-powered-by');
 // every user together under the balancer's address.
 app.set('trust proxy', TRUST_PROXY === '0' ? false : TRUST_PROXY);
 
-// Compress JSON and manifests. Video is already compressed, and running it
-// through gzip would burn CPU for nothing.
-app.use(
-    compression({
-        filter: (req, res) => {
-            const type = res.getHeader('Content-Type') ?? '';
-            if (/^(video|image)\//.test(String(type))) return false;
-            return compression.filter(req, res);
-        }
-    })
-);
+let canonicalCache = { key: null, hostname: null, origin: null };
 
-app.use(cookieParser());
+/**
+ * The one address this site answers to, from `AVR_PUBLIC_URL`.
+ *
+ * Read per request rather than at import, because the tests set the variable
+ * after this module has loaded and {@link credentialedOrigins} already has to
+ * do the same. The parse is cached on the raw string, so the steady state is a
+ * string compare. `hostname` drops any port, which is what `req.hostname` is
+ * also going to have done by the time the two are compared.
+ *
+ * @returns {{hostname: string|null, origin: string|null}}
+ */
+function canonical() {
+    const key = process.env.AVR_PUBLIC_URL ?? '';
+    if (canonicalCache.key === key) return canonicalCache;
+
+    let hostname = null;
+    let origin = null;
+
+    try {
+        const url = new URL(key);
+        hostname = url.hostname;
+        origin = url.origin;
+    } catch {
+        // Unset or malformed means no canonical address is known, and the
+        // redirect below turns itself off rather than inventing one. That is
+        // the dev and test case, where there is no `www` to send anywhere.
+    }
+
+    canonicalCache = { key, hostname, origin };
+    return canonicalCache;
+}
 
 /**
  * Paths that serve public bytes with no cookie behind them.
@@ -112,8 +132,80 @@ app.use(cookieParser());
  *
  * `/live/transcode` is deliberately *not* here. It shares the prefix but it is
  * a diagnostics endpoint, not media.
+ *
+ * Two pieces of middleware below read this, which is why it sits ahead of
+ * both: it is also the list of paths the `www` redirect must leave alone.
  */
 const PUBLIC_MEDIA = /^\/playlist\.m3u$|^\/(?:stream|media|art|dlna|deovr|delivery|live\/hls)(?:\/|$)/;
+
+/**
+ * Send `www` to the apex, once and permanently.
+ *
+ * Both names resolve here and the proxy serves them from a single block, so
+ * `https://www.lustxr.com/` and `https://lustxr.com/` were two live addresses
+ * for one page. Google indexed them separately and split the ranking signals
+ * between them — Search Console has impressions recorded against each. Every
+ * page already declares the apex canonical and Google usually honours that in
+ * the end, but a hint it is free to overrule is weaker than a redirect, and
+ * the cheapest time to consolidate is while the numbers are still small.
+ *
+ * It closes a smaller gap too: `AVR_PUBLIC_URL` is the apex, so `www` was
+ * never in the credentialed-origin set and a visitor who landed there was on
+ * an address the rest of this server does not recognise as itself.
+ *
+ * Deliberately narrow, on three counts:
+ *
+ * - `GET` and `HEAD` only. Much of the world re-sends a 301'd `POST` as a
+ *   `GET` and drops the body, and nothing is gained by risking that — a
+ *   crawler only ever asks for these two, and so does a browser that is
+ *   reading a page.
+ * - Never an upgrade request. The live relay is a WebSocket through this same
+ *   proxy, and a socket client is under no obligation to follow a redirect
+ *   issued in the middle of a handshake.
+ * - Never {@link PUBLIC_MEDIA}. Those paths are the ones answered to things
+ *   that are not browsers — a DLNA renderer, a DeoVR or Play'a shell, a CDN
+ *   edge pulling HLS — and a redirect on a ranged read is the kind of thing
+ *   such a client is entitled to handle badly. They are also bytes rather
+ *   than pages, so no search engine was going to rank them and there is
+ *   nothing to consolidate.
+ *
+ * None of the three gives anything up, because nothing machine-facing is ever
+ * issued on `www` in the first place: every address this server hands out is
+ * built from `AVR_PUBLIC_URL`, and {@link docs/LIVE.md} pairing URLs are no
+ * exception. The carve-outs are there so that stays true by construction
+ * rather than by everyone remembering it.
+ */
+app.use((req, res, next) => {
+    const { hostname, origin } = canonical();
+    const redirectable = req.method === 'GET' || req.method === 'HEAD';
+
+    if (
+        hostname &&
+        origin &&
+        redirectable &&
+        !req.headers.upgrade &&
+        !PUBLIC_MEDIA.test(req.path) &&
+        req.hostname === `www.${hostname}`
+    ) {
+        return res.redirect(301, `${origin}${req.originalUrl}`);
+    }
+
+    next();
+});
+
+// Compress JSON and manifests. Video is already compressed, and running it
+// through gzip would burn CPU for nothing.
+app.use(
+    compression({
+        filter: (req, res) => {
+            const type = res.getHeader('Content-Type') ?? '';
+            if (/^(video|image)\//.test(String(type))) return false;
+            return compression.filter(req, res);
+        }
+    })
+);
+
+app.use(cookieParser());
 
 let originCache = { key: null, set: null };
 
