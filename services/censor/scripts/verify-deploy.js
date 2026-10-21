@@ -45,13 +45,25 @@
  * confidence to report when detection did not finish. That header's absence
  * says nothing about which build is running; do not read it as a version.
  *
+ * ## Which build, before how it behaves
+ *
+ * The pixel check passes against any build that covers, including the one
+ * that was already there. Twice now a deploy has reported success while an
+ * older image kept serving — a build that failed under a deploy that was not
+ * conditional on it, and a push to an image path the deploy did not read. So
+ * the first thing this does is compare `/health`'s `bars` fingerprint against
+ * this working tree's, and stop if they differ. See `policyFingerprint` in
+ * `src/detect.js`.
+ *
  *   AVR_CENSOR_TOKEN=... node scripts/verify-deploy.js https://host
  *
- * Exits non-zero if the service is failing open.
+ * Exits non-zero if the wrong build is serving, or if the service is failing
+ * open.
  */
 
 import { createRequire } from 'node:module';
 
+import { policyFingerprint } from '../src/detect.js';
 import { pixelate } from '../src/mosaic.js';
 
 const require = createRequire(import.meta.url);
@@ -112,6 +124,38 @@ async function movedPercent(before, after) {
 
     return (moved / a.length) * 100;
 }
+
+// Which build is serving, before asking anything about its behaviour.
+//
+// Everything below this point passes against the previous image as well as
+// this one — it tests that the service covers, not that it covers at the
+// thresholds in this working tree. A deploy here has twice reported success
+// while an older image kept serving, so "it answered and the pixels moved"
+// is not enough to conclude a deploy landed.
+const want = policyFingerprint();
+const health = await fetch(`${base}/health`).then((r) => r.json()).catch(() => null);
+
+if (!health) {
+    console.error(`FAIL  /health did not answer at ${base}`);
+    process.exit(1);
+}
+
+if (health.bars !== want) {
+    console.error(
+        `FAIL  the service is running bars=${health.bars ?? '(absent)'}, this tree is ${want}. ` +
+            (health.bars
+                ? `An older image is still serving; the build or the push did not land.`
+                : `No fingerprint at all, so the image predates /health reporting one.`)
+    );
+    process.exit(1);
+}
+
+if (!health.ok) {
+    console.error(`FAIL  /health says model: ${health.model}`);
+    process.exit(1);
+}
+
+console.log(`bars  ${health.bars} matches this tree, model ${health.model}`);
 
 const image = await probe();
 

@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { createRequire } from 'node:module';
 
 import { CLASSES, CENSOR_IDS, GENITAL_IDS, BREAST_ID } from './labels.js';
@@ -188,6 +189,44 @@ const IOU = 0.45;
  * declining to commit. That band gets covered.
  */
 const WHOLE_TILE = CONF / 2;
+
+/**
+ * A short, stable fingerprint of the covering policy, for `/health`.
+ *
+ * ## What it is for
+ *
+ * Answering "is the image I just built the image that is serving", which
+ * nothing could answer before. A deploy here has twice reported success while
+ * the service stayed on an older image — once because the build failed and
+ * the deploy on the next line was not conditional on it, once because the
+ * documented image path and the pushed image path were different names. Both
+ * times the checks that were run came back clean, because every one of them
+ * tested a property both builds had.
+ *
+ * `X-Censor-Confidence` is not this. Its absence means detection did not
+ * finish, in every build there has ever been; reading it as a version marker
+ * is a mistake already made once here.
+ *
+ * ## Why a hash and not the numbers
+ *
+ * `/health` is the one unauthenticated route, and the bars are the single
+ * most useful thing to know if you are trying to get a picture past this
+ * service. They are derivable from public source, so this is not a secret and
+ * is not handled as one — but there is no reason to hand them to a casual
+ * reader of a public endpoint in plain text either.
+ *
+ * Covers every censorable class's own bar, and `WHOLE_TILE`. Change any one
+ * of them and this changes; change something that does not affect what gets
+ * covered and it does not.
+ */
+export function policyFingerprint() {
+    const canonical = CENSOR_IDS.map((id) => `${CLASSES[id]}=${barFor(id, CONF, GENITAL_CONF, BREAST_CONF)}`)
+        .sort()
+        .concat(`WHOLE_TILE=${WHOLE_TILE}`)
+        .join('|');
+
+    return createHash('sha256').update(canonical).digest('hex').slice(0, 12);
+}
 
 let session = null;
 

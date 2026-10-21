@@ -2,7 +2,7 @@ import { timingSafeEqual } from 'node:crypto';
 
 import express from 'express';
 
-import { load, detect } from './detect.js';
+import { load, detect, policyFingerprint } from './detect.js';
 import { pixelate } from './mosaic.js';
 
 const PORT = Number(process.env.PORT || 8080);
@@ -29,9 +29,13 @@ app.disable('x-powered-by');
  * Reports whether the model actually loaded. Cloud Run will keep routing to a
  * container that is listening, so "up" has to mean "up and able to censor" or
  * the first thing a healthy-looking revision does is fail open.
+ *
+ * `bars` is which thresholds this container is running, as a fingerprint —
+ * the one thing here that distinguishes one build from another, and the thing
+ * a deploy check needs. See {@link policyFingerprint} for why it is hashed.
  */
 app.get('/health', (_req, res) => {
-    res.json({ ok: ready, model: ready ? 'loaded' : 'missing' });
+    res.json({ ok: ready, model: ready ? 'loaded' : 'missing', bars: policyFingerprint() });
 });
 
 app.use((req, res, next) => {

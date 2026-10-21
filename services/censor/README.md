@@ -32,8 +32,14 @@ POST /scan
 ```
 
 ```
-GET /health   ->   { "ok": true, "model": "loaded" }
+GET /health   ->   { "ok": true, "model": "loaded", "bars": "34cd3b0fb3c5" }
 ```
+
+`bars` is a fingerprint of the thresholds this container is running — the one
+field that distinguishes one build from another, and the thing `verify-deploy`
+checks before it checks anything else. Hashed rather than printed because
+`/health` is the unauthenticated route; see `policyFingerprint` in
+`src/detect.js`.
 
 **There is no response that returns the original image.** That is the single
 invariant the whole service is arranged around. A model that failed to load, a
@@ -231,7 +237,13 @@ AVR_CENSOR_TOKEN=$(grep -m1 '^AVR_CENSOR_TOKEN=' "$R/.env" | cut -d= -f2-) \
   https://lustxr-censor-fupy4bogsq-uc.a.run.app
 ```
 
-It sends a 4000x3 sliver of fine stripes — nothing anybody has to look at, and
+Its first check is `/health`'s `bars` against this working tree's fingerprint,
+and it stops there if they differ. Everything after it passes against the
+build that was already running, so without that the script cannot tell a
+deploy that landed from one that did not — which is the failure this project
+has actually had, twice.
+
+Then it sends a 4000x3 sliver of fine stripes — nothing anybody has to look at, and
 unintelligible to a 320x320 detector, so the service takes its whole-frame
 fallback. That is the branch it enters whenever it cannot tell, the one its
 own docstring calls safe, and therefore the one whose silent failure costs the

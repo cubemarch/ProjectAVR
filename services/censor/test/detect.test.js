@@ -1,8 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 
 import { CLASSES, CENSOR, CENSOR_IDS, assertLabelOrder } from '../src/labels.js';
-import { decode, nms, _internals } from '../src/detect.js';
+import { decode, nms, policyFingerprint, _internals } from '../src/detect.js';
 
 /**
  * The decode, driven by a hand-built tensor.
@@ -219,6 +220,48 @@ test('each class is judged at its own bar, and the three bars are ordered', () =
     // And each floor is a floor.
     assert.deepEqual(score('MALE_GENITALIA_EXPOSED', GENITAL_CONF - 0.005), [], 'under the genital bar');
     assert.deepEqual(score('FEMALE_BREAST_EXPOSED', BREAST_CONF - 0.005), [], 'under the breast bar');
+});
+
+test('the policy fingerprint is stable, and moves when a bar moves', () => {
+    // It exists so a deploy check can tell one build from another. Two ways
+    // that can quietly stop being true: it starts varying between calls, so
+    // it never matches; or it stops varying with the bars, so it always does.
+    const fp = policyFingerprint();
+
+    assert.match(fp, /^[0-9a-f]{12}$/, 'a short hex digest');
+    assert.equal(fp, policyFingerprint(), 'same tree, same answer');
+
+    // The bars themselves must not be readable off it.
+    for (const n of [CONF, GENITAL_CONF, BREAST_CONF]) {
+        assert.ok(!fp.includes(String(n).replace('0.', '')), `${n} is not in the clear`);
+    }
+
+    // And it has to actually depend on them. Nothing can reach in and change
+    // a constant, so this checks the ingredient list the other way round: the
+    // canonical string the digest is taken over is per-class, so a build with
+    // breasts back on CONF has to hash differently from this one.
+    const canonical = (bars) =>
+        createHash('sha256')
+            .update(
+                CENSOR_IDS.map((id) => `${CLASSES[id]}=${bars[CLASSES[id]] ?? CONF}`)
+                    .sort()
+                    .concat(`WHOLE_TILE=${WHOLE_TILE}`)
+                    .join('|')
+            )
+            .digest('hex')
+            .slice(0, 12);
+
+    const shipping = {
+        FEMALE_GENITALIA_EXPOSED: GENITAL_CONF,
+        MALE_GENITALIA_EXPOSED: GENITAL_CONF,
+        ANUS_EXPOSED: GENITAL_CONF,
+        FEMALE_BREAST_EXPOSED: BREAST_CONF
+    };
+
+    assert.equal(canonical(shipping), fp, 'the digest is over the bars actually in force');
+
+    const previous = { ...shipping, FEMALE_BREAST_EXPOSED: CONF };
+    assert.notEqual(canonical(previous), fp, 'and the previous tiering hashes differently');
 });
 
 test('a censorable part is covered even when it loses its own anchor', () => {
