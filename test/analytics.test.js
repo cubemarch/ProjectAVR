@@ -225,7 +225,16 @@ test('the module says why, so the next person does not have to guess', () => {
 test('passing the age gate is reported once, with how it was passed', () => {
     const passes = calls(gateSource).filter((c) => c.event === 'AGE_GATE_PASSED');
 
-    assert.equal(passes.length, 3, 'already through, through the dialog, and through after a recheck');
+    // Four since 2026-10-20, when the banner gave the dialog a second way in.
+    // `openAgeGate` re-asks the server before drawing anything, so a visitor
+    // who passed the gate in another tab and then clicked the banner here is
+    // a pass that happens without the dialog ever being shown — distinct from
+    // `again`'s recheck, which happens with it already on screen.
+    assert.equal(
+        passes.length,
+        4,
+        'already through, through the dialog, rechecked on opening, and rechecked while open'
+    );
 
     for (const { params } of passes) {
         assert.match(params, /method/, 'every pass says which route it took');

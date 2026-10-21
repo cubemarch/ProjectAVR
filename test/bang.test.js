@@ -125,6 +125,41 @@ function stubUpstream(body, { status = 200, fail = false } = {}) {
     return calls;
 }
 
+/**
+ * A browser that has been through the age gate, from a state that only asks
+ * for a click. Oregon rather than Texas because the point is to get a pass,
+ * and in the twenty-seven a click does not earn one.
+ */
+async function verifiedVisitor(region = 'OR') {
+    const jar = new Map();
+
+    const call = async (url, options = {}) => {
+        const headers = { ...(options.headers ?? {}), 'x-geo-country': 'US', 'x-geo-region': region };
+
+        if (options.body) headers['Content-Type'] = 'application/json';
+        if (jar.size) headers.Cookie = [...jar].map(([k, v]) => `${k}=${v}`).join('; ');
+
+        const res = await realFetch(`${base}${url}`, { ...options, headers });
+
+        for (const line of res.headers.getSetCookie?.() ?? []) {
+            const [pair] = line.split(';');
+            const eq = pair.indexOf('=');
+            if (pair.slice(eq + 1).trim()) jar.set(pair.slice(0, eq).trim(), pair.slice(eq + 1).trim());
+        }
+
+        return { status: res.status, body: await res.json(), headers: res.headers };
+    };
+
+    const gate = await call('/api/identity/gate');
+
+    await call('/api/identity/gate/attest', {
+        method: 'POST',
+        body: JSON.stringify({ confirmed: true, version: gate.body?.jurisdiction?.attestation?.version })
+    });
+
+    return call;
+}
+
 /* ------------------------------------------------------------- normalising -- */
 
 test('an ordinary scene becomes a card', () => {
@@ -328,6 +363,92 @@ test('a configured shelf draws the partner catalogue', async (t) => {
 
     assert.equal(calls.length, 1, 'one upstream call');
     assert.equal(calls[0].url.searchParams.get('by'), 'views.allTime');
+});
+
+test('an unverified visitor gets the catalogue with every image covered', async (t) => {
+    // The 2026-10-20 reversal. Until then this route was ungated on the
+    // standing decision that boxcover art is not a live broadcast, which held
+    // while the age gate blocked the page: nobody unverified reached a page
+    // that asked for these rows. The gate no longer blocks, so the rows are
+    // covered instead of uncovered.
+    //
+    // Three surfaces carry artwork and all three have to be covered. The
+    // cover is the card, the screenshots are the contact sheet in the scene
+    // panel, and the cast have headshots — and a scene panel with eight
+    // uncovered frames in it is the worst of the three to miss.
+    process.env.AVR_BANG_API_KEY = 'test-key';
+    _resetBangCache();
+
+    t.after(() => {
+        delete process.env.AVR_BANG_API_KEY;
+        globalThis.fetch = realFetch;
+        _resetBangCache();
+    });
+
+    stubUpstream({ results: [upstreamVideo()], total: 1, size: 1 });
+
+    const res = await fetch(`${base}/api/bang/shelf/most-watched`, {
+        headers: { 'x-geo-country': 'US', 'x-geo-region': 'OR' }
+    });
+    const body = await res.json();
+
+    assert.equal(body.covered, true, 'the payload does not say it is covered');
+
+    const [item] = body.items;
+
+    assert.ok(item, 'the row was withheld rather than covered');
+    assert.match(item.image, /^\/api\/media\?u=/, 'the cover is the partner URL');
+
+    for (const shot of item.screenshots) {
+        assert.match(shot, /^\/api\/media\?u=/, 'a contact sheet frame is the partner URL');
+    }
+
+    for (const actor of item.actors) {
+        if (actor.image) assert.match(actor.image, /^\/api\/media\?u=/, 'a headshot is uncovered');
+    }
+
+    // The blanket version, which is what actually catches a field nobody
+    // thought to cover. `href` is excluded by being a bang.com page rather
+    // than an i.bang.com image: the outbound conversion link is the business
+    // model and is supposed to point at the partner.
+    assert.doesNotMatch(
+        JSON.stringify(body),
+        /i\.bang\.com/,
+        'an uncovered partner image URL survived into a covered payload'
+    );
+
+    // Covered responses must not reach a shared cache, or one visitor's
+    // mosaics become everybody's — or worse, the reverse.
+    assert.match(res.headers.get('cache-control') ?? '', /private|no-store/);
+});
+
+test('a verified visitor gets the partner artwork directly', async (t) => {
+    // The other half, and the one that proves the covering is conditional
+    // rather than permanent. A verified visitor never touches `/api/media` —
+    // there is no inference cost for them at all, which is what keeps this
+    // affordable.
+    process.env.AVR_BANG_API_KEY = 'test-key';
+    _resetBangCache();
+
+    t.after(() => {
+        delete process.env.AVR_BANG_API_KEY;
+        globalThis.fetch = realFetch;
+        _resetBangCache();
+    });
+
+    const call = await verifiedVisitor();
+
+    stubUpstream({ results: [upstreamVideo()], total: 1, size: 1 });
+
+    const res = await call('/api/bang/shelf/most-watched');
+
+    assert.equal(res.body.covered, false, 'a verified visitor was served mosaics');
+    assert.match(res.body.items[0].image, /^https:\/\/i\.bang\.com\//);
+    assert.doesNotMatch(JSON.stringify(res.body), /\/api\/media/, 'and paid for inference anyway');
+
+    // And this one may be cached at an edge, because it is the same for every
+    // visitor who has passed the gate.
+    assert.match(res.headers.get('cache-control') ?? '', /public/);
 });
 
 test('the key goes in a header and never into the URL', async (t) => {

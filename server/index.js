@@ -28,6 +28,8 @@ import { mountRecordings } from './routes/recordings.js';
 import { mountStars } from './routes/stars.js';
 import { mountCams } from './routes/cams.js';
 import { mountBang } from './routes/bang.js';
+import { mountAebn } from './routes/aebn.js';
+import { mountMedia } from './routes/media.js';
 import { mountCredits } from './credits/index.js';
 import { paymentsBanner } from './credits/providers.js';
 import { mountUnsubscribe } from './mail/unsubscribe.js';
@@ -453,6 +455,13 @@ mountRecordings(app);
 mountStars(app);
 mountCams(app);
 mountBang(app);
+mountAebn(app);
+
+// Covers partner artwork for a visitor who has not verified. Mounted beside
+// the routes that mint its URLs rather than with the static handlers: it
+// serves images, but what it is is the other half of `mountBang`, `mountAebn`
+// and the star pages - see `server/media/proxy.js`.
+mountMedia(app);
 mountLive(app);
 
 // Claims `/live/hls` and `/live/transcode`, so it has to come before the

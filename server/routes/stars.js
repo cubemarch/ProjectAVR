@@ -84,7 +84,14 @@ async function starAllowlist() {
             if (!program) return feed.byId;
 
             try {
-                const items = await fetchAffiliateRow(program);
+                // Straight to the partner, not through `/api/aebn/stars`.
+                // That path is this server and a root-relative URL is not
+                // something `fetch` can resolve here; it would also mean this
+                // process making a request to itself to read a feed it is
+                // about to cache anyway. There is no visitor on this call, so
+                // there is no gate to apply and nothing to cover — all it
+                // takes from the payload is the ten ids and their names.
+                const items = await fetchAffiliateRow(program, { upstream: true });
                 const byId = new Map(
                     items.filter((i) => i.starId > 0).map((i) => [i.starId, i.title])
                 );

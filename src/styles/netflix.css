@@ -4075,9 +4075,109 @@ body.is-profile {
     padding: 24px;
     background: rgba(4, 4, 8, 0.97);
 
-    /* The page behind is blank at this point — nothing has been fetched yet —
-       but a blur costs nothing and covers the case where it is not. */
+    /* The page behind is no longer blank — it renders with the artwork
+       covered — so this now has something to obscure and the blur is doing
+       work rather than covering a case that did not arise. */
     backdrop-filter: blur(8px);
+}
+
+/* The dialog is dismissible as of 2026-10-20 — see `src/ui/age-gate.js` for
+   why refusing to close it stopped being protection and started being
+   theatre. Positioned against the box rather than floated over the content so
+   it cannot land on top of the lockup on a narrow screen. */
+.age-gate-close {
+    position: absolute;
+    top: 8px;
+    right: 12px;
+    width: 32px;
+    height: 32px;
+    padding: 0;
+    border: 0;
+    border-radius: 50%;
+    background: transparent;
+    color: var(--text-dim, #9a99a6);
+    font-size: 24px;
+    line-height: 1;
+    cursor: pointer;
+}
+
+.age-gate-close:hover,
+.age-gate-close:focus-visible {
+    background: rgba(255, 255, 255, 0.08);
+    color: #fff;
+}
+
+.age-gate-box {
+    position: relative;
+}
+
+/* --------------------------------------------------------- age banner --
+   The non-modal strip offering the gate to a visitor browsing covered
+   artwork. Bottom of the viewport, above the page but below the dialog it
+   opens, and deliberately not dismissible: it is the standing explanation for
+   why every image on the page is a mosaic.
+
+   `z-index: 94` is one under `.age-gate` and above the performer card at 90,
+   so opening the dialog from it draws over it rather than beside it. */
+
+.age-banner {
+    position: fixed;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 94;
+    background: rgba(10, 10, 16, 0.97);
+    border-top: 1px solid rgba(255, 255, 255, 0.14);
+    box-shadow: 0 -8px 32px rgba(0, 0, 0, 0.6);
+    backdrop-filter: blur(6px);
+}
+
+.age-banner-inner {
+    display: flex;
+    gap: 16px;
+    align-items: center;
+    justify-content: center;
+    flex-wrap: wrap;
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 12px 20px;
+
+    /* Clears the home indicator on iOS, where a bottom-pinned bar otherwise
+       puts its button under the system gesture area. */
+    padding-bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+}
+
+.age-banner-text {
+    margin: 0;
+    font-size: 14px;
+    line-height: 1.45;
+    color: var(--text-dim, #c9c8d4);
+}
+
+.age-banner-text strong {
+    color: #fff;
+}
+
+.age-banner-cta {
+    flex: none;
+    white-space: nowrap;
+}
+
+/* The banner is fixed, so without this the last row of cards sits under it
+   for the whole visit and the final shelf can never be fully scrolled to. */
+body.has-age-banner {
+    padding-bottom: 76px;
+}
+
+@media (max-width: 640px) {
+    .age-banner-inner {
+        justify-content: flex-start;
+        text-align: left;
+    }
+
+    body.has-age-banner {
+        padding-bottom: 116px;
+    }
 }
 
 body.age-gate-open {

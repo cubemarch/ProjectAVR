@@ -40,13 +40,36 @@ RUN npm ci --omit=dev --no-audit --no-fund
 # with the same name still loads, still returns boxes, and covers the wrong
 # thing. If this hash stops matching, do not bypass it: re-run `npm run
 # verify` against the new weights before changing the number.
-ARG MODEL_URL=https://github.com/notAI-tech/NudeNet/releases/download/v3.4-weights/320n.onnx
+#
+# ## Why the API asset URL and not the readable one
+#
+# The obvious address is
+# `github.com/notAI-tech/NudeNet/releases/download/v3.4-weights/320n.onnx`,
+# and it is what this used until 2026-10-20. It stopped working: GitHub now
+# answers it with `302 -> /login`, and the login page is served as `200
+# text/html`, so `curl -fsSL` reports success and writes 49KB of HTML into
+# a file named `320n.onnx`. The release is public and unchanged - the same
+# bytes, 12,150,158 of them, come back from the API endpoint below.
+#
+# That is the checksum earning its place, and it is worth saying plainly
+# because the temptation on a red build is to assume the model moved. It did
+# not. Without `sha256sum -c` this would have produced a container that
+# started, served, failed to parse its model, and mosaiced every frame -
+# which the service treats as a successful cover and reports as healthy.
+#
+# The numeric asset id is pinned rather than looked up, so this build does
+# not depend on a second API call going well either. To move to new weights:
+# GET /repos/notAI-tech/NudeNet/releases/tags/<tag>, take `assets[].id`, and
+# re-run `npm run verify` against the file before changing the hash.
+ARG MODEL_URL=https://api.github.com/repos/notAI-tech/NudeNet/releases/assets/176831997
 ARG MODEL_SHA256=c15d8273adad2d0a92f014cc69ab2d6c311a06777a55545f2c4eb46f51911f0f
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl \
     && mkdir -p /app/model \
-    && curl -fsSL "$MODEL_URL" -o /app/model/320n.onnx \
+    && curl -fsSL --retry 3 --retry-delay 2 \
+    -H "Accept: application/octet-stream" \
+    "$MODEL_URL" -o /app/model/320n.onnx \
     && if [ -z "$MODEL_SHA256" ]; then \
     echo "refusing to build without MODEL_SHA256 - verify the weights first" >&2; exit 1; fi \
     && echo "$MODEL_SHA256  /app/model/320n.onnx" | sha256sum -c - \

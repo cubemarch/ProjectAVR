@@ -349,7 +349,22 @@ test('a deployment with no affiliate code draws no row, and does not call it an 
     assert.match(res.headers.get('x-robots-tag'), /noindex/);
 });
 
-test('a visitor who has not passed the age gate is given no rooms', async () => {
+test('with no censor configured, an unverified visitor is given no rooms', async () => {
+    // The fail-closed branch, and the name matters. Until 2026-10-20 this
+    // case read "a visitor who has not passed the age gate is given no
+    // rooms", which stopped being why it passes: the row is now covered and
+    // shown to an unverified visitor everywhere, including Texas. What still
+    // withholds it is the inference service being absent — which is the state
+    // of this suite, since no `AVR_CENSOR_ENDPOINT` is ever set in it.
+    //
+    // Left asserting the same things on purpose. This is the most important
+    // branch in the route, and the thing it protects against is somebody
+    // reversing it so a censor outage uncovers the row rather than hiding it.
+    assert.ok(
+        !process.env.AVR_CENSOR_ENDPOINT,
+        'this case is about an unconfigured censor and one is configured'
+    );
+
     _resetCamsCache();
     process.env.AVR_CHATURBATE_WM = 'test-wm';
 
@@ -369,6 +384,57 @@ test('a visitor who has not passed the age gate is given no rooms', async () => 
     assert.equal(calls.length, 0, 'a gated visitor caused a request for adult artwork');
 
     delete process.env.AVR_CHATURBATE_WM;
+});
+
+test('an unverified visitor inside the twenty-seven gets the row, covered', async () => {
+    // The 2026-10-20 change, and the one that needs a case of its own because
+    // it reverses a deliberate earlier decision. Texas is in the twenty-seven
+    // and used to get an empty row on the reading that those statutes judge
+    // material as a whole rather than pixel by pixel. The row is now covered
+    // and shown everywhere.
+    //
+    // What "covered" has to mean is the substance of this: every thumbnail is
+    // our own proxy path and no partner URL survives into the payload, and
+    // the embed is gone, because a pixelated still linking to a live
+    // uncensored stream is decoration rather than a gate.
+    _resetCamsCache();
+    process.env.AVR_CHATURBATE_WM = 'test-wm';
+    process.env.AVR_CENSOR_ENDPOINT = 'https://censor.example';
+    process.env.AVR_CENSOR_TOKEN = 'test-token';
+
+    try {
+        stubUpstream([upstreamRoom({ username: 'someone' })]);
+
+        const res = await realFetch(`${base}/api/cams`, {
+            headers: { 'x-geo-country': 'US', 'x-geo-region': 'TX' }
+        });
+        const body = await res.json();
+
+        assert.equal(body.configured, true, 'the row was withheld inside the twenty-seven');
+        assert.equal(body.covered, true, 'the row came back uncovered');
+        assert.equal(body.rooms.length, 1);
+
+        const [room] = body.rooms;
+
+        assert.match(room.thumb, /^\/api\/cams\/thumb\//, 'the partner thumbnail URL was handed out');
+        assert.equal(room.embed, null, 'a covered card still opens an uncensored live stream');
+
+        // Images only. `href` is the outbound conversion link and is supposed
+        // to point at the partner — that is the entire business model — so a
+        // blanket "no partner URLs" assertion here would be asserting the
+        // wrong thing and would fail on a correct payload.
+        assert.doesNotMatch(
+            JSON.stringify(body),
+            /https?:\/\/[^"]+\.(?:jpg|jpeg|png|webp|gif)/i,
+            'an uncovered partner image URL survived into a covered payload'
+        );
+
+        assert.match(res.headers.get('cache-control'), /no-store/, 'a covered row was cacheable');
+    } finally {
+        delete process.env.AVR_CHATURBATE_WM;
+        delete process.env.AVR_CENSOR_ENDPOINT;
+        delete process.env.AVR_CENSOR_TOKEN;
+    }
 });
 
 test('a gated visitor gets the row, and the affiliate code stays server-side', async () => {

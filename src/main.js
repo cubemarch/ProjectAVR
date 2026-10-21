@@ -16,7 +16,8 @@ import { api } from './api/client.js';
 import { authModal } from './ui/auth-modal.js';
 import { CreatorPortal } from './ui/creator/portal.js';
 import { ProfilePage } from './ui/profile.js';
-import { ensureAgeGate } from './ui/age-gate.js';
+import { initAgeGate } from './ui/age-gate.js';
+import { onAgeChange } from './age-state.js';
 
 /**
  * Application shell.
@@ -84,14 +85,19 @@ async function boot() {
 
     browse.renderAccount(api.user);
 
-    // Awaited, and before either fetch below. The partner rows and the cam
-    // shelf are adult artwork shown to signed-out visitors, which is exactly
-    // what the twenty-seven statutes in `docs/STATE-AGE-LAWS.md` legislate
-    // about — so a visitor who has not passed the gate must not merely have
-    // it hidden from them, they must not cause it to be requested. It takes
-    // no callback: the gate runs the document check itself and never asks
-    // anybody to sign in. See `src/ui/age-gate.js`.
-    await ensureAgeGate();
+    // Awaited, and before either fetch below — but it no longer waits on the
+    // visitor, only on one same-origin fetch. This used to block the page
+    // until the gate was passed; it now resolves as soon as the server says
+    // where the visitor stands, draws a banner if they are not through, and
+    // lets the page render with every piece of adult artwork covered. The
+    // trade is written up at the head of `src/ui/age-gate.js`.
+    //
+    // Still awaited, for two orderings that matter. `adsEnabled()` reads the
+    // answer synchronously and must have it before a slot is drawn — an ad is
+    // the one thing on this page that cannot be covered, so it is withheld
+    // instead. And the banner should be on the page before the first covered
+    // row appears beneath it rather than dropping in on top of it.
+    await initAgeGate();
 
     // Not awaited: these are other people's servers, and a slow partner must
     // not hold up the page. Called here and nowhere else — the partner rows
@@ -103,6 +109,20 @@ async function boot() {
     // is fetched on every load rather than cached, so chaining it behind the
     // partner rows would make a cold affiliate fetch delay a live shelf.
     browse.refreshCams();
+
+    // Passing the gate changes what every row on the page is allowed to show,
+    // and the rows are already drawn by then. Re-fetching is what uncovers
+    // them: the server picks covered or uncovered per request from the
+    // cookie, so the same two calls now come back with the partner's own
+    // artwork. Deliberately not a `location.reload()` — a visitor who has
+    // just verified should not lose their scroll position and their search as
+    // the reward, and nothing here needs a fresh document.
+    onAgeChange((age) => {
+        if (!age.ok) return;
+
+        browse.refreshAffiliates();
+        browse.refreshCams();
+    });
 
     await syncViewerState();
 

@@ -81,6 +81,99 @@ test('no credentials and no referrer are offered to a partner', async () => {
     assert.equal(opts.referrerPolicy, 'no-referrer');
 });
 
+/* ----------------------------------------------- reading our own proxy -- */
+
+/**
+ * A proxied program, with its covering already applied.
+ *
+ * `image` is what `server/routes/aebn.js` emits for a visitor who has not
+ * passed the age gate: a path on our own origin rather than a URL on the
+ * partner's.
+ */
+const PROXIED = {
+    id: 'test-proxied',
+    kind: 'vod',
+    title: 'Newest',
+    partner: 'Partner',
+    api: '/api/partner/newest',
+    upstream: 'https://partner.example/straight/api/movies/newest',
+    linkOrigin: 'https://partner.example',
+    query: { refid: 'AEBN-119817' },
+    proxied: true,
+    adapter: 'aebn'
+};
+
+const COVERED = '/api/media?u=aHR0cHM6Ly9waWMuYWVibi5uZXQvYS5qcGc&s=AAAAAAAAAAAAAAAAAAAAAA';
+
+test('a request to our own proxy carries our own cookies', async () => {
+    // The gate lives in a cookie, so `omit` here is not caution — it is the
+    // bug where the server cannot tell a verified visitor from a signed-out
+    // one, covers the artwork for both, and the gate appears to do nothing
+    // no matter how many times somebody passes it.
+    const fetchImpl = stubFetch([MOVIE]);
+    await fetchAffiliateRow(PROXIED, { fetchImpl, signal });
+
+    assert.equal(fetchImpl.calls[0].opts.credentials, 'same-origin');
+});
+
+test('reading the partner directly drops back to no credentials', async () => {
+    // `server/routes/stars.js` does this: same program, partner URL, no
+    // visitor. The exemption is keyed on the URL being read rather than on
+    // the program being proxied, because here those two disagree.
+    const fetchImpl = stubFetch([MOVIE]);
+    await fetchAffiliateRow(PROXIED, { fetchImpl, signal, upstream: true });
+
+    const { url, opts } = fetchImpl.calls[0];
+    assert.equal(url, PROXIED.upstream, 'the partner, not our path');
+    assert.equal(opts.credentials, 'omit', 'and so, not our cookies');
+});
+
+test('a covered image is left on our origin instead of aimed at the partner', async () => {
+    // The whole covering feature renders nothing if this is wrong. A covered
+    // URL is root-relative, so resolving it against `linkOrigin` the way a
+    // partner path is resolved produces `https://partner.example/api/media?…`
+    // — their 404 page, on every tile, for every unverified visitor.
+    const fetchImpl = stubFetch([{ ...MOVIE, imageUrl: COVERED }]);
+    const [card] = await fetchAffiliateRow(PROXIED, { fetchImpl, signal });
+
+    assert.equal(card.image, COVERED);
+    assert.equal(new URL(card.href).origin, 'https://partner.example', 'the link still leaves');
+});
+
+test('every registered program is read through our own server', async () => {
+    // The covering invariant, and the reason it needs a test of its own:
+    // adding a partner by pasting their public JSON URL into `api` is the
+    // natural thing to do, it works perfectly, and it puts uncovered artwork
+    // in front of every signed-out visitor. Nothing else fails when that
+    // happens. A partner we genuinely cannot proxy has to be argued for here
+    // rather than arrived at by not thinking about it.
+    for (const program of AFFILIATE_PROGRAMS) {
+        assert.equal(
+            program.proxied,
+            true,
+            `${program.id} is read from the browser, so its artwork cannot be covered`
+        );
+    }
+});
+
+test('a card with no image is dropped rather than drawn broken', async () => {
+    // The other half of the fail-closed rewrite: when the proxy refuses to
+    // sign a partner image it emits `null`, and `null` fed to `new URL`
+    // resolves to a valid link to `/null` rather than throwing. A gap in the
+    // row is the intended outcome; a 404 tile that reads as a bug is not.
+    const fetchImpl = stubFetch([
+        { ...MOVIE, movieId: 1, imageUrl: null },
+        { ...MOVIE, movieId: 2, imageUrl: undefined },
+        { ...MOVIE, movieId: 3, imageUrl: '' },
+        { ...MOVIE, movieId: 4 }
+    ]);
+
+    const cards = await fetchAffiliateRow(PROXIED, { fetchImpl, signal });
+
+    assert.equal(cards.length, 1, 'only the row with artwork survives');
+    assert.equal(cards[0].id, 'test-proxied:4');
+});
+
 test('a row pointing off the partner origin is dropped, not rendered', async () => {
     // The shape that matters: a compromised or hostile payload putting a link
     // to somewhere else entirely under our heading and in our styling.

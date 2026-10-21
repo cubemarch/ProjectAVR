@@ -536,24 +536,26 @@ export function mountCams(app) {
         // thumbnail of a live adult broadcast is squarely the material the
         // twenty-seven statutes are about.
         //
-        // ## Two answers, because the statutes ask two different things
+        // ## One answer, as of 2026-10-20
         //
-        // `visitor-gate.js` sets out why this file does not apply one rule
-        // everywhere, and the same reasoning decides what an ungated visitor
-        // gets here:
+        // This used to be two. The twenty-seven states got an empty row and
+        // everywhere else got a covered one, on the reading that those
+        // statutes judge material as a whole rather than pixel by pixel, so a
+        // mosaic over a live broadcast satisfies nothing there.
         //
-        //   - **The twenty-seven.** Withheld, exactly as before. Those
-        //     statutes judge material as a whole and by its appeal, not pixel
-        //     by pixel; a live broadcast with the explicit parts covered is
-        //     still a live broadcast, and nothing in the table says a mosaic
-        //     satisfies it. So this row stays empty until the visitor has
-        //     actually verified.
-        //   - **Everywhere else.** Covered and shown. No statute requires
-        //     anything here, the visitor owes a click rather than a document,
-        //     and a blank row gives them no reason to make it. They see a real
-        //     shelf of real rooms with the explicit regions pixelated, which
-        //     is both what they are owed and the only version of this row that
-        //     has ever persuaded anyone to pass the gate.
+        // That split is gone and the row is covered everywhere (David,
+        // 2026-10-20). It went with the blocking interstitial: when the gate
+        // held the whole page, withholding one row inside the twenty-seven
+        // cost nothing, because nobody there had a page to put it on. Now the
+        // page renders for everyone and a withheld row inside the twenty-seven
+        // would be the only blank space on it — which neither protects anybody
+        // the mosaic does not already protect, nor explains itself to the
+        // visitor looking at it.
+        //
+        // It is a legal posture rather than a technical one, and it is
+        // deliberately recorded as such: the claim being rested on is that a
+        // fully pixelated thumbnail is not material harmful to minors. If that
+        // reading is ever retracted, this branch is where it goes back.
         //
         // See `server/media/censor.js` and `docs/CENSOR.md`.
         const gate = visitorGate(req);
@@ -561,11 +563,11 @@ export function mountCams(app) {
 
         // Fail-closed, and the most important branch in this file. If the
         // inference service is unset or unreachable there is no covered
-        // version to serve, so the answer reverts to the old one — withheld.
-        // Getting this backwards would show every unverified visitor the
-        // uncensored row the moment the censor went down, which is the exact
-        // failure the whole design is arranged to make impossible.
-        if (covered && (gate.owes === 'verification' || !censorConfigured())) {
+        // version to serve, so the answer reverts to withheld. Getting this
+        // backwards would show every unverified visitor the uncensored row the
+        // moment the censor went down, which is the exact failure the whole
+        // design is arranged to make impossible.
+        if (covered && !censorConfigured()) {
             res.set('Cache-Control', 'private, no-store');
             res.json({ configured: false, gated: true, owes: gate.owes, rooms: [], total: 0 });
             return;

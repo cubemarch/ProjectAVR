@@ -2,6 +2,8 @@ import express from 'express';
 
 import { rateLimit } from '../auth/middleware.js';
 import { TtlCache } from '../cache.js';
+import { visitorGate } from '../identity/visitor-gate.js';
+import { signedMediaUrl } from '../media/proxy.js';
 
 /**
  * Bang's affiliate catalogue, proxied.
@@ -339,6 +341,71 @@ function normaliseVideo(video) {
     };
 }
 
+/* ------------------------------------------------------------------ cover -- */
+
+/**
+ * Swap every artwork URL in a payload for its covered proxy.
+ *
+ * Applied per request and never to the cached list, because whether a visitor
+ * gets covered artwork is the one thing about these rows that is not the same
+ * for everybody. {@link search} caches the partner URLs; this runs on the way
+ * out.
+ *
+ * ## This reverses a standing decision, on the record
+ *
+ * Until 2026-10-20 this route was ungated and the note on it said so: partner
+ * rows were shown to every visitor because boxcover art is not a live
+ * broadcast. That held while the age gate was a blocking interstitial — a
+ * visitor who had not passed it never reached a page that asked for these
+ * rows, so "ungated route" and "ungated artwork" were different statements.
+ *
+ * The gate is no longer blocking. The front page now renders for an
+ * unverified visitor with the artwork covered, which is what makes the gate
+ * worth passing — and the moment the page renders, an ungated route here is
+ * uncovered adult artwork in front of somebody who has not verified. So the
+ * rows are covered instead of withheld (David, 2026-10-20), everywhere rather
+ * than only in the twenty-seven: see `docs/CENSOR.md`.
+ *
+ * ## Fail-closed falls out of the proxy
+ *
+ * There is no "is the censor up" branch here on purpose. A signed URL always
+ * resolves through `/api/media`, and that route answers with the locked
+ * placeholder when the inference service is unset, down or slow. An outage
+ * costs the artwork, never uncovers it, and it costs it without this file
+ * needing to know.
+ *
+ * @param {object[]} items
+ * @returns {object[]} a copy; the cached originals are not touched
+ */
+function cover(items) {
+    const one = (raw) => (raw ? signedMediaUrl(raw) : null);
+
+    return items.map((item) => ({
+        ...item,
+        image: one(item.image),
+        screenshots: item.screenshots.map(one).filter(Boolean),
+        actors: item.actors.map((a) => ({ ...a, image: one(a.image) }))
+    }));
+}
+
+/**
+ * What this visitor's artwork should look like, and how it may be cached.
+ *
+ * The two answers come together because getting them apart is how a covered
+ * payload ends up in a shared cache and is then handed to everybody. A
+ * response that differs by visitor is `private`, and it is `no-store` rather
+ * than short-lived so that passing the gate redraws the page as the real one
+ * immediately instead of a few minutes later.
+ */
+function viewFor(req) {
+    const covered = !visitorGate(req).ok;
+
+    return {
+        covered,
+        cacheControl: covered ? 'private, no-store' : 'public, max-age=300'
+    };
+}
+
 /* ---------------------------------------------------------------- fetching -- */
 
 /**
@@ -415,12 +482,12 @@ export function mountBang(app) {
      * disallow stops a crawl, a header is read by anything that got here
      * without consulting the file first.
      *
-     * Not age-gated, and that is the standing decision rather than a gap. The
-     * partner rows are shown to every visitor (David, 2026-10-18) and this is
-     * one of them — the reasoning, and the reason it is an exception worth
-     * revisiting rather than a settled one, is written up at the head of
-     * `src/catalog/affiliates.js`. The cam shelf gates because a live
-     * broadcast is not boxcover artwork.
+     * Age-gated as of 2026-10-20, which reverses the standing decision that
+     * used to be recorded here. The rows are still shown to every visitor —
+     * that part has not changed — but an unverified one gets the artwork
+     * covered rather than the original. {@link cover} has the why; the short
+     * version is that "ungated route" stopped meaning "ungated artwork" the
+     * moment the age gate stopped blocking the page.
      */
     router.use((req, res, next) => {
         res.set('X-Robots-Tag', 'noindex, nofollow');
@@ -467,12 +534,20 @@ export function mountBang(app) {
 
         try {
             const { items } = await search('videos', { by, size: 24, page: 1 });
+            const view = viewFor(req);
 
-            // Public and not private: there is nothing visitor-specific in
-            // this response — no geo filter, no session, no gate — so an edge
-            // cache in front of it is free and correct.
-            res.set('Cache-Control', 'public, max-age=300');
-            res.json({ configured: true, id: req.params.id, title, items });
+            // Visitor-specific now, and only in one way: whether the artwork
+            // is covered. That is enough to make an edge cache in front of
+            // this wrong, so the header follows the gate rather than being
+            // fixed - see `viewFor`.
+            res.set('Cache-Control', view.cacheControl);
+            res.json({
+                configured: true,
+                id: req.params.id,
+                title,
+                covered: view.covered,
+                items: view.covered ? cover(items) : items
+            });
         } catch (err) {
             console.warn(`[bang] shelf ${req.params.id} failed: ${err.message}`);
 
@@ -508,19 +583,21 @@ export function mountBang(app) {
 
         try {
             const { items, total } = await search('videos', params);
+            const view = viewFor(req);
 
-            res.set('Cache-Control', 'public, max-age=300');
+            res.set('Cache-Control', view.cacheControl);
             res.json({
                 configured: true,
                 total,
                 page,
                 size,
+                covered: view.covered,
 
                 // What the visitor can actually reach, which is not
                 // `total / size`: `page` is clamped at 100 above, so saying
                 // otherwise would draw pagination that 404s past the clamp.
                 pages: Math.min(Math.ceil(total / size) || 1, 100),
-                items
+                items: view.covered ? cover(items) : items
             });
         } catch (err) {
             console.warn(`[bang] search failed: ${err.message}`);
@@ -566,8 +643,14 @@ export function mountBang(app) {
                 return;
             }
 
-            res.set('Cache-Control', 'public, max-age=300');
-            res.json({ configured: true, scene: items[0] });
+            const view = viewFor(req);
+
+            res.set('Cache-Control', view.cacheControl);
+            res.json({
+                configured: true,
+                covered: view.covered,
+                scene: view.covered ? cover(items)[0] : items[0]
+            });
         } catch (err) {
             console.warn(`[bang] scene ${ref} failed: ${err.message}`);
 

@@ -26,14 +26,19 @@
  * own cards. The referral, theatre and sales-tool ids ride in the outbound URL
  * exactly where the widgets put them, so attribution is unchanged.
  *
- * **These rows are shown to every visitor, age gate or not** (David, 2026-10-18).
- * That is a deliberate exception rather than an oversight: `/api/catalog`
- * withholds our own library from the same visitor under `AVR_IDENTITY_ENFORCE`,
- * and boxcover artwork is the material the twenty-seven states in
- * `docs/STATE-AGE-LAWS.md` legislate about. Whoever revisits that decision
- * changes `refreshAffiliates` in `src/ui/browse.js`, not this file — nothing
- * here fetches on import, so the caller still decides when, or whether, a
- * partner is contacted at all.
+ * **These rows are shown to every visitor, and an unverified one sees the
+ * artwork covered** (David, 2026-10-20). The first half is unchanged from the
+ * standing 2026-10-18 decision; the second half reverses it. Until then the
+ * age gate was a blocking interstitial, so "this row is not gated" and "this
+ * artwork is not gated" were the same statement — nothing rendered at all
+ * until the visitor was through. Once the gate became a banner over a browsable
+ * page they came apart, and boxcover artwork is exactly the material the
+ * twenty-seven states in `docs/STATE-AGE-LAWS.md` legislate about.
+ *
+ * Which is why every program here is now proxied. The covering is done by the
+ * server, per request, in `server/routes/aebn.js` and `server/routes/bang.js`;
+ * this file never decides whether a visitor is verified and there is no
+ * parameter it could send to ask for the uncovered version.
  */
 
 /**
@@ -56,11 +61,18 @@
  * @property {object} query    partner params copied onto every outbound URL
  * @property {string} adapter  which normaliser in `ADAPTERS` reads the payload
  * @property {boolean} [proxied]  this program is read through our own server
- *   rather than from the partner, so `api` is a same-origin path and `query`
- *   is empty because the attribution was already applied upstream of here.
- *   See the note on {@link AFFILIATE_PROGRAMS} below. It has to be declared
- *   rather than inferred from the shape, so that a browser-direct program
- *   cannot lose its tracking parameters and quietly look like a proxied one.
+ *   rather than from the partner, so `api` is a same-origin path and the
+ *   request carries this site's own cookies. See the note on
+ *   {@link AFFILIATE_PROGRAMS} below. It has to be declared rather than
+ *   inferred from the shape, so that a browser-direct program cannot lose its
+ *   tracking parameters and quietly look like a proxied one.
+ * @property {string} [upstream]  for a proxied program whose attribution is
+ *   still applied here, the partner URL our own route reads. The browser never
+ *   fetches it — it exists so that the path the browser asks for and the URL
+ *   the server fetches live in one place and cannot drift. Server-side callers
+ *   that want the partner directly rather than through the gate pass
+ *   `{upstream: true}` to {@link fetchAffiliateRow}; `server/routes/stars.js`
+ *   is the one that does.
  */
 
 /**
@@ -75,15 +87,35 @@
 
 /** @type {AffiliateProgram[]} */
 export const AFFILIATE_PROGRAMS = [
+    /*
+     * AEBN's three feeds, and why they stopped being read from the browser.
+     *
+     * They are public JSON with nothing in the URL worth hiding, so the reason
+     * is not the one Bang has below. It is that a feed the browser fetches is
+     * a feed our server never sees, and artwork our server never sees is
+     * artwork it cannot cover for a visitor who has not passed the age gate.
+     * `server/routes/aebn.js` reads them, rewrites every partner image into a
+     * signed `/api/media` URL when the gate says so, and hands the payload
+     * back in the partner's own shape — so the three adapters below did not
+     * change when this moved (David, 2026-10-20).
+     *
+     * `query` stays non-empty here, unlike the proxied Bang rows. Their
+     * `contentUrl` and `vodUrl` are site-relative paths resolved against
+     * `linkOrigin`, so attributing them server-side would mean emitting
+     * absolute URLs and changing the payload shape to do it. The parameters
+     * are public and `toCard` puts them on, exactly as before.
+     */
     {
         id: 'aebn-pitch',
         kind: 'pitch',
         title: 'Featured',
         partner: 'AEBN',
-        api: 'https://dd61z94w0iw42.cloudfront.net/aebnpitchslidesstraight.json',
+        api: '/api/aebn/pitch',
+        upstream: 'https://dd61z94w0iw42.cloudfront.net/aebnpitchslidesstraight.json',
         linkOrigin: 'https://theater.aebn.net',
         list: 'slides',
         query: { theaterId: '13992', refId: 'AEBN-119817' },
+        proxied: true,
         adapter: 'aebnPitch'
     },
     {
@@ -91,9 +123,11 @@ export const AFFILIATE_PROGRAMS = [
         kind: 'stars',
         title: 'Top Stars',
         partner: 'AEBN',
-        api: 'https://dd61z94w0iw42.cloudfront.net/aebntopstarsstraight.json',
+        api: '/api/aebn/stars',
+        upstream: 'https://dd61z94w0iw42.cloudfront.net/aebntopstarsstraight.json',
         linkOrigin: 'https://theater.aebn.net',
         query: { theaterId: '13992', refId: 'AEBN-119817' },
+        proxied: true,
         adapter: 'aebnStars'
     },
     {
@@ -101,8 +135,16 @@ export const AFFILIATE_PROGRAMS = [
         kind: 'vod',
         title: 'Newest On-Demand Movies',
         partner: 'AEBN',
-        api: 'https://straight.aebn.com/straight/api/movies/newest',
+        api: '/api/aebn/newest',
+        upstream: 'https://straight.aebn.com/straight/api/movies/newest',
+
+        // Stated rather than inferred now that `api` is our own path. It used
+        // to fall out of the API's origin; leaving it off after the move would
+        // have bounded these cards to *this* site, which is the one place an
+        // affiliate link must never point.
+        linkOrigin: 'https://straight.aebn.com',
         query: { salesToolId: '80', refid: 'AEBN-119817' },
+        proxied: true,
         adapter: 'aebn'
     },
 
@@ -380,6 +422,15 @@ const ADAPTERS = {
 };
 
 /**
+ * The prefix a covered image carries.
+ *
+ * Minted by `server/media/proxy.js` and recognisable by construction: it is
+ * root-relative, so it cannot be anything a partner sent — every partner image
+ * in every feed here is an absolute URL on the partner's own CDN.
+ */
+const COVERED_PREFIX = '/api/media?';
+
+/**
  * Turn one partner row into a link we are willing to put on our own page.
  *
  * Both the path and the image URL arrive from a third party, so neither is
@@ -396,16 +447,16 @@ function toCard(row, program) {
     const linkOrigin = program.linkOrigin ?? new URL(program.api).origin;
 
     let href;
-    let image;
     try {
         href = new URL(row.path, linkOrigin);
-        image = new URL(row.image, linkOrigin);
     } catch {
         return null;
     }
 
     if (href.origin !== linkOrigin) return null;
-    if (image.protocol !== 'https:') return null;
+
+    const image = cardImage(row.image, linkOrigin);
+    if (!image) return null;
 
     for (const [key, value] of Object.entries(program.query)) {
         href.searchParams.set(key, value);
@@ -418,9 +469,43 @@ function toCard(row, program) {
         starId: row.starId,
         sceneId: row.sceneId,
         href: href.href,
-        image: image.href,
+        image,
         partner: program.partner
     };
+}
+
+/**
+ * The `src` for one card, or `null` if there is nothing safe to draw.
+ *
+ * Three cases, and the middle one is the one that is easy to get wrong.
+ *
+ *   - A **covered** image is already a URL on our own origin. It is passed
+ *     through untouched, because resolving it against `linkOrigin` the way a
+ *     partner path is resolved would aim the tile at
+ *     `https://theater.aebn.net/api/media?…` — the partner's 404 page, on
+ *     every tile, for every unverified visitor.
+ *   - A **partner** image is resolved and must come out https. The proxy
+ *     fetches server-side and the browser loads these directly, so a plain
+ *     http hop is one somebody else chooses the bytes for.
+ *   - **Nothing** is a dropped card rather than a broken one. This is the
+ *     other half of the fail-closed rewrite in `server/routes/aebn.js`: when
+ *     that route refuses to sign a partner image it emits `null`, and a `null`
+ *     fed to `new URL` resolves to a perfectly valid link to `/null` rather
+ *     than throwing. A gap in the row is the intended outcome; a 404 tile that
+ *     looks like a bug is not.
+ */
+function cardImage(raw, linkOrigin) {
+    if (typeof raw !== 'string' || raw === '') return null;
+    if (raw.startsWith(COVERED_PREFIX)) return raw;
+
+    let url;
+    try {
+        url = new URL(raw, linkOrigin);
+    } catch {
+        return null;
+    }
+
+    return url.protocol === 'https:' ? url.href : null;
 }
 
 /**
@@ -438,12 +523,28 @@ async function readProgram(program, api, opts = {}) {
     const doFetch = opts.fetchImpl ?? fetch;
 
     const res = await doFetch(api, {
-        // Cross-origin by definition. Their endpoint answers with
-        // `Access-Control-Allow-Credentials: true` and reflects back whatever
-        // Origin it is given, so saying this explicitly is what keeps a LustXR
-        // cookie from ever being offered to a partner — the default is already
-        // `omit`, but the default is not the reason it has to stay that way.
-        credentials: 'omit',
+        /*
+         * Whose cookies this request may carry, and it is not a formality.
+         *
+         * A browser-direct program is cross-origin by definition. Partner
+         * endpoints answer with `Access-Control-Allow-Credentials: true` and
+         * reflect back whatever Origin they are given, so saying `omit`
+         * explicitly is what keeps a LustXR cookie from ever being offered to
+         * one — the default is already `omit`, but the default is not the
+         * reason it has to stay that way.
+         *
+         * A proxied program is our own server, and it has to see the age-gate
+         * cookie or it cannot tell a verified visitor from a signed-out one.
+         * `omit` here is not a security win, it is the bug where everybody is
+         * served covered artwork forever and the gate appears to do nothing.
+         *
+         * Decided from the URL actually being read and not from `proxied`,
+         * because those two disagree in one real case: `opts.upstream` makes
+         * a proxied program read the partner directly, and that request must
+         * get the cross-origin treatment like any other. A root-relative path
+         * is this origin; anything absolute is somebody else's.
+         */
+        credentials: api.startsWith('/') ? 'same-origin' : 'omit',
         referrerPolicy: 'no-referrer',
         signal: opts.signal ?? AbortSignal.timeout(8000)
     });
@@ -456,12 +557,21 @@ async function readProgram(program, api, opts = {}) {
 /**
  * Read one program's catalogue.
  *
+ * `opts.upstream` reads the partner directly rather than through our own
+ * route, and exists for one caller: `server/routes/stars.js` runs inside the
+ * server, where a root-relative `api` is not a URL at all and there is no
+ * visitor whose gate could be consulted. It wants the ten charting star ids,
+ * not artwork, so going straight to the partner is both the only thing that
+ * works there and the right thing semantically. A program with no `upstream`
+ * ignores the flag — there is nowhere else to read it from.
+ *
  * @param {AffiliateProgram} program
- * @param {{signal?: AbortSignal, fetchImpl?: typeof fetch}} [opts]
+ * @param {{signal?: AbortSignal, fetchImpl?: typeof fetch, upstream?: boolean}} [opts]
  * @returns {Promise<object[]>}
  */
 export async function fetchAffiliateRow(program, opts = {}) {
-    const payload = await readProgram(program, program.api, opts);
+    const api = (opts.upstream && program.upstream) || program.api;
+    const payload = await readProgram(program, api, opts);
     const rows = program.list ? payload?.[program.list] : payload;
 
     if (!Array.isArray(rows)) {

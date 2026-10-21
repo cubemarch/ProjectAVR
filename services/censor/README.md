@@ -73,37 +73,184 @@ upstream change cannot alter what is covering what.
 
 ## Deploying to Cloud Run
 
-Project `cubemarch-507617`. A CPU-only service — the two `g2`/`a2` GPU
-instances in this project are for other work and are the wrong shape for this:
-NudeNet at 320px is ~40ms on a CPU, the load is a few images a second, and a
-GPU VM that has to stay up costs more per month than this will cost per year.
+Project **`lustxr-censor`** (number 522448295028), in the `cubemarch.com`
+organisation, region `us-central1`. A CPU-only service: NudeNet at 320px is
+~40ms on a CPU, the load is a few images a second, and a GPU VM that has to
+stay up costs more per month than this will cost per year.
+
+**It has a project to itself, and that is load-bearing** — see
+[Why a dedicated project](#why-a-dedicated-project). It lived in
+`cubemarch-507617` for about five hours on 2026-10-20 and was moved; nothing
+of it remains there.
+
+### One-time setup
+
+Two traps in here, both of which look like success.
+
+Cloud Build in a project created after mid-2024 no longer gets the legacy
+`PROJECT_NUMBER@cloudbuild.gserviceaccount.com` service account. Builds fall
+back to the Compute Engine default account, which starts without the role it
+needs — and `gcloud builds submit` **exits 0 on `PERMISSION_DENIED`**, so a
+build that never ran looks like a build that succeeded. Check the log, not the
+exit code.
+
+And `gcloud artifacts repositories create` will offer to enable the API for
+you, then fail the create against the API it just enabled, because the
+permission has not propagated. That is a race, not a misconfiguration. Run it
+again.
 
 ```sh
-PROJECT=cubemarch-507617
+PROJECT=lustxr-censor
 REGION=us-central1
+ORG=1006423959781
+BILLING=01213B-360DBB-7E34EE
+
+gcloud projects create "$PROJECT" --name "LustXR censor" --organization "$ORG"
+gcloud billing projects link "$PROJECT" --billing-account "$BILLING"
+
+gcloud services enable \
+  cloudbuild.googleapis.com run.googleapis.com artifactregistry.googleapis.com \
+  --project "$PROJECT"
+
+NUMBER=$(gcloud projects describe "$PROJECT" --format='value(projectNumber)')
+gcloud projects add-iam-policy-binding "$PROJECT" \
+  --member "serviceAccount:$NUMBER-compute@developer.gserviceaccount.com" \
+  --role roles/cloudbuild.builds.builder
+
+gcloud artifacts repositories create censor \
+  --project "$PROJECT" --location "$REGION" --repository-format docker
+
+# Domain Restricted Sharing is inherited from the org and forbids `allUsers`
+# in any IAM policy. Scoped to this project only - see below for why that is
+# safe here and would not be safe anywhere else.
+cat > /tmp/drs.yaml <<'YAML'
+constraint: constraints/iam.allowedPolicyMemberDomains
+listPolicy:
+  allValues: ALLOW
+YAML
+gcloud resource-manager org-policies set-policy /tmp/drs.yaml --project "$PROJECT"
+```
+
+### Build and deploy
+
+```sh
+PROJECT=lustxr-censor
+REGION=us-central1
+IMAGE="$REGION-docker.pkg.dev/$PROJECT/censor/lustxr-censor:latest"
 
 gcloud builds submit services/censor \
   --project "$PROJECT" \
-  --tag "gcr.io/$PROJECT/lustxr-censor:latest"
+  --region "$REGION" \
+  --tag "$IMAGE"
 
 gcloud run deploy lustxr-censor \
   --project "$PROJECT" \
   --region "$REGION" \
-  --image "gcr.io/$PROJECT/lustxr-censor:latest" \
+  --image "$IMAGE" \
   --cpu 2 --memory 2Gi \
   --concurrency 8 \
   --min-instances 0 \
   --max-instances 4 \
-  --no-allow-unauthenticated \
+  --allow-unauthenticated \
   --set-env-vars "CENSOR_TOKEN=$(openssl rand -hex 32)"
 ```
 
+To open an *existing* service rather than one being created, the flag has an
+equivalent that makes no new revision:
+
+```sh
+gcloud run services add-iam-policy-binding lustxr-censor \
+  --project lustxr-censor --region us-central1 \
+  --member allUsers --role roles/run.invoker
+```
+
+### Why IAM is open
+
+`--allow-unauthenticated` needs justifying, because the instinct is the other
+flag. It controls Google's IAM check, and passing that check means presenting
+a Google-signed identity token. The caller is `server/media/censor.js` running
+on an **AWS EC2 box**, which has no Google service-account identity and no
+metadata server that would mint one. So the service authenticates the only
+caller it has with `X-Censor-Token`, a 256-bit shared secret compared on every
+request, and Google's IAM layer is left open because it is a lock we cannot
+hold the key to.
+
+Two things make that an acceptable trade rather than an open service. The
+endpoint has no DNS name and is not linked from anywhere, so reaching it means
+already knowing the generated `*.run.app` hostname. And what it does is
+pixelate pictures — there is no data in it, nothing it can read, and nothing
+it stores. The exposure of a guessed hostname plus a guessed 256-bit token is
+somebody else's images getting mosaiced at our expense, which `--max-instances`
+caps.
+
+#### Why a dedicated project
+
+This is the part that cost a project. `allUsers` cannot be named in an IAM
+policy anywhere under `cubemarch.com`, because the org inherits
+**Domain Restricted Sharing** (`constraints/iam.allowedPolicyMemberDomains`,
+allowing only customer `C02nq0yz3`). The binding fails with
+`FAILED_PRECONDITION: One or more users named in the policy do not belong to a
+permitted customer` — which reads like a typo in the member name and is not.
+
+That constraint can only be overridden at project granularity, never per
+resource. Overriding it on `cubemarch-507617`, where this first lived, would
+have lifted the guardrail off `cubemarch-animatediff-outputs` and
+`cubemarch-scene-assets` as well — the guardrail that makes an accidentally
+public bucket *impossible* rather than merely unlikely. Trading that for a
+pixelation service is a bad trade, so the service moved instead.
+
+So the override lives on a project containing one stateless thing that takes
+an image and returns a blurrier image: no data, no storage, no other resource.
+**That is the entire justification, and it expires the moment anything else is
+deployed here.** If something else ever needs to live in `lustxr-censor`, move
+the constraint back and solve the access problem a different way.
+
+#### Two alternatives, and why neither is better today
+
+A **dedicated service account with a key**, service left IAM-locked. An
+earlier draft of this file called that "a worse credential than the one it
+would be replacing", and on inspection that was wrong: a key granting only
+`roles/run.invoker` on this one service grants exactly what `X-Censor-Token`
+already grants — the ability to make us pixelate a picture. Identical blast
+radius. The real argument against it is cost, not risk. It needs ID-token
+minting and caching in `censor.js`, and a second long-lived secret to rotate,
+where the dedicated project needs neither and no code change at all.
+
+**Workload Identity Federation**, which would let the EC2 box trade its AWS
+identity for a Google token with no static key anywhere. This is the textbook
+answer and it is genuinely better in the abstract. It is not taken because the
+production instance `i-0ab7a2e605ea61af9` has **no IAM instance profile
+attached** (checked 2026-10-20), so there is no AWS role to federate *from*.
+Turning it on means a new IAM role, an instance profile, a GCP workload
+identity pool and AWS provider, and the same token-minting code the key option
+needs. And it would *add* a lock rather than replace one — `X-Censor-Token`
+stays either way, because it is what survives the move to App Runner. The
+whole prize is that a stranger who guesses the hostname gets a refused
+connection instead of a 401.
+
+### Rotating the token
+
+`--set-env-vars` on the service first, then `AVR_CENSOR_TOKEN` in
+`/srv/lustxr/app.env`, in that order: the service accepts the new one before
+the caller starts sending it, so there is no window where artwork falls back
+to the placeholder.
+
 `--min-instances 0` is deliberate: it scales to zero and costs nothing when
-nobody is browsing signed-out. The cost is a cold start of a few seconds on
-the first thumbnail, which the caller absorbs — `_swapFrame` in
-`src/ui/cams.js` holds the previous frame until the new one decodes, so a slow
-first image is invisible rather than broken. Raise it to 1 if signed-out
-traffic is steady enough that cold starts stop being rare.
+nobody is browsing signed-out. Measured on the first revision, 2026-10-20:
+container start to listening **1.73s**, model load **~0.6s** on the first
+request after that, so the worst cold path is about **2.4s**. That matters
+because `server/media/censor.js` gives up at `TIMEOUT_MS = 4_000` — the margin
+is real but it is not large, and anything that slows the model load (bigger
+weights, a second model) eats it. If that timeout starts firing on first
+hits, raise `--min-instances` to 1 before raising the timeout; a placeholder
+that resolves itself in six seconds is worse than an instance that costs a
+dollar a month.
+
+A warm cold start is also softer than it sounds. `_swapFrame` in
+`src/ui/cams.js` holds the previous frame until the new one decodes, and
+`/api/media` caches the placeholder for only five seconds, so the failure
+mode is one page-load of placeholders that fixes itself on the next refresh
+rather than a stuck row.
 
 `--concurrency 8` because each request holds a decoded bitmap and an inference
 buffer; higher packs more per instance and raises the tail latency that the
@@ -111,13 +258,38 @@ caller's 4s timeout is measured against.
 
 ### Isolation
 
-This is a LustXR dependency running in a project shared with other work. That
-is within the standing rule — the same billing account is fine as long as
-external reviewers cannot tell — **because nothing about this is externally
-observable**: it is called server-to-server from the application host, it is
-deployed `--no-allow-unauthenticated`, and it has no public DNS name, no
-certificate and no bucket of its own. Do not give it a custom domain, and do
-not put it behind a hostname that resolves alongside anything else.
+This is a LustXR dependency and it now has its own project, which satisfies
+the standing rule the easy way rather than the arguable way: the same billing
+account is fine as long as external reviewers cannot tell, and here there is
+nothing to tell. It shares no project, host, certificate, bucket or DNS zone
+with Cubemarch, QuestJam or VRecord.
+
+Nothing about it is externally observable in any case. It is called
+server-to-server from the application host, answers only to a shared secret,
+and has no public DNS name and no certificate of its own. Its generated
+`*.run.app` hostname appears in no page, no bundle and no DNS zone. Do not
+give it a custom domain, and do not put it behind a hostname that resolves
+alongside anything else.
+
+### What was verified, 2026-10-20
+
+Against the deployed revision, not a local build:
+
+| | |
+| --- | --- |
+| `GET /health` | `{"ok":true,"model":"loaded"}` |
+| `POST /scan`, no token | `401` |
+| `POST /scan`, wrong token | `401` |
+| Detection | 10 live catalogue images → 9 returned boxes (covers 0,2,1,0,0,6; stills 3,3,3,3). The zeros are clothed covers |
+| Latency | 109–217ms per image including the fetch from `pic.aebn.net` |
+| Cold start | 1.73s to listening, ~0.6s model load |
+| Full chain | `/api/aebn/newest` signed-out → 24 items, every image on our origin → `/api/media` → covered JPEGs, 23–57KB |
+| Refusals | forged signature, truncated signature, absent signature, swapped `u`, `169.254.169.254`, off-allowlist host — all six returned the placeholder |
+
+The detection row is the one worth re-running after any model change. The
+very first scan after the first deploy returned zero boxes, which proves only
+that the service decoded and re-encoded an image — a container with a corrupt
+model does exactly that and reports itself healthy. One image is not a test.
 
 ## Moving to AWS
 

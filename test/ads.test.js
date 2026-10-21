@@ -37,6 +37,11 @@ import {
  * a phone, where it is clipped rather than scaled and the advertiser is billed
  * for an impression nobody could read.
  *
+ * A third arrived on 2026-10-20: an unverified visitor gets no ad at all. The
+ * cases below pass `verified: true` because they are about the first two
+ * properties and would otherwise all assert the third by accident; the third
+ * has a case of its own.
+ *
  * Nothing here touches a DOM or a network. `adSlotHtml` takes the viewport
  * width as a parameter for exactly that reason.
  */
@@ -175,7 +180,7 @@ test('every placement emits its own zone at each viewport', () => {
 
     for (const [id, viewportWidth, zone, w, h] of expected) {
         const where = `${id} at ${viewportWidth}px`;
-        const html = adSlotHtml(id, { viewportWidth });
+        const html = adSlotHtml(id, { viewportWidth, verified: true });
 
         assert.match(html, new RegExp(`id="${zone}"`), `${where}: zone id`);
         assert.match(html, new RegExp(`data-width="${w}"`), `${where}: width`);
@@ -208,7 +213,7 @@ test('an unconfigured placement renders nothing at all', () => {
     ];
 
     for (const viewportWidth of [DESKTOP, TABLET, PHONE]) {
-        const html = adSlotHtml('not-yet-sold', { viewportWidth, placements });
+        const html = adSlotHtml('not-yet-sold', { viewportWidth, placements, verified: true });
 
         assert.equal(html, '', `${viewportWidth}px: no markup, no label, no reserved space`);
         assert.doesNotMatch(html, /Advertisement/);
@@ -228,16 +233,67 @@ test('one tier configured does not render the other', () => {
         }
     ];
 
-    assert.match(adSlotHtml('half-sold', { viewportWidth: DESKTOP, placements }), /id="1129394"/);
-    assert.equal(adSlotHtml('half-sold', { viewportWidth: PHONE, placements }), '');
+    assert.match(
+        adSlotHtml('half-sold', { viewportWidth: DESKTOP, placements, verified: true }),
+        /id="1129394"/
+    );
+    assert.equal(
+        adSlotHtml('half-sold', { viewportWidth: PHONE, placements, verified: true }),
+        ''
+    );
+});
+
+test('an unverified visitor is served no ad of any shape', () => {
+    // The one rule on this site is that an unverified visitor does not see
+    // genitals, and every other surface honours it by covering the artwork —
+    // `services/censor/` pixelates it and `server/media/proxy.js` is how it
+    // gets there. An ad cannot go through that: the creative is picked by an
+    // auction at display time, drawn into the page by the network's own
+    // loader from the network's own CDN, and frequently is not even an image.
+    // There is no URL to sign and no bytes to pixelate.
+    //
+    // So the slot is not drawn. This is the assertion that keeps it that way,
+    // and it covers all three entry points rather than the one, because they
+    // are three separate functions and an ad that escapes through any of them
+    // is uncensored adult material in front of somebody who has not verified.
+    for (const viewportWidth of [DESKTOP, TABLET, PHONE]) {
+        for (const id of AD_PLACEMENTS.map((p) => p.id)) {
+            assert.equal(
+                adSlotHtml(id, { viewportWidth, verified: false }),
+                '',
+                `${id} at ${viewportWidth}px is drawn to an unverified visitor`
+            );
+        }
+    }
+
+    assert.equal(nativeStripHtml(NATIVE_STRIP, { verified: false }), '', 'the native strip');
+    assert.equal(bioCardAdHtml(BIO_CARD_AD, { verified: false }), '', 'the profile card unit');
+
+    // Not merely "no zone id": no reserved space and no label either. A
+    // labelled empty box would tell a visitor an ad failed to load, when what
+    // actually happened is that we declined to ask for one.
+    const any = AD_PLACEMENTS.map((p) => adSlotHtml(p.id, { viewportWidth: DESKTOP, verified: false })).join('');
+
+    assert.doesNotMatch(any, /Advertisement/, 'and it does not say so');
+    assert.doesNotMatch(any, /--ad-[wh]:/, 'and reserves nothing');
+});
+
+test('withholding is the default, not something a caller has to ask for', () => {
+    // `verified` defaults to `ageOk()`, which is false until the server has
+    // answered. The risk this guards is the ordering one: a slot rendered
+    // during the window between first paint and the gate fetch landing. A
+    // default of "shown" would make that window an ad impression.
+    assert.equal(adSlotHtml('top-leaderboard', { viewportWidth: DESKTOP }), '');
+    assert.equal(nativeStripHtml(), '');
+    assert.equal(bioCardAdHtml(), '');
 });
 
 test('an unknown placement id is empty rather than throwing', () => {
-    assert.equal(adSlotHtml('no-such-slot', { viewportWidth: DESKTOP }), '');
+    assert.equal(adSlotHtml('no-such-slot', { viewportWidth: DESKTOP, verified: true }), '');
 });
 
 test('the native strip draws one unit per configured zone', () => {
-    const html = nativeStripHtml();
+    const html = nativeStripHtml(NATIVE_STRIP, { verified: true });
 
     assert.match(html, /class="ad-strip"/);
     assert.match(html, /id="1129402"/);
@@ -254,12 +310,16 @@ test('an empty strip is no strip', () => {
     const empty = { zones: [], width: 108, height: 140 };
     const junk = { zones: [null, 0, 'abc'], width: 108, height: 140 };
 
-    assert.equal(nativeStripHtml(empty), '', 'no zones, no wrapper');
-    assert.equal(nativeStripHtml(junk), '', 'and nothing a bad paste left behind');
+    assert.equal(nativeStripHtml(empty, { verified: true }), '', 'no zones, no wrapper');
+    assert.equal(
+        nativeStripHtml(junk, { verified: true }),
+        '',
+        'and nothing a bad paste left behind'
+    );
 });
 
 test('the profile card unit draws at its one size', () => {
-    const html = bioCardAdHtml();
+    const html = bioCardAdHtml(BIO_CARD_AD, { verified: true });
 
     assert.match(html, /id="1129407"/);
     assert.match(html, /class="ad-slot ad-slot-bio-card"/);
@@ -335,15 +395,23 @@ function zIndexes() {
     return [...CSS.matchAll(/z-index:\s*(-?\d+)\s*;/g)].map((m) => Number(m[1]));
 }
 
-test('the age gate is the top layer and the profile card is next', () => {
-    // Two assertions and one ordering, because there is exactly one element
-    // on this page allowed above the profile card and it is the age gate.
-    // Anything else appearing up there is an ad format that has escaped its
-    // slot, which is the bug this section exists to catch.
+test('the age gate is the top layer, then its banner, then the profile card', () => {
+    // One ordering, because the two elements allowed above the profile card
+    // are the age gate and the banner that opens it. Anything else appearing
+    // up there is an ad format that has escaped its slot, which is the bug
+    // this section exists to catch.
+    //
+    // The banner joined the list on 2026-10-20, when the gate stopped being a
+    // blocking interstitial. It has to be under the dialog — it opens it, so
+    // a banner painting over its own dialog would cover the thing it just
+    // asked for — and over everything else, because it is the only standing
+    // explanation of why every image on the page is a mosaic.
     const gate = CSS.match(/\.age-gate\s*\{[^}]*?z-index:\s*(\d+)/)?.[1];
+    const banner = CSS.match(/\.age-banner\s*\{[^}]*?z-index:\s*(\d+)/)?.[1];
     const card = CSS.match(/\.star-bio\s*\{[^}]*?z-index:\s*(\d+)/)?.[1];
 
     assert.ok(gate, '.age-gate has no z-index at all');
+    assert.ok(banner, '.age-banner has no z-index at all');
     assert.ok(card, '.star-bio has no z-index at all');
 
     const all = zIndexes();
@@ -355,9 +423,10 @@ test('the age gate is the top layer and the profile card is next', () => {
 
     // The gate is what stands between a minor and the page. A popup over it
     // is not a cosmetic defect.
-    assert.ok(Number(gate) > Number(card), 'the profile card can cover the age gate');
+    assert.ok(Number(gate) > Number(banner), 'the banner can cover the dialog it opens');
+    assert.ok(Number(banner) > Number(card), 'the profile card can cover the age banner');
 
-    const others = all.filter((n) => n !== Number(gate));
+    const others = all.filter((n) => n !== Number(gate) && n !== Number(banner));
     assert.equal(
         Number(card),
         Math.max(...others),
@@ -427,8 +496,16 @@ test('the skyscraper is not served where the page cannot give up the column', ()
     const rail = 0.04 * w + sky.desktop.width + 28;
     assert.ok(w - rail - 2 * (0.04 * w) >= mid.desktop.width, 'the content column is too narrow');
 
-    assert.equal(adSlotHtml('top-skyscraper', { viewportWidth: w - 1 }), '', 'served below its floor');
-    assert.notEqual(adSlotHtml('top-skyscraper', { viewportWidth: w }), '', 'not served at its floor');
+    assert.equal(
+        adSlotHtml('top-skyscraper', { viewportWidth: w - 1, verified: true }),
+        '',
+        'served below its floor'
+    );
+    assert.notEqual(
+        adSlotHtml('top-skyscraper', { viewportWidth: w, verified: true }),
+        '',
+        'not served at its floor'
+    );
 });
 
 test('the reserved column and the creative it is reserved for agree', () => {

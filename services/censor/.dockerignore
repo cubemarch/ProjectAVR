@@ -1,0 +1,8 @@
+# The image installs from package-lock.json; a local tree uploaded into the
+# build context would be both large and the wrong platform — `sharp` and
+# `onnxruntime-node` ship per-platform binaries, and a macOS build of either
+# inside a linux image is a native module that will not load.
+node_modules/
+test/
+.dockerignore
+README.md

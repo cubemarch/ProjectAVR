@@ -74,6 +74,7 @@
  */
 
 import { AD_HOSTS, AD_PLACEMENTS, BIO_CARD_AD, MOBILE_BREAKPOINT_PX, NATIVE_STRIP } from './zones.js';
+import { ageOk } from '../age-state.js';
 
 /**
  * The network's loader.
@@ -156,12 +157,49 @@ export function anyZonesConfigured() {
 /**
  * Whether this page may file impressions.
  *
- * Both halves matter. The host check keeps development out of the account;
- * the configuration check means a production deploy with no zones yet behaves
- * exactly like today's site rather than like a broken one.
+ * Three halves now. The host check keeps development out of the account; the
+ * configuration check means a production deploy with no zones yet behaves
+ * exactly like today's site rather than like a broken one; and the age check
+ * is the subject of the section below.
+ *
+ * ## An ad cannot be run through the censor, so it is not run at all
+ *
+ * The instruction this implements was "run all images and artwork including
+ * ads through the censor" (David, 2026-10-20). Everything else on the page
+ * can be: `server/media/proxy.js` mints a signed URL, the server fetches the
+ * image, the inference service pixelates it, and the visitor gets the covered
+ * copy. An ad cannot go through that pipeline, for reasons that are the ad
+ * network's design rather than an omission here:
+ *
+ *   - **There is no URL to sign.** The creative is chosen by an auction that
+ *     runs at display time. Nothing on our side knows what image will be
+ *     shown until the network's loader has already shown it.
+ *   - **We never hold the bytes.** `jads.js` replaces the `<ins>` with its own
+ *     children in the visitor's browser, from the network's own CDN. A server
+ *     side image proxy is not in that path and cannot be put in it.
+ *   - **Many creatives are not images.** A fair share of the inventory is an
+ *     iframe or a video. There is nothing for an image censor to censor.
+ *   - **Interposing would break the thing being paid for.** The impression is
+ *     counted by the script that draws the creative, and the advertiser is
+ *     paying for that count. Re-serving creatives from our own origin would
+ *     file impressions the network cannot attribute, which is the definition
+ *     of invalid traffic and the category publisher accounts are closed over.
+ *
+ * So the rule — an unverified visitor does not see genitals — is enforced the
+ * only way it can be here: the slots are not drawn and the loader is never
+ * fetched. An unverified visitor sees no ads at all. That costs the revenue
+ * from unverified traffic, which is the honest price of the rule, and it is
+ * the same fail-closed posture as everything else in `docs/CENSOR.md` — the
+ * failure covers more rather than less.
+ *
+ * `ageOk()` is false until the server has answered, so the first paint of a
+ * page whose gate fetch is still in flight draws no slots either. `main.js`
+ * resolves the state before the rows that contain them render, and
+ * `onAgeChange` fills them in when a visitor passes the gate without a reload.
  */
 export function adsEnabled() {
     if (typeof window === 'undefined') return false;
+    if (!ageOk()) return false;
     if (!anyZonesConfigured()) return false;
     return AD_HOSTS.includes(window.location.hostname);
 }
@@ -187,11 +225,22 @@ export function adsEnabled() {
  * exercises the empty-zone path at all — and that path is the whole safety
  * property of this module. Passing a synthetic list is how it stays tested.
  *
+ * `verified` is the third seam and the reason all three exist as parameters
+ * rather than as reads of global state: an unverified visitor gets no slot at
+ * all — see {@link adsEnabled} for why an ad cannot be covered the way the
+ * artwork around it is — and "draws nothing until verified" is a property
+ * worth asserting from a test rather than inferring from a module-level flag.
+ *
  * @param {string} placementId
- * @param {{viewportWidth?: number, placements?: object[]}} [opts]
+ * @param {{viewportWidth?: number, placements?: object[], verified?: boolean}} [opts]
  * @returns {string}
  */
-export function adSlotHtml(placementId, { viewportWidth = viewport(), placements = AD_PLACEMENTS } = {}) {
+export function adSlotHtml(
+    placementId,
+    { viewportWidth = viewport(), placements = AD_PLACEMENTS, verified = ageOk() } = {}
+) {
+    if (!verified) return '';
+
     const placement = placements.find((p) => p.id === placementId);
     if (!placement) return '';
 
@@ -214,9 +263,12 @@ export function adSlotHtml(placementId, { viewportWidth = viewport(), placements
  * draws nothing" has to be checked against one that is.
  *
  * @param {{zones: number[], width: number, height: number}} [strip]
+ * @param {{verified?: boolean}} [opts]
  * @returns {string}
  */
-export function nativeStripHtml(strip = NATIVE_STRIP) {
+export function nativeStripHtml(strip = NATIVE_STRIP, { verified = ageOk() } = {}) {
+    if (!verified) return '';
+
     const units = strip.zones
         .map((z) => cleanZone(z))
         .filter(Boolean)
@@ -235,9 +287,12 @@ export function nativeStripHtml(strip = NATIVE_STRIP) {
  * somebody's biography.
  *
  * @param {{zone: number|null, width: number, height: number}} [unit]
+ * @param {{verified?: boolean}} [opts]
  * @returns {string}
  */
-export function bioCardAdHtml(unit = BIO_CARD_AD) {
+export function bioCardAdHtml(unit = BIO_CARD_AD, { verified = ageOk() } = {}) {
+    if (!verified) return '';
+
     const zone = cleanZone(unit.zone);
     if (!zone) return '';
 
