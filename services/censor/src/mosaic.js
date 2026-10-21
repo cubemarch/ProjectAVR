@@ -94,18 +94,50 @@ export async function pixelate(buffer, { boxes = [], whole = false } = {}) {
     return base.composite(patches).jpeg({ quality: 78, mozjpeg: true }).toBuffer();
 }
 
-/** The whole frame, quantised. Nearest on the way back up or it re-blurs. */
+/**
+ * The whole frame, quantised. Nearest on the way back up or it re-blurs.
+ *
+ * ## The two resizes must be two pipelines
+ *
+ * This is the only part of this file with a trap in it, and it is not
+ * visible in the code that reads wrong. **`sharp` permits one resize per
+ * pipeline**: a second `.resize()` on the same instance does not run after
+ * the first, it replaces it. So the obvious spelling —
+ *
+ * ```js
+ * sharp(buffer).resize(w, h).resize(width, height)   // WRONG
+ * ```
+ *
+ * — is not "shrink then grow", it is "resize to `width` x `height`", which
+ * for an image that is already that size is a decode and a re-encode and
+ * nothing else. That is what this function did until 2026-10-20, and the
+ * consequence was not a subtle one: `pixelate` builds every cover out of
+ * this buffer, so *nothing this service ever returned was covered*. It
+ * detected correctly, reported the boxes it found in `X-Censor-Boxes`,
+ * composited patches cut from an unquantised copy of the original, and
+ * answered with the photograph. The whole-frame fallback — the branch the
+ * rest of the service falls back to when the model will not load — did the
+ * same thing.
+ *
+ * Measured on one 350x506 boxcover: chained, 0.0% of pixels moved; as two
+ * pipelines, 52.4%.
+ *
+ * So: downsample to a buffer, then upsample that buffer. The intermediate
+ * `toBuffer()` is not a stylistic choice and must not be collapsed back into
+ * a chain.
+ */
 async function blocky(buffer, width, height) {
     const small = Math.max(4, Math.round(BLOCKS * (Math.min(width, height) / Math.max(width, height))));
     const w = width >= height ? BLOCKS : small;
     const h = width >= height ? small : BLOCKS;
 
-    return sharp(buffer, { failOn: 'none' })
+    const down = await sharp(buffer, { failOn: 'none' })
         .removeAlpha()
         .resize(w, h, { fit: 'fill', kernel: 'cubic' })
-        .resize(width, height, { fit: 'fill', kernel: 'nearest' })
         .png()
         .toBuffer();
+
+    return sharp(down).resize(width, height, { fit: 'fill', kernel: 'nearest' }).png().toBuffer();
 }
 
 /**
