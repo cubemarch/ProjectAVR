@@ -56,11 +56,28 @@ export async function pixelate(buffer, { boxes = [], whole = false } = {}) {
 
     const blocks = await blocky(buffer, width, height);
 
-    // Nothing to place: the whole frame is the mosaic. Also the error path
-    // every caller in this service falls back to, so it has to be the
-    // simplest branch here.
-    if (whole || !boxes.length) {
+    // Cover everything. The error path every caller in this service falls
+    // back to, so it has to be the simplest branch here.
+    //
+    // `whole` alone, and not `|| !boxes.length`. Those two look like the
+    // same case and are opposites: `whole` is the detector saying it could
+    // not tell, an empty box list on its own is the detector saying there
+    // is nothing here. Covering both was invisible while `blocky` was a
+    // no-op — a cleared image came back as the photograph either way — and
+    // the moment the mosaic worked it mosaiced 27 of the 51 boxcovers on
+    // the Bang shelves, clothed promotional art included.
+    //
+    // Which is only safe because the detector will not report an empty list
+    // unless it is confident: `whole` is set for anything above half of
+    // CONF. See WHOLE_TILE in detect.js — that threshold, not this branch,
+    // is what stands between an unverified visitor and an uncovered
+    // photograph, and it is the one to change if this is ever too loose.
+    if (whole) {
         return sharp(blocks).jpeg({ quality: 78, mozjpeg: true }).toBuffer();
+    }
+
+    if (!boxes.length) {
+        return base.jpeg({ quality: 78, mozjpeg: true }).toBuffer();
     }
 
     const patches = [];

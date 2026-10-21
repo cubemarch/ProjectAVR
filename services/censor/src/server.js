@@ -100,6 +100,16 @@ app.post(
             res.set('X-Censor-Boxes', String(verdict.boxes.length));
             res.set('X-Censor-Whole', verdict.whole ? '1' : '0');
             res.set('X-Censor-Ms', ms.toFixed(1));
+
+            // The score behind the verdict, because the interesting response
+            // from this service is now the one with no boxes and no whole
+            // frame — the image it decided to hand back unmodified. Boxes
+            // and whole say what it did; this says how close it came to
+            // deciding otherwise, which is the only way to tell a confident
+            // pass from a near miss from outside the process.
+            if (verdict.confidence !== null && verdict.confidence !== undefined) {
+                res.set('X-Censor-Confidence', Number(verdict.confidence).toFixed(4));
+            }
             res.send(out);
         } catch (err) {
             // Could not even re-encode it. Nothing safe to send.

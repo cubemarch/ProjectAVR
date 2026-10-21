@@ -127,10 +127,41 @@ test('below threshold is not a box, but is still remembered', () => {
         { at: 4, box: [100, 100, 20, 20], scores: { MALE_GENITALIA_EXPOSED: score } }
     ]);
 
-    const { boxes, bestCensorable } = decode(raw, dims, FLAT);
+    const { boxes, bestCensorable, whole } = decode(raw, dims, FLAT);
 
     assert.deepEqual(boxes, [], 'not placed');
     assert.equal(bestCensorable.toFixed(2), score.toFixed(2), 'but the confidence is reported');
+
+    // And remembering it has to mean something. A hair under CONF is the
+    // model declining to commit, not the model saying no; it used to leave
+    // `whole` false, and with nothing placed that meant the photograph.
+    assert.equal(whole, true, 'so a near miss covers the frame rather than showing it');
+});
+
+test('the band between confidently-clean and a placed box is covered', () => {
+    // The three outcomes, walked in order. Only the first is ever shown to
+    // somebody who has not verified their age, so the boundary between the
+    // first and the second is the one number in this service that has to be
+    // wrong in the safe direction.
+    const at = (score) => {
+        const { raw, dims } = tensor(10, [
+            { at: 3, box: [100, 100, 20, 20], scores: { FEMALE_GENITALIA_EXPOSED: score } }
+        ]);
+        return decode(raw, dims, FLAT);
+    };
+
+    const clean = at(WHOLE_TILE - 0.01);
+    assert.deepEqual(clean.boxes, [], 'nothing placed');
+    assert.equal(clean.whole, false, 'confidently clean, so it is shown');
+
+    const unsure = at(WHOLE_TILE + 0.01);
+    assert.deepEqual(unsure.boxes, [], 'still nothing placed');
+    assert.equal(unsure.whole, true, 'but not clean enough to show');
+
+    const placed = at(CONF + 0.01);
+    assert.equal(placed.boxes.length, 1, 'over CONF it is a box');
+
+    assert.ok(WHOLE_TILE < CONF, 'the band has to exist at all');
 });
 
 test('confident but unplaceable covers the whole frame', () => {

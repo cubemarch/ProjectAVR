@@ -96,10 +96,46 @@ system that answers a request with the original image.
 | Model failed to load in the container | whole frame mosaiced |
 | Detector threw on an image | whole frame mosaiced |
 | Model confident but cannot localise | whole frame mosaiced |
+| Model neither placed a box nor cleared the image | whole frame mosaiced |
 | Image undecodable | placeholder tile |
 | Unknown room name | placeholder tile |
 | Signature missing, forged, or re-used on another URL | placeholder tile |
 | Partner serves artwork from a host not in the allowlist | image dropped; a gap in the row |
+
+### The one response that is not covered
+
+Everything above is a failure mode. There is exactly one success mode that
+puts a partner's own pixels in front of somebody who has not verified their
+age, and it is worth stating on its own because the rest of this document is
+about the cases where that cannot happen:
+
+> The detector ran, placed no box, and scored **below half of `CONF`** on
+> every censorable class.
+
+That image is re-encoded and handed back. Nothing else is. Above that floor
+and below a placed box, the frame is mosaiced entirely — the model declining
+to commit is not the model saying no.
+
+The floor lives in `WHOLE_TILE` in `services/censor/src/detect.js` and is
+written as `CONF / 2` rather than a number so the two move together.
+Measured over the 51 boxcovers on the three Bang shelves, 2026-10-20:
+
+| | confidence |
+| --- | --- |
+| Images that produced a box (24) | 0.221 – 0.884 |
+| Images the model cleared (25) | 0.002 – 0.088 |
+| Covered as uncertain (2) | 0.110, 0.152 |
+
+The populations do not overlap and the gap is wide, so anywhere between
+0.16 and 0.22 would split this sample identically. The floor sits at 0.09,
+below the gap rather than inside it, because 51 images of one kind is not
+enough to put a threshold in a gap and the two mistakes do not cost the
+same: too high shows a photograph, too low mosaics a clothed cover.
+
+Both of the closest calls were checked by eye rather than by score — the
+highest-scoring pass-through, at 0.088, is a performer in a crop top and
+underwear. `X-Censor-Confidence` is on every response so this stays
+checkable without re-deriving it.
 
 ### Fail-closed is not free, and the first time it fired it cost three fifths of a page
 
@@ -224,6 +260,21 @@ container with a corrupt model returns zero boxes on everything and reports
 itself healthy — see the Dockerfile's note on the download that silently
 fetched a login page. Nine non-zero results out of ten is what separates
 "the detector runs" from "the detector detects".
+
+**And it still does not establish that anything was covered.** Everything
+above this line is a measurement of the detector. The same afternoon, this
+service was returning every one of those images uncovered: `blocky` chained
+two `sharp` resizes on one pipeline, `sharp` takes one resize per pipeline
+and the second replaced the first, so the "mosaic" was the original at its
+own dimensions and every patch was cut from it. Box counts were right.
+Latencies were right. Content types were right. The covered file was
+*smaller* than the source, which read as evidence the mosaic was working.
+
+A screenshot found it. So the rule this document is now written under:
+**a box count is a claim about the detector and never about the cover.**
+The only evidence that an image was covered is decoding the output and
+comparing pixels, which is what `services/censor/test/mosaic.test.js` does
+and the only thing it is allowed to do.
 
 ## Catalogue artwork, and the SSRF answer it needed
 

@@ -55,8 +55,35 @@ const IOU = 0.45;
  * under what box regression is reliable at even when classification is sure.
  * The honest response to "something is there and I cannot say where" is to
  * cover all of it, not none of it.
+ *
+ * ## Why this is half of {@link CONF} and not the 0.30 it started at
+ *
+ * This number is doing a second job that only became visible once the
+ * mosaic started working. It is not only "was the model sure something was
+ * there" — it is the line under which **an empty box list is trustworthy**,
+ * because an image with no boxes and a score below this is the one case in
+ * this service that gets shown to an unverified visitor unmodified.
+ *
+ * At 0.30 that line sat well above {@link CONF}, so a score of 0.25 — which
+ * is to say "the model nearly placed a box and did not" — produced no boxes,
+ * no whole-frame cover, and the photograph. Absence of evidence was being
+ * read as evidence of absence, in the one direction that shows skin.
+ *
+ * Measured over the 51 boxcovers on the three Bang shelves, 2026-10-20:
+ * images that produced a box scored 0.221 to 0.884; images the model cleared
+ * scored 0.002 to 0.152. The populations do not overlap and the gap is wide,
+ * so the threshold is not finely balanced — anywhere in 0.16 to 0.22 splits
+ * this sample identically. It sits at half of `CONF` instead, which is below
+ * the gap rather than inside it, because the sample is 51 images of one kind
+ * and the cost of the two mistakes is not symmetric: too high shows a
+ * photograph, too low mosaics a clothed cover.
+ *
+ * Expressed against `CONF` rather than written as a number so the two move
+ * together. `CONF` is deliberately tuned for recall; a score at half of an
+ * already-generous bar is weak, and anything between the two is the model
+ * declining to commit. That band gets covered.
  */
-const WHOLE_TILE = 0.30;
+const WHOLE_TILE = CONF / 2;
 
 let session = null;
 

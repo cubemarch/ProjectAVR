@@ -85,13 +85,28 @@ test('whole-frame is the fallback the rest of the service relies on, so it has t
     assert.ok(share > 0.25, `the whole-frame mosaic left the frame alone — only ${(share * 100).toFixed(1)}% moved`);
 });
 
-test('no boxes means the whole frame, not a clean pass', async () => {
+test('a cleared image is handed back, and an uncertain one is not', async () => {
     const src = await source();
-    const out = await pixelate(src, { boxes: [] });
+    const frame = { left: 0, top: 0, width: 350, height: 506 };
 
-    const share = await moved(src, out, { left: 0, top: 0, width: 350, height: 506 });
+    // These two differ by one flag and they are the whole safety argument
+    // for showing anything at all. `whole:false` with no boxes is the
+    // detector saying it looked and there is nothing; `whole:true` is it
+    // saying it could not tell. Covering both — which is what this did
+    // until 2026-10-20 — mosaiced every clothed cover in the catalogue.
+    const baseline = await sharp(src).removeAlpha().jpeg({ quality: 78, mozjpeg: true }).toBuffer();
 
-    assert.ok(share > 0.25, `an empty box list has to cover everything, ${(share * 100).toFixed(1)}% moved`);
+    const cleared = await pixelate(src, { boxes: [], whole: false });
+    assert.ok(
+        (await moved(baseline, cleared, frame)) < 0.05,
+        'a cleared image comes back as itself, re-encoded'
+    );
+
+    const unsure = await pixelate(src, { boxes: [], whole: true });
+    assert.ok(
+        (await moved(src, unsure, frame)) > 0.25,
+        'an uncertain one is covered entirely'
+    );
 });
 
 test('what is outside the box is left alone', async () => {
