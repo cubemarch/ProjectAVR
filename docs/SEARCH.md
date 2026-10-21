@@ -448,6 +448,39 @@ first, then test one network with a fixed small budget, then judge.
   ever looks like it has changed; nothing in this repository can test a
   third party's response headers.
 
+- **Giving the Bang catalogue URLs.** Same breach again, and this one arrives
+  wearing a brief: "serve the content from the API so that the user stays on
+  our site". Most of that is honoured — `server/routes/bang.js` proxies the
+  catalogue, `src/ui/browse.js` renders it as our own cards, searches 164,595
+  scenes in-page and opens a title in a panel with the cast, the genres and a
+  contact sheet of stills, so a visitor decides here rather than at somebody's
+  age wall. What it does **not** do is give any of that an address, and the
+  difference between those two things is the whole of this bullet. A page per
+  scene would be 164,595 pages of a catalogue every Bang affiliate serves
+  verbatim: scaled content abuse and duplicate content at scale, in the same
+  manual-action category as the two bullets above, on a domain with a Safe
+  Browsing listing freshly cleared. The same four controls apply — the routes
+  are `noindex` and under `/api/`, which `robots.txt` disallows; no scene gets
+  a URL, the panel opens in-page; nothing reaches the sitemap, the
+  `<noscript>` or the JSON-LD; and outbound links carry
+  `sponsored nofollow noopener noreferrer` from `AFFILIATE_LINK_REL`.
+
+  Two things about the rows themselves belong here rather than in the code,
+  because both are claims the page makes:
+
+  - **There is no "top selling" sort and the headings do not pretend there
+    is.** `GET /content/search/params/videos` reports the entire vocabulary
+    as views, rating and release date. Revenue is not a dimension the
+    affiliate tier can see, so a row called "Top Selling" would be a number
+    we cannot read. The rows say what they sort by.
+  - **The two Bang rows are different lists.** Measured 2026-10-20,
+    `rating.allTime` returns 19 of the same 24 titles as `views.allTime` —
+    the most-watched scenes are also the most-voted-on — so "Most Watched"
+    and "Top Rated" rendered as one shelf printed twice. The second row is
+    `views.monthly` instead, which overlaps the first by 1 of 24. Top Rated
+    survives as a sort in the search box, where a term makes it a different
+    question.
+
 - **Doorway pages** per format, per city, per headset model. Same policy, same
   consequence.
 - **Letting the `<noscript>` drift from the rendered page.** It is a fallback

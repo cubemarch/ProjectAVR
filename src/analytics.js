@@ -66,6 +66,14 @@ export const EVENTS = Object.freeze({
     /** A card in a partner row — a title or a performer. */
     AFFILIATE_CLICK: 'affiliate_click',
 
+    /**
+     * A catalogue title opened in the on-page panel. Not yet a visit to the
+     * partner — the same distinction `CAM_OPEN` draws against `CAM_CLICK`, and
+     * for the same reason: the panel is the thing that keeps a visitor here,
+     * and counting it as outbound traffic would hide whether it works.
+     */
+    SCENE_OPEN: 'scene_open',
+
     /** A cam room opened in the on-page theatre. Not yet a visit to the partner. */
     CAM_OPEN: 'cam_open',
 

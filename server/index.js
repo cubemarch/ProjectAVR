@@ -27,6 +27,7 @@ import { resolveChannel } from './channels/index.js';
 import { mountRecordings } from './routes/recordings.js';
 import { mountStars } from './routes/stars.js';
 import { mountCams } from './routes/cams.js';
+import { mountBang } from './routes/bang.js';
 import { mountCredits } from './credits/index.js';
 import { paymentsBanner } from './credits/providers.js';
 import { mountUnsubscribe } from './mail/unsubscribe.js';
@@ -451,6 +452,7 @@ mountCredits(app);
 mountRecordings(app);
 mountStars(app);
 mountCams(app);
+mountBang(app);
 mountLive(app);
 
 // Claims `/live/hls` and `/live/transcode`, so it has to come before the

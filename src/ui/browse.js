@@ -7,7 +7,9 @@ import {
     AFFILIATE_GROUPS,
     AFFILIATE_LINK_REL,
     AFFILIATE_STOREFRONTS,
+    SCENE_SEARCH,
     fetchAffiliates,
+    searchScenes,
     storefrontUrl
 } from '../catalog/affiliates.js';
 import { AFFILIATES_ONLY, COMING_SOON_SHELVES } from '../site-mode.js';
@@ -43,6 +45,44 @@ const PITCH_INTERVAL_MS = 3000;
 const HOVER_DELAY_MS = 350;
 
 /**
+ * How long typing pauses before the catalogue is asked.
+ *
+ * The same number `cams.js` uses, and for the same two reasons: a request per
+ * keystroke is a request per keystroke against a partner's rate limit, and a
+ * grid that reflows on every letter is unreadable while it is being typed
+ * into. The redraw of what is already in hand is not debounced — only the
+ * request is.
+ */
+const SCENE_QUERY_DEBOUNCE_MS = 260;
+
+/**
+ * Would this click open the title here rather than at the partner?
+ *
+ * Read by two handlers that must agree: the one that opens the panel and the
+ * one that reports an outbound click. If they ever disagree, one click is
+ * counted twice or a visit to a partner goes unrecorded.
+ *
+ * **A modified click is never intercepted.** ⌘-click, middle-click, shift and
+ * alt are a deliberate request for a new tab or window, and answering one with
+ * a dialog on the current page is the behaviour that teaches people not to
+ * trust links. Those fall through to the anchor, which is a real one.
+ *
+ * @param {MouseEvent} event
+ * @param {HTMLElement} card
+ */
+function opensInPanel(event, card) {
+    if (!card.dataset?.sceneId) return false;
+
+    return !(
+        event.metaKey ||
+        event.ctrlKey ||
+        event.shiftKey ||
+        event.altKey ||
+        (event.button ?? 0) !== 0
+    );
+}
+
+/**
  * The browse experience: billboard, shelves, detail modal and search.
  *
  * Emits:
@@ -67,6 +107,7 @@ export class BrowseUI extends pc.EventHandler {
         this._render();
         this._bindScroll();
         this._bindOutbound();
+        this._bindScenePanel();
     }
 
     /**
@@ -105,6 +146,13 @@ export class BrowseUI extends pc.EventHandler {
 
             const card = e.target.closest?.('.affiliate-card, .star-card');
             if (!card) return;
+
+            // A click that is about to open the panel has not left for a
+            // partner and must not be counted as though it had — the same
+            // distinction `cams.js` draws between `CAM_OPEN` and `CAM_CLICK`.
+            // `_bindScenePanel` reports that one; this returns before it can
+            // be reported twice under two different names.
+            if (opensInPanel(e, card)) return;
 
             const shelf = card.closest('.affiliate-shelf');
 
@@ -163,6 +211,35 @@ export class BrowseUI extends pc.EventHandler {
                             Paid links. We earn a commission on sales, at no extra cost to you.
                         </span>
                     </div>
+
+                    <!-- The searchable catalogue, first and on its own.
+                         Everything about this block is about keeping two
+                         pairs of things next to each other.
+
+                         The box is directly above the rows it searches, with
+                         no promo banner and no advertisement in between. A
+                         search field separated from its own results by an ad
+                         reads as a site search for the whole page, and the
+                         first thing it appears not to have found is whatever
+                         was between them.
+
+                         And the block is first inside the section, which puts
+                         it immediately under the leaderboard: this is the only
+                         partner whose catalogue is browsable without leaving,
+                         so it is the part of the page worth reaching first.
+                         The rows that are nothing but a way out of here follow
+                         it. -->
+                    <div id="affiliate-catalogue">
+                        <!-- Filled by \`_renderSceneSearch\`, once, and only
+                             once a searchable partner has actually answered —
+                             until then there is no telling whether the key
+                             behind it is configured. Separate from the rows
+                             below because this is the element holding the
+                             caret, and a keystroke must never redraw it. -->
+                        <div id="affiliate-search"></div>
+                        <div id="affiliate-catalogue-rows"></div>
+                    </div>
+
                     <div id="affiliate-pitch"></div>
                     <div id="affiliate-groups"></div>
                 </section>
@@ -200,6 +277,11 @@ export class BrowseUI extends pc.EventHandler {
         // line above has just replaced the whole mount, so anything a previous
         // pass built is now detached.
         this.footAdsEl = null;
+
+        // Same reason. The flag means "the search box in the head is built
+        // and bound"; the head it was built into no longer exists, and
+        // leaving it set is how the box silently fails to come back.
+        this._sceneSearchBound = false;
 
         // Timers, an IntersectionObserver and two document-level listeners,
         // all pointing at nodes the line above just detached.
@@ -583,6 +665,13 @@ export class BrowseUI extends pc.EventHandler {
         this.affiliatesEl.hidden = rows.length === 0;
 
         if (!this.affiliatesEl.hidden) {
+            // The searchable partner's rows are drawn above all of this, in
+            // `#affiliate-catalogue`, so they come out of the grouping here.
+            // Without this they would be drawn twice — once under the search
+            // box and again inside "On demand".
+            const catalogue = rows.filter((row) => this._isCatalogueRow(row));
+            const rest = rows.filter((row) => !this._isCatalogueRow(row));
+
             // Grouped by kind, in the order `AFFILIATE_GROUPS` declares, and a
             // group with no programs in it is not drawn at all. That is what
             // lets a live-cams deal be a single entry in the registry later
@@ -590,7 +679,7 @@ export class BrowseUI extends pc.EventHandler {
             // than a row, so it falls out of this loop and is drawn
             // separately below.
             const groups = AFFILIATE_GROUPS.map((group) => {
-                const inGroup = rows.filter((row) => row.program.kind === group.kind);
+                const inGroup = rest.filter((row) => row.program.kind === group.kind);
                 if (!inGroup.length) return '';
 
                 return `
@@ -620,7 +709,26 @@ export class BrowseUI extends pc.EventHandler {
             const pitch = adSlotHtml('pitch-billboard');
             if (pitch) groups.unshift(pitch);
 
+            this._renderSceneSearch(rows);
             this.affiliatesEl.querySelector('#affiliate-groups').innerHTML = groups.join('');
+
+            // The partner's own shelves are what sits under the box when
+            // nobody is searching. `_renderSceneResults` owns the same
+            // element while a query is live, and is the only thing a
+            // keystroke calls — this method would rebuild the box above it
+            // and take the caret with it.
+            //
+            // `sceneResults` and not just `sceneQuery`: changing the sort
+            // with an empty box is a search too — "most watched, page one" is
+            // a perfectly good question — and answering it with the shelves
+            // would make the control look like it had done nothing.
+            if (this.sceneQuery || this.sceneResults) {
+                this._renderSceneResults();
+            } else {
+                this.affiliatesEl.querySelector('#affiliate-catalogue-rows').innerHTML = catalogue
+                    .map((row) => this._affiliateShelfHtml(row))
+                    .join('');
+            }
 
             this._bindShelfArrows(this.affiliatesEl);
             this._renderPitch(rows.find((row) => row.program.kind === 'pitch'));
@@ -631,6 +739,286 @@ export class BrowseUI extends pc.EventHandler {
         // section has taken whatever height it is going to have, which is what
         // the slots below it need before they can be drawn.
         this._renderFootAds();
+    }
+
+    /* ---------------------------------------------------- catalogue search -- */
+
+    /**
+     * Is this row the one the search box searches?
+     *
+     * One predicate, two callers, for the reason `opensInPanel` is also
+     * shared: `_renderAffiliates` uses it to lift these rows out of the
+     * groups and `_renderSceneSearch` uses it to decide whether to draw a box
+     * at all. If those two ever disagreed the page would either offer a
+     * search over rows that are not there, or draw the rows twice.
+     */
+    _isCatalogueRow(row) {
+        return row.program.partner === SCENE_SEARCH.program.partner && row.program.proxied === true;
+    }
+
+    /**
+     * A box for searching a partner's catalogue without leaving this page.
+     *
+     * **Drawn only for a partner that answered.** The programs are read
+     * through our own server, so an unconfigured key is not a failure the
+     * browser can see — the proxy returns an empty list and `fetchAffiliates`
+     * drops the row. A box offered where nothing can answer it is worse than
+     * no box, so the test is simply whether a row from that partner is on the
+     * page, which is the one signal that is true exactly when a search would
+     * work.
+     *
+     * **Built once per mount.** Everything a query changes replaces
+     * `#affiliate-catalogue-rows`, the sibling below this box, and never this
+     * box — the input with somebody's caret in it is in here, and redrawing
+     * the element containing a caret is the defect `cams.js` documents at
+     * `_bindSearch`, one level up.
+     */
+    _renderSceneSearch(rows) {
+        const box = this.affiliatesEl?.querySelector('#affiliate-search');
+        if (!box || this._sceneSearchBound) return;
+
+        const { partner } = SCENE_SEARCH.program;
+        if (!rows.some((row) => this._isCatalogueRow(row))) return;
+
+        this._sceneSearchBound = true;
+        this.sceneQuery ??= '';
+        this.sceneSort ??= SCENE_SEARCH.sorts[0].id;
+
+        const sorts = SCENE_SEARCH.sorts
+            .map((s) => `<option value="${escapeHtml(s.id)}">${escapeHtml(s.label)}</option>`)
+            .join('');
+
+        // `role="search"` rather than a `<form>`: there is nothing to submit
+        // to and no page to land on, and a form here would answer Enter by
+        // navigating away from the results it had just drawn.
+        // The count lives in this box and not in the grid below. A live
+        // region has to be in the document *before* its text changes for a
+        // screen reader to announce the change — one rebuilt with the results
+        // is a region that may never be heard. It is also where somebody is
+        // looking, having just typed into the box beside it.
+        box.innerHTML = `
+            <div class="scene-search" role="search">
+                <span class="scene-search-icon" aria-hidden="true">${icons.search({ size: 16 })}</span>
+                <input class="scene-search-input" type="search" autocomplete="off"
+                       placeholder="Search ${escapeHtml(partner)}'s catalogue"
+                       aria-label="Search ${escapeHtml(partner)}'s catalogue. Escape clears it." />
+                <select class="scene-search-select"
+                        aria-label="Sort results by">${sorts}</select>
+                <span class="scene-search-count" role="status" aria-live="polite"></span>
+            </div>`;
+
+        const input = box.querySelector('.scene-search-input');
+        const select = box.querySelector('.scene-search-select');
+
+        input.value = this.sceneQuery;
+        select.value = this.sceneSort;
+
+        input.addEventListener('input', () => {
+            this.sceneQuery = input.value.trim();
+            this.scenePage = 1;
+
+            clearTimeout(this.sceneQueryTimer);
+            this.sceneQueryTimer = setTimeout(() => this._requeryScenes(), SCENE_QUERY_DEBOUNCE_MS);
+
+            // Immediate, so the shelves give way the moment somebody starts
+            // typing rather than a quarter of a second later. The results it
+            // draws are the previous ones until the request lands, which is
+            // why `_renderSceneResults` marks the grid as stale instead of
+            // blanking it.
+            this._renderSceneResults();
+        });
+
+        // Enter is "I have finished typing", so it spends the request now
+        // rather than waiting out a debounce that exists for people who have
+        // not. Escape is the way back to the shelves.
+        input.addEventListener('keydown', (event) => {
+            if (event.key === 'Enter') {
+                clearTimeout(this.sceneQueryTimer);
+                this._requeryScenes();
+                return;
+            }
+
+            if (event.key !== 'Escape' || !input.value) return;
+
+            event.preventDefault();
+            input.value = '';
+            this.sceneQuery = '';
+            clearTimeout(this.sceneQueryTimer);
+            this._renderAffiliates();
+        });
+
+        select.addEventListener('change', () => {
+            this.sceneSort = select.value;
+            this.scenePage = 1;
+
+            // A sort with no term is still a catalogue — "most watched, page
+            // one" is a perfectly good thing to ask for, and answering it
+            // with the shelves would make the control look broken.
+            clearTimeout(this.sceneQueryTimer);
+            this._requeryScenes();
+        });
+    }
+
+    /**
+     * Ask the partner, and keep only the answer to the question still open.
+     *
+     * An empty box with the default sort is not a search — it is the page the
+     * visitor started on, so it restores the shelves rather than fetching a
+     * list identical to one of them.
+     */
+    async _requeryScenes() {
+        const sorted = this.sceneSort !== SCENE_SEARCH.sorts[0].id;
+
+        if (!this.sceneQuery && !sorted) {
+            this.sceneResults = null;
+            this._renderAffiliates();
+            return;
+        }
+
+        const query = this._sceneQueryNow();
+        const asked = JSON.stringify(query);
+
+        // One per query, not one per letter: this is the debounced path, and
+        // the keystroke handler that redraws the grid deliberately does not
+        // report. The term itself is not sent — see `search_term` in
+        // `test/analytics.test.js` for the one call site that may send one.
+        track(EVENTS.SEARCH, { partner: SCENE_SEARCH.program.partner });
+
+        this.sceneAsked = asked;
+        this.sceneInflight?.abort();
+        this.sceneInflight = new AbortController();
+
+        try {
+            const answer = await searchScenes(query, { signal: this.sceneInflight.signal });
+
+            // Two letters typed quickly are two requests, and they can land
+            // out of order. The second one asked is the one on screen.
+            if (this.sceneAsked !== asked) return;
+
+            // Appended rather than replaced when this is a "more" press, so
+            // the grid grows under the visitor instead of jumping to a page
+            // they then have to scroll back up through.
+            this.sceneResults =
+                query.page > 1 && this.sceneResults
+                    ? { ...answer, items: [...this.sceneResults.items, ...answer.items] }
+                    : answer;
+
+            this.sceneError = false;
+        } catch (err) {
+            if (err.name === 'AbortError' || this.sceneAsked !== asked) return;
+
+            // Kept, rather than blanked. A partner that failed one request is
+            // not a reason to throw away results somebody is reading, and the
+            // banner says which half of the page is stale.
+            this.sceneError = true;
+        }
+
+        this._renderSceneResults();
+    }
+
+    /**
+     * The results grid, in place of the shelves.
+     *
+     * A grid and not a shelf, deliberately. A row that scrolls sideways is
+     * right for browsing something curated, where the point is the top few
+     * and the rest is there if you want it; it is wrong for an answer to a
+     * question, where the point is to see how many there are and compare
+     * them. Everything the partner returned is on screen at once.
+     *
+     * The cards are `_affiliateCardHtml`, so a result opens in the same panel
+     * a shelved title does and carries the same `rel`. The section's two data
+     * attributes are what `_bindOutbound` and `_bindScenePanel` read, and
+     * `bang-search` is a distinct program id from either shelf so the report
+     * can tell searching from browsing.
+     *
+     * Written into `#affiliate-catalogue-rows`, which is the box's own next
+     * sibling — the results replace the shelves the box was sitting above,
+     * and nothing is drawn between the two.
+     */
+    _renderSceneResults() {
+        const groups = this.affiliatesEl?.querySelector('#affiliate-catalogue-rows');
+        if (!groups) return;
+
+        const { program } = SCENE_SEARCH;
+        const results = this.sceneResults;
+        const waiting = !results || this.sceneAsked !== JSON.stringify(this._sceneQueryNow());
+
+        const body = results?.items.length
+            ? `<div class="affiliate-results">${results.items
+                  .map((item) => this._affiliateCardHtml(item))
+                  .join('')}</div>
+               ${
+                   results.page < results.pages
+                       ? `<button type="button" class="scene-more">Show more</button>`
+                       : ''
+               }`
+            : waiting
+              ? '<p class="scene-search-waiting">Searching…</p>'
+              : `<p class="scene-search-empty">
+                     Nothing in ${escapeHtml(program.partner)}'s catalogue matched that.
+                     Try fewer words, or a performer's name.
+                 </p>`;
+
+        groups.innerHTML = `
+            <section class="shelf affiliate-shelf scene-search-results${waiting ? ' is-stale' : ''}"
+                     data-program="${escapeHtml(program.id)}"
+                     data-partner="${escapeHtml(program.partner)}">
+                <div class="shelf-head">
+                    <h2>${this.sceneQuery ? 'Results' : 'Catalogue'}</h2>
+                    <span class="badge partner">${escapeHtml(program.partner)}</span>
+                    <button type="button" class="scene-search-clear">Back to shelves</button>
+                </div>
+                ${
+                    this.sceneError
+                        ? `<p class="scene-search-error">
+                               ${escapeHtml(program.partner)} did not answer that one. These are
+                               the last results that came back.
+                           </p>`
+                        : ''
+                }
+                ${body}
+            </section>`;
+
+        // Text, not markup, and into the region the head already holds. See
+        // `_renderSceneSearch` for why it is not rebuilt with the grid.
+        const count = this.affiliatesEl?.querySelector('.scene-search-count');
+        if (count) {
+            count.textContent =
+                results && !waiting
+                    ? `${results.total.toLocaleString()} title${results.total === 1 ? '' : 's'}`
+                    : '';
+        }
+
+        groups.querySelector('.scene-search-clear')?.addEventListener('click', () => {
+            this.sceneQuery = '';
+            this.sceneSort = SCENE_SEARCH.sorts[0].id;
+            this.sceneResults = null;
+            this.scenePage = 1;
+
+            // The box stays, with the caret in it, so the next search does
+            // not start with a hunt for the control. Only its value is
+            // cleared — rebuilding the head is what `_renderSceneSearch`
+            // guards against.
+            const input = this.affiliatesEl?.querySelector('.scene-search-input');
+            const sort = this.affiliatesEl?.querySelector('.scene-search-select');
+            if (input) input.value = '';
+            if (sort) sort.value = this.sceneSort;
+
+            this._renderAffiliates();
+            input?.focus();
+        });
+
+        groups.querySelector('.scene-more')?.addEventListener('click', (event) => {
+            this.scenePage = (this.scenePage || 1) + 1;
+            event.target.disabled = true;
+            event.target.textContent = 'Loading…';
+            this._requeryScenes();
+        });
+    }
+
+    /** The query the UI is currently showing, in the shape `_requeryScenes` asks with. */
+    _sceneQueryNow() {
+        return { term: this.sceneQuery, sort: this.sceneSort, page: this.scenePage || 1 };
     }
 
     /**
@@ -975,23 +1363,46 @@ export class BrowseUI extends pc.EventHandler {
      * for free, and `rel` — which is the whole disclosure and safety story
      * here — only means anything on an anchor. What goes in it and why is
      * `AFFILIATE_LINK_REL`.
+     *
+     * **`data-scene-id` is what makes a card openable here instead of there.**
+     * A partner whose feed we can ask for one title's detail sets `sceneId`
+     * (today that is Bang, via `/api/bang/scene/:ref`); a plain left click on
+     * one of those opens the panel and everything else about the anchor still
+     * behaves like an anchor. See `_bindScenePanel`.
+     *
+     * The corner glyph follows that, and it is not decoration: a card that
+     * opens on this page must not be wearing the arrow that means "this leaves
+     * the site". Outbound keeps the arrow, previewable gets the eye-level
+     * `info` mark and a word for it.
      */
     _affiliateCardHtml(item) {
         const minutes = item.durationMs ? formatDuration(item.durationMs / 1000) : '';
+        const scene = Number(item.sceneId) || 0;
 
         return `
-            <a class="card affiliate-card" href="${escapeHtml(item.href)}"
-               target="_blank" rel="${AFFILIATE_LINK_REL}">
+            <a class="card affiliate-card${scene ? ' has-preview' : ''}"
+               href="${escapeHtml(item.href)}"
+               target="_blank" rel="${AFFILIATE_LINK_REL}"
+               ${scene ? `data-scene-id="${scene}"` : ''}>
                 <div class="affiliate-art">
                     <img src="${escapeHtml(item.image)}" alt="" loading="lazy"
                          decoding="async" referrerpolicy="no-referrer" />
                     ${minutes ? `<span class="card-duration">${minutes}</span>` : ''}
+                    ${
+                        scene
+                            ? `<span class="card-preview-hint">
+                                   ${icons.info({ size: 14 })}<span>Preview</span>
+                               </span>`
+                            : ''
+                    }
                 </div>
                 <div class="card-body">
                     <h3 class="card-title">${escapeHtml(item.title)}</h3>
                     <div class="card-meta">
                         <span>${escapeHtml(item.partner)}</span>
-                        <span class="affiliate-go">${icons.external({ size: 12 })}</span>
+                        <span class="affiliate-go">
+                            ${scene ? icons.info({ size: 12 }) : icons.external({ size: 12 })}
+                        </span>
                     </div>
                 </div>
             </a>`;
@@ -1297,6 +1708,326 @@ export class BrowseUI extends pc.EventHandler {
 
         card.style.left = `${Math.round(left)}px`;
         card.style.top = `${Math.round(top)}px`;
+    }
+
+    /* ------------------------------------------------------- scene panel -- */
+
+    /**
+     * Open a catalogue title here instead of at the partner.
+     *
+     * ## What this can and cannot show
+     *
+     * Everything except the film. The partner's `files[].url` look like plain
+     * MP4s and are member-gated — 403 anonymously *and* with our affiliate key
+     * — so there is no version of this that plays their scene on this domain,
+     * and the click that converts has to leave. What the licence does allow is
+     * the artwork, and that turns out to be most of the decision: a contact
+     * sheet of stills, the cast with their faces, the studio, the series, the
+     * runtime and the genres. A visitor works out whether they want it *here*,
+     * from eight frames, rather than being sent to a partner's age wall to
+     * find out and bouncing when they do not.
+     *
+     * That is also why the outbound link in here is worth more than the card
+     * it replaced: by the time anybody presses it they have already decided.
+     *
+     * ## Bound once, on the mount
+     *
+     * Same reasoning as `_bindOutbound`, and the same constraint: `_render`
+     * replaces the mount's children but never the mount, and it returns early
+     * in affiliate-only mode — which is the mode the site is actually running
+     * in — before any of the binds further down. A handler installed there
+     * would not exist in production.
+     */
+    _bindScenePanel() {
+        this.scenes ??= new Map();
+
+        this.mount.addEventListener('click', (event) => {
+            const anchor = event.target.closest?.('.affiliate-card');
+            if (!anchor || !opensInPanel(event, anchor)) return;
+
+            const shelf = anchor.closest('.affiliate-shelf');
+
+            // Which row it came from, and nothing about the title. See the
+            // note on identifiers at the top of `src/analytics.js`: a scene id
+            // here would be a record of what one person opened.
+            track(EVENTS.SCENE_OPEN, {
+                program: shelf?.dataset.program,
+                partner: shelf?.dataset.partner
+            });
+
+            event.preventDefault();
+            this._openScene(anchor);
+        });
+
+        // Warm the detail before it is asked for. The panel opens from what
+        // the card already holds either way, so this is not what makes it
+        // appear — it is what decides whether the stills are there when it
+        // does. Capture phase because neither event bubbles.
+        for (const type of ['pointerenter', 'focusin']) {
+            this.mount.addEventListener(
+                type,
+                (event) => {
+                    const anchor = event.target.closest?.('.affiliate-card[data-scene-id]');
+                    if (anchor) this._fetchScene(anchor.dataset.sceneId);
+                },
+                { capture: true, passive: true }
+            );
+        }
+    }
+
+    /**
+     * One title's detail, fetched at most once.
+     *
+     * A failure is cached as emphatically as a success: a partner that is down
+     * stays down for the length of the page view, and a row of twelve cards
+     * cannot turn one outage into twelve requests. `null` is the miss marker
+     * and is distinguishable from "not asked yet" by `Map.has`.
+     *
+     * @param {string|number} ref
+     * @returns {Promise<object|null>}
+     */
+    _fetchScene(ref) {
+        const key = String(ref);
+        if (!/^\d{1,12}$/.test(key)) return Promise.resolve(null);
+
+        if (!this.scenes.has(key)) {
+            this.scenes.set(
+                key,
+                fetch(`/api/bang/scene/${key}`, { headers: { Accept: 'application/json' } })
+                    .then((res) => (res.ok ? res.json() : null))
+                    .then((body) => body?.scene ?? null)
+                    .catch(() => null)
+            );
+        }
+
+        return Promise.resolve(this.scenes.get(key));
+    }
+
+    /**
+     * **Opens in the same frame as the click, always.**
+     *
+     * The card is already holding the cover, the title, the runtime and the
+     * link, so the panel is drawn from those first and the request fills in
+     * behind it. Nobody waits on a network round trip to find out whether
+     * pressing the thing did anything, and a partner that never answers
+     * degrades to a panel that is merely sparse rather than a spinner that
+     * never resolves.
+     *
+     * @param {HTMLAnchorElement} anchor the card that was clicked
+     */
+    async _openScene(anchor) {
+        this._closeScene();
+
+        const ref = anchor.dataset.sceneId;
+        const seed = {
+            title: anchor.querySelector('.card-title')?.textContent?.trim() || '',
+            image: anchor.querySelector('.affiliate-art img')?.src || '',
+            href: anchor.href,
+            partner: anchor.closest('.affiliate-shelf')?.dataset.partner || 'the partner'
+        };
+
+        const el = document.createElement('div');
+        el.className = 'scene-panel is-loading';
+        el.setAttribute('role', 'dialog');
+        el.setAttribute('aria-modal', 'true');
+        el.setAttribute('aria-label', seed.title || 'Title details');
+        el.innerHTML = this._sceneHtml(seed, null);
+
+        document.body.append(el);
+        document.body.classList.add('scene-panel-open');
+
+        this.scenePanel = el;
+        this.sceneReturnFocusTo = anchor;
+        this._bindSceneDismissal(el);
+
+        el.querySelector('.scene-panel-close')?.focus();
+
+        const scene = await this._fetchScene(ref);
+
+        // Closed, or a second card opened while that was in the air. Writing
+        // into `el` now would either resurrect a dismissed panel or overwrite
+        // the one the visitor is actually looking at.
+        if (this.scenePanel !== el) return;
+
+        el.classList.remove('is-loading');
+        el.innerHTML = this._sceneHtml(seed, scene);
+        el.querySelector('.scene-panel-close')?.focus();
+    }
+
+    /**
+     * The panel's markup, from the card alone or from the card and the detail.
+     *
+     * Called twice per open with the same `seed` and a different `scene`, so
+     * the frame, the cover and the outbound button are identical across both
+     * passes and only the body beneath them grows. Nothing jumps.
+     *
+     * `scene.href` is preferred over the card's when it arrives: both are the
+     * partner's canonical watch URL with our tracking code on it, but the
+     * server built one of them this second.
+     *
+     * @param {{title: string, image: string, href: string, partner: string}} seed
+     * @param {object|null} scene
+     */
+    _sceneHtml(seed, scene) {
+        const title = scene?.title || seed.title;
+        const href = scene?.href || seed.href;
+        const cover = scene?.image || seed.image;
+        const partner = escapeHtml(seed.partner);
+
+        const facts = [
+            scene?.studio,
+            scene?.series,
+            scene?.releaseDate?.slice(0, 4),
+            scene?.durationMs ? formatDuration(scene.durationMs / 1000) : '',
+            scene?.hd ? 'HD' : ''
+        ].filter(Boolean);
+
+        // Every still is a separate request to the partner's image host, so
+        // the first is eager — it is the one on screen — and the rest are not.
+        const stills = (scene?.screenshots ?? [])
+            .map(
+                (src, i) => `
+                    <li>
+                        <img src="${escapeHtml(src)}" alt="" decoding="async"
+                             loading="${i ? 'lazy' : 'eager'}" referrerpolicy="no-referrer" />
+                    </li>`
+            )
+            .join('');
+
+        const cast = (scene?.actors ?? [])
+            .map(
+                (a) => `
+                    <li class="scene-cast-member">
+                        ${
+                            a.image
+                                ? `<img src="${escapeHtml(a.image)}" alt="" loading="lazy"
+                                        decoding="async" referrerpolicy="no-referrer" />`
+                                : '<span class="scene-cast-blank" aria-hidden="true"></span>'
+                        }
+                        <span>${escapeHtml(a.name)}</span>
+                    </li>`
+            )
+            .join('');
+
+        const genres = (scene?.genres ?? [])
+            .map((g) => `<li>${escapeHtml(g)}</li>`)
+            .join('');
+
+        return `
+            <div class="scene-panel-backdrop" data-close></div>
+            <div class="scene-panel-box">
+                <button type="button" class="scene-panel-close" data-close
+                        aria-label="Close">${icons.close({ size: 20 })}</button>
+
+                <div class="scene-panel-main">
+                    <div class="scene-panel-art">
+                        ${
+                            cover
+                                ? `<img src="${escapeHtml(cover)}" alt="" decoding="async"
+                                        referrerpolicy="no-referrer" />`
+                                : ''
+                        }
+                    </div>
+
+                    <div class="scene-panel-info">
+                        <h2 class="scene-panel-title">${escapeHtml(title)}</h2>
+
+                        ${
+                            facts.length
+                                ? `<p class="scene-panel-facts">${facts
+                                      .map((f) => `<span>${escapeHtml(f)}</span>`)
+                                      .join('')}</p>`
+                                : ''
+                        }
+
+                        ${
+                            cast
+                                ? `<h3 class="scene-panel-sub">Starring</h3>
+                                   <ul class="scene-cast">${cast}</ul>`
+                                : ''
+                        }
+
+                        ${genres ? `<ul class="scene-genres">${genres}</ul>` : ''}
+
+                        <a class="scene-panel-out" href="${escapeHtml(href)}"
+                           target="_blank" rel="${AFFILIATE_LINK_REL}">
+                            ${icons.play({ size: 14 })}
+                            <span>Watch at ${partner}</span>
+                            ${icons.external({ size: 12 })}
+                        </a>
+
+                        <p class="scene-panel-note">
+                            Hosted and streamed by ${partner}, and playable there with
+                            their membership. Paid link — we earn a commission on
+                            anything you spend, at no extra cost to you.
+                        </p>
+                    </div>
+                </div>
+
+                ${
+                    stills
+                        ? `<h3 class="scene-panel-sub scene-stills-head">Stills</h3>
+                           <ul class="scene-stills">${stills}</ul>`
+                        : ''
+                }
+            </div>`;
+    }
+
+    /**
+     * Escape, the backdrop, the close button, and a Tab that cannot escape.
+     *
+     * The panel's contents are replaced once, when the detail lands, so the
+     * trap reads the focusable elements at the moment Tab is pressed rather
+     * than capturing a list that the second render would have detached.
+     */
+    _bindSceneDismissal(el) {
+        el.addEventListener('click', (event) => {
+            if (event.target.closest('[data-close]')) {
+                event.preventDefault();
+                this._closeScene();
+            }
+        });
+
+        this.onSceneKeydown = (event) => {
+            if (event.key === 'Escape') {
+                this._closeScene();
+                return;
+            }
+
+            if (event.key !== 'Tab') return;
+
+            const stops = [...el.querySelectorAll('button, a[href]')];
+            if (!stops.length) return;
+
+            const first = stops[0];
+            const last = stops[stops.length - 1];
+
+            if (event.shiftKey && document.activeElement === first) {
+                event.preventDefault();
+                last.focus();
+            } else if (!event.shiftKey && document.activeElement === last) {
+                event.preventDefault();
+                first.focus();
+            }
+        };
+
+        document.addEventListener('keydown', this.onSceneKeydown);
+    }
+
+    _closeScene() {
+        if (!this.scenePanel) return;
+
+        if (this.onSceneKeydown) document.removeEventListener('keydown', this.onSceneKeydown);
+        this.onSceneKeydown = null;
+
+        this.scenePanel.remove();
+        this.scenePanel = null;
+        document.body.classList.remove('scene-panel-open');
+
+        // Back to the card it opened from, or the next Tab restarts at the top
+        // of the document and the row somebody was working through is lost.
+        this.sceneReturnFocusTo?.focus?.();
+        this.sceneReturnFocusTo = null;
     }
 
     /* ----------------------------------------------------- live creators -- */

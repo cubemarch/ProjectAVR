@@ -55,6 +55,12 @@
  *   either way. Omitted means the payload must itself be an array.
  * @property {object} query    partner params copied onto every outbound URL
  * @property {string} adapter  which normaliser in `ADAPTERS` reads the payload
+ * @property {boolean} [proxied]  this program is read through our own server
+ *   rather than from the partner, so `api` is a same-origin path and `query`
+ *   is empty because the attribution was already applied upstream of here.
+ *   See the note on {@link AFFILIATE_PROGRAMS} below. It has to be declared
+ *   rather than inferred from the shape, so that a browser-direct program
+ *   cannot lose its tracking parameters and quietly look like a proxied one.
  */
 
 /**
@@ -98,6 +104,78 @@ export const AFFILIATE_PROGRAMS = [
         api: 'https://straight.aebn.com/straight/api/movies/newest',
         query: { salesToolId: '80', refid: 'AEBN-119817' },
         adapter: 'aebn'
+    },
+
+    /*
+     * Bang, and the one structural difference in this list.
+     *
+     * The three above are read straight from the partner because there is
+     * nothing in the request worth hiding — a referral id says who gets paid
+     * and is in every outbound link on the page anyway. Bang authenticate with
+     * an API key that *is* the account: it reads this catalogue, lists the
+     * account's whitelabel sites and edits their callback URLs. A key in
+     * front-end code is a key in view-source, so these two are read through
+     * `server/routes/bang.js`, which holds `AVR_BANG_API_KEY` and never
+     * discloses it.
+     *
+     * Everything else about them is an ordinary program. `api` is a path
+     * rather than a URL because it is our own origin; `linkOrigin` is stated
+     * for the same reason AEBN states it, and more strictly — it is the only
+     * place a Bang card is allowed to point, and `toCard` enforces it below.
+     * `query` is empty because the proxy has already applied the tracking
+     * code, which is `AVR_BANG_AFF` and belongs in `.env` beside the key.
+     *
+     * ## Why these two rows are not called "Top Selling"
+     *
+     * Because the API has no such sort. `GET /content/search/params/videos`
+     * reports its whole vocabulary as views, rating and release date — revenue
+     * is not a dimension the affiliate tier can see. Views over all time is
+     * the nearest honest substitute and is what "Most Watched" says.
+     *
+     * ## Why the second row is Trending and not Top Rated
+     *
+     * Measured against the live API on 2026-10-20, over the 24 titles each
+     * sort returns:
+     *
+     * | | ∩ |
+     * | --- | --- |
+     * | `most-watched` ∩ `top-rated` | **19 of 24** |
+     * | `most-watched` ∩ `trending` | 1 of 24 |
+     * | `trending` ∩ `top-rated` | 1 of 24 |
+     *
+     * All-time views and all-time rating are very nearly the same ranking —
+     * the scenes with the most views have had the most votes — so the two
+     * shelves rendered as one shelf printed twice under different headings.
+     * That is worse than having one row: it reads as a padded page.
+     *
+     * `views.monthly` is the axis that actually disagrees with the other two,
+     * so it is the one that earns the second row. Top Rated is not lost; it is
+     * a sort in the search box below, where it is combined with a term and
+     * answers a different question than the shelf did.
+     */
+    {
+        id: 'bang-most-watched',
+        kind: 'vod',
+        title: 'Most Watched',
+        partner: 'Bang',
+        api: '/api/bang/shelf/most-watched',
+        linkOrigin: 'https://www.bang.com',
+        list: 'items',
+        query: {},
+        proxied: true,
+        adapter: 'bang'
+    },
+    {
+        id: 'bang-trending',
+        kind: 'vod',
+        title: 'Trending This Month',
+        partner: 'Bang',
+        api: '/api/bang/shelf/trending',
+        linkOrigin: 'https://www.bang.com',
+        list: 'items',
+        query: {},
+        proxied: true,
+        adapter: 'bang'
     }
 
     // Live cams go here when that program is signed: one more object of the
@@ -264,6 +342,32 @@ const ADAPTERS = {
      * would make a screen reader read the marketing twice, and the image is
      * decorative next to a caption that says the same thing.
      */
+    /**
+     * Bang scenes, by way of our own proxy.
+     *
+     * Nearly a passthrough, because `server/routes/bang.js` has already done
+     * the work this layer does for the other partners: the href is built there
+     * from a fixed origin and already carries `aff`, and every image URL has
+     * already been pinned to their artwork host. That is not a reason to skip
+     * `toCard` — a proxy is a trusted component right up until it is a
+     * compromised one, and the origin check below costs nothing.
+     *
+     * `sceneId` is carried separately from the prefixed card `id` because it
+     * is the key `/api/bang/scene/:ref` validates against, the same way
+     * `starId` is for the biography route. It is their numeric `identifier`
+     * and not the id in the link — the two are different keys and only this
+     * one can be looked up; see the note in `server/routes/bang.js`.
+     */
+    bang: (rows, program) =>
+        rows.map((v) => ({
+            id: `${program.id}:${v.id}`,
+            sceneId: Number(v.ref) || 0,
+            title: v.title,
+            image: v.image,
+            durationMs: Number(v.durationMs) || 0,
+            path: v.href
+        })),
+
     aebnPitch: (rows, program) =>
         [...rows]
             .sort((a, b) => (Number(a.sortOrder) || 0) - (Number(b.sortOrder) || 0))
@@ -312,6 +416,7 @@ function toCard(row, program) {
         title: row.title,
         durationMs: row.durationMs,
         starId: row.starId,
+        sceneId: row.sceneId,
         href: href.href,
         image: image.href,
         partner: program.partner
@@ -319,16 +424,20 @@ function toCard(row, program) {
 }
 
 /**
- * Read one program's catalogue.
+ * One request to a partner, with the terms every request here is made on.
+ *
+ * Shared by the shelves and by the search so that those terms are written
+ * once. They are not defaults and not style: a second call site that fetched
+ * a partner feed on its own would be one that quietly dropped them.
  *
  * @param {AffiliateProgram} program
+ * @param {string} api the URL to read, which may carry a query string
  * @param {{signal?: AbortSignal, fetchImpl?: typeof fetch}} [opts]
- * @returns {Promise<object[]>}
  */
-export async function fetchAffiliateRow(program, opts = {}) {
+async function readProgram(program, api, opts = {}) {
     const doFetch = opts.fetchImpl ?? fetch;
 
-    const res = await doFetch(program.api, {
+    const res = await doFetch(api, {
         // Cross-origin by definition. Their endpoint answers with
         // `Access-Control-Allow-Credentials: true` and reflects back whatever
         // Origin it is given, so saying this explicitly is what keeps a LustXR
@@ -341,7 +450,18 @@ export async function fetchAffiliateRow(program, opts = {}) {
 
     if (!res.ok) throw new Error(`${program.partner} answered ${res.status}`);
 
-    const payload = await res.json();
+    return res.json();
+}
+
+/**
+ * Read one program's catalogue.
+ *
+ * @param {AffiliateProgram} program
+ * @param {{signal?: AbortSignal, fetchImpl?: typeof fetch}} [opts]
+ * @returns {Promise<object[]>}
+ */
+export async function fetchAffiliateRow(program, opts = {}) {
+    const payload = await readProgram(program, program.api, opts);
     const rows = program.list ? payload?.[program.list] : payload;
 
     if (!Array.isArray(rows)) {
@@ -379,4 +499,94 @@ export async function fetchAffiliates(programs = AFFILIATE_PROGRAMS, opts = {}) 
             items: settled[i].status === 'fulfilled' ? settled[i].value : []
         }))
         .filter((row) => row.items.length > 0);
+}
+
+/* --------------------------------------------------- searching a partner -- */
+
+/**
+ * The one partner catalogue this site can search on its own pages.
+ *
+ * A program object of the same shape as the shelves above, deliberately: the
+ * results run through the same adapter and the same {@link toCard}, so a
+ * searched card is checked against `linkOrigin` exactly as a shelved one is.
+ * A search that built its own cards would be a second place for a hostile
+ * payload to put a link to somewhere else under our styling.
+ *
+ * `id` is what `_bindOutbound` reports and is distinct from either shelf, so
+ * the question "do people search, and does searching convert" has an answer.
+ *
+ * Searching is only offered for a partner whose feed we proxy — the key is
+ * ours, the rate limit is ours, and a query typed here reaches them from our
+ * server rather than from the visitor's browser.
+ */
+export const SCENE_SEARCH = Object.freeze({
+    program: Object.freeze({
+        id: 'bang-search',
+        kind: 'vod',
+        title: 'Search results',
+        partner: 'Bang',
+        api: '/api/bang/search',
+        linkOrigin: 'https://www.bang.com',
+        list: 'items',
+        query: {},
+        proxied: true,
+        adapter: 'bang'
+    }),
+
+    /**
+     * The sorts the partner actually has, in the order they are offered.
+     *
+     * Not a free-text parameter: `server/routes/bang.js` keeps a whitelist and
+     * falls back to the first of these, because an unknown `by` makes their
+     * search answer **HTTP 200 with an Elasticsearch error body** naming the
+     * index. These ids are that whitelist's keys.
+     *
+     * There is no "top selling" here because there is no such sort — revenue
+     * is not a dimension the affiliate tier can see. See the note above the
+     * two Bang shelves.
+     */
+    sorts: Object.freeze([
+        Object.freeze({ id: 'most-watched', label: 'Most watched' }),
+        Object.freeze({ id: 'trending', label: 'Trending' }),
+        Object.freeze({ id: 'top-rated', label: 'Top rated' }),
+        Object.freeze({ id: 'newest', label: 'Newest' })
+    ])
+});
+
+/**
+ * Search that partner's catalogue, as cards.
+ *
+ * `total` is reported rather than inferred from the page: it is what tells a
+ * visitor whether narrowing the term is worth doing, and `pages` is clamped
+ * server-side so a "more" control cannot be drawn past where the partner will
+ * answer.
+ *
+ * @param {{term?: string, sort?: string, page?: number}} [query]
+ * @param {{signal?: AbortSignal, fetchImpl?: typeof fetch}} [opts]
+ * @returns {Promise<{items: object[], total: number, page: number, pages: number}>}
+ */
+export async function searchScenes(query = {}, opts = {}) {
+    const { program } = SCENE_SEARCH;
+    const params = new URLSearchParams();
+
+    if (query.term) params.set('q', query.term);
+    if (query.sort) params.set('sort', query.sort);
+    if (query.page > 1) params.set('page', String(query.page));
+
+    const search = params.toString();
+    const payload = await readProgram(program, search ? `${program.api}?${search}` : program.api, opts);
+
+    if (!Array.isArray(payload?.items)) {
+        throw new Error(`${program.partner}.items sent ${typeof payload?.items}, expected a list`);
+    }
+
+    return {
+        items: ADAPTERS[program.adapter](payload.items, program)
+            .map((row) => toCard(row, program))
+            .filter(Boolean),
+
+        total: Number(payload.total) || 0,
+        page: Number(payload.page) || 1,
+        pages: Number(payload.pages) || 1
+    };
 }

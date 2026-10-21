@@ -172,21 +172,55 @@ test('every registered program is renderable and declares a known group', async 
             kinds.has(program.kind) || UNGROUPED_KINDS.has(program.kind),
             `${program.id} has somewhere to render`
         );
-        assert.equal(
-            new URL(program.api).protocol,
-            'https:',
-            `${program.id} is read over https`
-        );
+        // A proxied program is read from our own origin, so it inherits the
+        // page's scheme and there is no absolute URL to check. Asserted as a
+        // same-origin absolute path rather than waved through: a relative
+        // `api` that forgot its leading slash would resolve against whatever
+        // route the SPA happened to be on.
+        if (program.proxied) {
+            assert.match(
+                program.api,
+                /^\/api\//,
+                `${program.id} is proxied, so it reads from our own /api/`
+            );
+        } else {
+            assert.equal(
+                new URL(program.api).protocol,
+                'https:',
+                `${program.id} is read over https`
+            );
+        }
+
         assert.ok(program.partner, `${program.id} names who the click leaves for`);
 
         // Without the tracking params the links still work and the commission
         // is lost silently, which is the failure nobody notices for a month.
         // Kept partner-agnostic deliberately: a live-cams deal will carry
         // different parameter names, and this should not need editing for it.
-        assert.ok(
-            Object.keys(program.query ?? {}).length > 0,
-            `${program.id} carries something that attributes the sale`
-        );
+        //
+        // A proxied program is exempt because its attribution was applied
+        // server-side, before the payload reached this file — see the note on
+        // the Bang entries in `affiliates.js`. The exemption is keyed on the
+        // explicit `proxied` flag and not on `query` being empty, so a
+        // browser-direct program that lost its parameters still fails here
+        // rather than passing as a proxied one.
+        if (!program.proxied) {
+            assert.ok(
+                Object.keys(program.query ?? {}).length > 0,
+                `${program.id} carries something that attributes the sale`
+            );
+        }
+
+        // And the bound that replaces it: a proxy decides the href, so the
+        // only thing stopping our own server from putting an arbitrary link
+        // under our heading is `linkOrigin`, which `toCard` enforces.
+        if (program.proxied) {
+            assert.equal(
+                new URL(program.linkOrigin).protocol,
+                'https:',
+                `${program.id} bounds its links to an https origin`
+            );
+        }
     }
 });
 
@@ -794,4 +828,233 @@ test('the cam shelf lets go of its timers and its request', () => {
     }
 
     assert.match(destroy, /this\.inflight\?\.abort\(\)/, 'and the request in flight is dropped');
+});
+
+/* ------------------------------------------------------- the scene panel -- */
+
+/**
+ * A title opened here instead of at the partner.
+ *
+ * The brief this answers is "serve the content from the API so that the user
+ * stays on our site", and the panel is as far as that can be taken: the
+ * partner's `files[].url` are member-gated — 403 anonymously *and* with our
+ * affiliate key — so the artwork, the cast and the stills can live here and
+ * the film cannot. The checks below are in two halves, and the halves pull
+ * against each other on purpose. The first says the panel must be good enough
+ * to decide from. The second says it must never pretend to be the film.
+ *
+ * Source checks, for the reason given above `browseSource`: `browse.js`
+ * imports CSS, PlayCanvas and image assets and will not load in Node.
+ */
+test('a card the API can describe opens here; every other card leaves', () => {
+    const card = methodBody('_affiliateCardHtml');
+
+    assert.match(card, /data-scene-id="\$\{scene\}"/, 'the id the panel is opened by');
+    assert.match(card, /scene \? ` data-scene-id|\$\{scene \?/, 'and only when there is one');
+
+    // The glyph is the promise. An arrow that means "this leaves the site" on
+    // a card that opens a dialog is the specific lie this guards.
+    assert.match(
+        card,
+        /scene \? icons\.info\(\{ size: 12 \}\) : icons\.external\(\{ size: 12 \}\)/,
+        'outbound keeps the arrow, previewable does not'
+    );
+    assert.match(card, /card-preview-hint/, 'and the previewable one says so in words');
+
+    // Still a real anchor underneath, both ways. Middle-click, "copy link"
+    // and a crawler all depend on it, and `rel` only means anything here.
+    assert.match(card, /<a class="card affiliate-card/, 'it is an anchor, not a div');
+    assert.match(card, /href="\$\{escapeHtml\(item\.href\)\}"/, 'with the partner link on it');
+    assert.match(card, /rel="\$\{AFFILIATE_LINK_REL\}"/, 'and the paid-link declaration');
+});
+
+test('a modified click is never answered with a dialog', () => {
+    // ⌘-click, middle-click, shift and alt are a request for a new tab. The
+    // moment one of them opens a panel on the current page instead, a visitor
+    // has learned that the links on this site do not do what links do.
+    const fn = browseSource.slice(browseSource.indexOf('function opensInPanel'));
+    const body = fn.slice(0, fn.indexOf('\n}'));
+
+    for (const key of ['metaKey', 'ctrlKey', 'shiftKey', 'altKey']) {
+        assert.match(body, new RegExp(`event\\.${key}`), `${key} falls through to the anchor`);
+    }
+
+    assert.match(body, /\(event\.button \?\? 0\) !== 0/, 'and so does any button but the first');
+    assert.match(body, /if \(!card\.dataset\?\.sceneId\) return false/, 'a card with no detail never opens');
+});
+
+test('one click is counted once, as the thing it actually was', () => {
+    // `_bindOutbound` and `_bindScenePanel` are both delegated listeners on
+    // the same mount and both match `.affiliate-card`. Without the guard the
+    // same press reports an outbound visit to a partner that never happened,
+    // which is the measurement that would make the panel look like it was
+    // working by making it look like it was not being used.
+    const outbound = methodBody('_bindOutbound');
+    const panel = methodBody('_bindScenePanel');
+
+    assert.match(outbound, /if \(opensInPanel\(e, card\)\) return/, 'outbound stands down');
+    assert.match(outbound, /EVENTS\.AFFILIATE_CLICK/, 'and still reports the clicks that do leave');
+
+    assert.match(panel, /EVENTS\.SCENE_OPEN/, 'the panel reports its own opening');
+    assert.match(panel, /opensInPanel\(event, anchor\)/, 'on the same predicate, so they agree');
+
+    // The same rule as every other call site here: which row, never which
+    // title. See the note on identifiers at the top of `src/analytics.js`.
+    const report = panel.slice(panel.indexOf('EVENTS.SCENE_OPEN'));
+    assert.doesNotMatch(report.slice(0, report.indexOf('});')), /sceneId|title/, 'and nothing identifying');
+});
+
+test('the panel never claims to be playing the film', () => {
+    // The licence boundary, pinned. Their files answer 403 to us as well as
+    // to the public, so a `<video>` or an `<iframe>` added here later would
+    // be a broken player at best and hotlinking at worst — and either way it
+    // would be this site appearing to host a partner's scene.
+    const html = methodBody('_sceneHtml');
+
+    assert.doesNotMatch(html, /<video|<iframe|<source/, 'no player in the panel');
+    assert.doesNotMatch(html, /\.mp4|files\[|video\/file/, 'and no path to one');
+
+    // What it does carry instead, and what the whole exercise rests on.
+    assert.match(html, /scene-stills/, 'the contact sheet');
+    assert.match(html, /scene-cast/, 'the cast');
+    assert.match(html, /scene-genres/, 'the genres');
+    assert.match(html, /scene\?\.studio/, 'and the studio');
+});
+
+test('the panel discloses the paid link it is built around', () => {
+    const html = methodBody('_sceneHtml');
+
+    assert.match(html, /rel="\$\{AFFILIATE_LINK_REL\}"/, 'the outbound link declares itself');
+    assert.match(html, /target="_blank"/, 'and opens away from this page');
+    assert.match(
+        html,
+        /commission on\s+anything you spend, at no extra cost to you/,
+        'the disclosure says what the commission is'
+    );
+
+    // Where the film actually is, said plainly rather than left to be
+    // discovered at the partner's paywall.
+    assert.match(html, /Hosted and streamed by \$\{partner\}/, 'and who is hosting it');
+    assert.match(html, /Watch at \$\{partner\}/, 'the button names the destination');
+});
+
+test('the panel opens before the request, not after it', () => {
+    // The card is already holding the cover, the title and the link, so there
+    // is no reason for anybody to watch a spinner to find out whether
+    // pressing the thing did anything — and a partner that never answers has
+    // to degrade to a sparse panel rather than one that never fills.
+    const open = methodBody('_openScene');
+
+    const painted = open.indexOf('document.body.append(el)');
+    const fetched = open.indexOf('await this._fetchScene');
+
+    assert.ok(painted > 0 && fetched > 0, 'both steps are still in _openScene');
+    assert.ok(painted < fetched, 'the panel is on screen before the request is awaited');
+
+    assert.match(open, /this\._sceneHtml\(seed, null\)/, 'drawn from what the card knew');
+    assert.match(open, /if \(this\.scenePanel !== el\) return/, 'and a stale answer is dropped');
+
+    // Appended to `<body>`, not into `.affiliates` — that section carries
+    // `position: relative; z-index: 2` and is therefore a stacking context,
+    // which is the bug that once put an advertisement over the bio card.
+    assert.match(open, /document\.body\.append\(el\)/, 'outside the stacking context');
+});
+
+test('a row of cards costs one request per title at most', () => {
+    const fetchScene = methodBody('_fetchScene');
+
+    assert.match(fetchScene, /if \(!this\.scenes\.has\(key\)\)/, 'asked once');
+    assert.match(fetchScene, /\.catch\(\(\) => null\)/, 'and a failure is remembered too');
+
+    // Otherwise a partner that is down turns one outage into one request per
+    // card per hover, which is the load pattern that gets a key revoked.
+    assert.match(fetchScene, /this\.scenes\.set\(/, 'the promise is cached, not the result');
+    assert.match(fetchScene, /\/\^\\d\{1,12\}\$\//, 'and the id is checked before it is spent');
+});
+
+test('the panel can be left by every route somebody would try', () => {
+    const dismiss = methodBody('_bindSceneDismissal');
+    const close = methodBody('_closeScene');
+    const html = methodBody('_sceneHtml');
+
+    assert.match(html, /scene-panel-backdrop" data-close/, 'clicking away closes it');
+    assert.match(html, /scene-panel-close" data-close/, 'so does the button');
+    assert.match(dismiss, /event\.key === 'Escape'/, 'and so does Escape');
+
+    assert.match(dismiss, /event\.key !== 'Tab'/, 'Tab is trapped inside the dialog');
+    assert.match(close, /removeEventListener\('keydown', this\.onSceneKeydown\)/, 'the trap is released');
+
+    // Back to the card it opened from. Without it the next Tab restarts at
+    // the top of the document and the row somebody was working through is
+    // gone — the reason the cam theatre does the same thing.
+    assert.match(close, /this\.sceneReturnFocusTo\?\.focus\?\.\(\)/, 'and focus goes home');
+});
+
+test('the panel is laid out as a dialog, over the page and not under it', () => {
+    assert.match(css, /\.scene-panel \{[^}]*position: fixed/, 'fixed to the viewport');
+    assert.match(css, /body\.scene-panel-open \{\s*overflow: hidden/, 'the page behind cannot scroll');
+
+    // Above the header, the player and the modal backdrop; below the bio
+    // card, which is placed against a card rather than over the page.
+    const z = /\.scene-panel \{[^}]*z-index: (\d+)/.exec(css);
+    assert.ok(z, 'the panel declares a level');
+    assert.ok(Number(z[1]) > 50, 'over the modal backdrop');
+    assert.ok(Number(z[1]) < 90, 'and under the performer card');
+
+    // The hint on the card is a promise about what a click will do, so it
+    // cannot be a thing that only appears once the pointer is already there.
+    const hint = /\.card-preview-hint \{([^}]*)\}/.exec(css);
+    assert.ok(hint, 'the hint is styled');
+    assert.doesNotMatch(hint[1], /display: none|opacity: 0/, 'and is legible before the hover');
+});
+
+test('nothing in the panel moves for somebody who asked it not to', () => {
+    // Two animations: the panel's entrance and the pulse that stands in for
+    // the detail still loading. Both are decoration, and both are off here.
+    for (const rule of ['.scene-panel-box', '.scene-panel.is-loading .scene-panel-info::after']) {
+        const escaped = rule.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const at = new RegExp(
+            `@media \\(prefers-reduced-motion: reduce\\) \\{\\s*${escaped} \\{\\s*animation: none`
+        );
+        assert.match(css, at, `${rule} holds still`);
+    }
+});
+
+test('a results grid is laid out on the same gutter as every row above it', () => {
+    const grid = /\.affiliate-results \{([^}]*)\}/.exec(css);
+    assert.ok(grid, 'the grid is styled');
+
+    // 4vw is the site's gutter, and the shelves apply it themselves —
+    // `#affiliate-groups` has none of its own, which the ad comment in this
+    // stylesheet relies on. A grid that is not a shelf has to state it or it
+    // runs to the viewport edge underneath a heading that does not.
+    assert.match(grid[1], /padding: 0 4vw/, 'the grid states the gutter');
+    assert.match(css, /\.shelf-head \{[^}]*padding: 0 4vw/, 'which is the one the heading uses');
+
+    // `.affiliate-card` is `width: 168px` so that a scrolling track aligns.
+    // A fixed width inside a `1fr` cell leaves dead space down the right of
+    // every column instead of filling it.
+    assert.match(
+        css,
+        /\.affiliate-results \.affiliate-card \{\s*width: auto/,
+        'and a card in a cell takes the cell'
+    );
+});
+
+test('the two rows from one partner are not the same row twice', () => {
+    const bang = AFFILIATE_PROGRAMS.filter((p) => p.partner === 'Bang');
+    assert.ok(bang.length >= 2, 'there is more than one');
+
+    const apis = new Set(bang.map((p) => p.api));
+    assert.equal(apis.size, bang.length, 'each reads a different sort');
+
+    // Measured against the live API: `rating.allTime` returns 19 of the same
+    // 24 titles as `views.allTime`, because the most-watched scenes are the
+    // most-voted-on. Two headings over one list is a padded page, and it is
+    // the specific mistake this pair was changed to avoid — see the note in
+    // `src/catalog/affiliates.js`.
+    assert.ok(
+        !(apis.has('/api/bang/shelf/most-watched') && apis.has('/api/bang/shelf/top-rated')),
+        'and all-time views and all-time rating are not both front-page rows'
+    );
 });
