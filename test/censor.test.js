@@ -66,8 +66,18 @@ function stub({ image, scan }) {
     return calls;
 }
 
+/**
+ * Bytes that begin like a JPEG.
+ *
+ * They have to. The client reads the magic number and discards the declared
+ * content type, so a fixture that says `image/jpeg` over the body
+ * `not-really-a-jpeg` — which is what this was — is now refused, correctly.
+ * Nothing here decodes the image, so three bytes of truth are enough.
+ */
+const jpegBytes = (tail = 'body') => Buffer.concat([Buffer.from([0xff, 0xd8, 0xff]), Buffer.from(tail)]);
+
 const okImage = () =>
-    new Response(Buffer.from('not-really-a-jpeg'), {
+    new Response(jpegBytes(), {
         status: 200,
         headers: { 'Content-Type': 'image/jpeg' }
     });
@@ -152,6 +162,61 @@ test('an upstream that is not an image is refused before the service sees it', a
         calls.filter((c) => c.url.includes('censor.example')).length,
         0,
         'and the service was not asked to scan a web page'
+    );
+});
+
+test('a partner that mislabels a real JPEG still gets it covered', async () => {
+    reset();
+    configure();
+
+    // This is not hypothetical. Bang serves boxcovers from `i.bang.com` and
+    // labels 31 of the 51 on the three shelves `application/octet-stream`;
+    // all 51 are the same Exif-prefixed JPEG. Trusting the header blanked
+    // three fifths of the catalogue — fail-closed, so nothing leaked, but a
+    // visitor saw "Verify your age to view" on most of the page.
+    const calls = stub({
+        image: () =>
+            new Response(jpegBytes(), {
+                status: 200,
+                headers: { 'Content-Type': 'application/octet-stream' }
+            }),
+        scan: okScan
+    });
+
+    const out = await censor('https://i.bang.com/covers/13510/front.jpg');
+
+    assert.equal(out?.toString(), 'covered-jpeg-bytes', 'the cover came back covered');
+
+    const scan = calls.find((c) => c.url.includes('censor.example'));
+    assert.equal(
+        scan.options.headers['Content-Type'],
+        'image/jpeg',
+        'and the service was told what the bytes are, not what the partner claimed'
+    );
+});
+
+test('a header saying image over bytes that are not is refused', async () => {
+    reset();
+    configure();
+
+    // The other half of reading the magic number, and the reason it is a
+    // sniff rather than a special case for `octet-stream`: a partner CDN
+    // answering a login page with `200 image/jpeg` used to have those bytes
+    // forwarded to the decoder.
+    const calls = stub({
+        image: () =>
+            new Response(Buffer.from('<html>login</html>'), {
+                status: 200,
+                headers: { 'Content-Type': 'image/jpeg' }
+            }),
+        scan: okScan
+    });
+
+    assert.equal(await censor('https://cdn.example/a.jpg'), null, 'nothing comes back');
+    assert.equal(
+        calls.filter((c) => c.url.includes('censor.example')).length,
+        0,
+        'and the service never saw it'
     );
 });
 

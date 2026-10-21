@@ -101,6 +101,34 @@ system that answers a request with the original image.
 | Signature missing, forged, or re-used on another URL | placeholder tile |
 | Partner serves artwork from a host not in the allowlist | image dropped; a gap in the row |
 
+### Fail-closed is not free, and the first time it fired it cost three fifths of a page
+
+The table above is the design working. It is worth reading the other way
+round too, because on 2026-10-20 it did exactly what it promises and the
+result still had to be fixed.
+
+`fetchImage` refused anything whose `Content-Type` did not begin `image/`.
+Bang serves its boxcovers from `i.bang.com` and labels **31 of the 51** on
+the three shelves `application/octet-stream`; the other 20 come back
+`image/jpeg`. All 51 are byte-for-byte the same kind of file — Exif-prefixed
+JPEG, `ffd8ffe1` — so the header was not describing older uploads or a
+different encoder, it was simply inconsistent. Nothing leaked: every one of
+the 31 fell through to the placeholder. But a signed-out visitor opened the
+page and found most of the catalogue reading "Verify your age to view", which
+looks like a broken site rather than a gate, and 17 of those 31 did in fact
+have between one and four regions that needed covering.
+
+The fix reads the magic number and discards the declared type. That is
+*tighter* than what it replaced, which is the part worth keeping in mind: a
+partner answering a login page with `200 image/jpeg` no longer gets those
+bytes forwarded to the decoder. Covering went 20/51 → **51/51**, p50 527ms,
+max 1.2s against the 4s timeout.
+
+The general lesson is in the last column of the table. Every row there is a
+visible failure, and that is deliberate — but "fail-closed" only describes
+what the visitor is protected from, not whether anybody will notice. The
+thing that found this was a screenshot, not a test and not an alarm.
+
 The first row is the one that matters most. If the censor is unavailable the
 cam route reverts to *withholding* the row, not to showing it — the branch is
 in `server/routes/cams.js` and it is the most important four lines in this

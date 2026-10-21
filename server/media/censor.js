@@ -56,6 +56,71 @@ const MAX_ENTRIES = 400;
 /** Refuse anything that is not plausibly a thumbnail. */
 const MAX_BYTES = 4 * 1024 * 1024;
 
+/**
+ * Declared content types allowed as far as a download.
+ *
+ * Not the real check — {@link sniff} is — but the real check needs the bytes,
+ * and reading a body to find out it was HTML is work a header can avoid. So
+ * this gate is deliberately generous: `image/*`, the two spellings of "some
+ * bytes, I don't know what", and a missing header. Everything else is refused
+ * before anything is read.
+ */
+const FETCHABLE = /^(?:image\/|application\/octet-stream|binary\/octet-stream|$)/;
+
+/**
+ * Image formats, by the bytes they start with.
+ *
+ * This exists because a partner's declared content type turned out to be
+ * worthless. Bang serves its boxcovers from `i.bang.com` and labels 31 of 51
+ * of them `application/octet-stream`; the other 20 are `image/jpeg`. All 51
+ * are byte-for-byte the same kind of file — Exif-prefixed JPEG, `ffd8ffe1` —
+ * so the header is not describing older uploads or a different encoder, it is
+ * just inconsistent. Measured 2026-10-20 across all three shelves.
+ *
+ * Checking the magic number instead is also *tighter* than trusting the
+ * header, which is the part worth keeping: a host that says `image/jpeg` and
+ * sends a login page no longer gets those bytes forwarded to the decoder.
+ *
+ * The formats are the ones `sharp` decodes on the other side. A format that
+ * is not here is refused rather than passed along hopefully, because the cost
+ * of being wrong is a tile that quietly shows an uncovered photograph.
+ */
+const MAGIC = [
+    [[0xff, 0xd8, 0xff], 'image/jpeg'],
+    [[0x89, 0x50, 0x4e, 0x47], 'image/png'],
+    [[0x47, 0x49, 0x46, 0x38], 'image/gif'],
+    [[0x49, 0x49, 0x2a, 0x00], 'image/tiff'],
+    [[0x4d, 0x4d, 0x00, 0x2a], 'image/tiff']
+];
+
+/**
+ * The real content type of `body`, read off its first bytes, or `null`.
+ *
+ * WebP and AVIF/HEIF carry their marker at an offset rather than at the
+ * start — `RIFF....WEBP` and `....ftyp`— so they are matched separately
+ * instead of being bent into {@link MAGIC}.
+ */
+function sniff(body) {
+    for (const [bytes, type] of MAGIC) {
+        if (bytes.every((b, i) => body[i] === b)) return type;
+    }
+
+    if (body.length >= 12) {
+        const riff = body.toString('latin1', 0, 4);
+        const webp = body.toString('latin1', 8, 12);
+        if (riff === 'RIFF' && webp === 'WEBP') return 'image/webp';
+
+        if (body.toString('latin1', 4, 8) === 'ftyp') {
+            const brand = body.toString('latin1', 8, 12);
+            if (brand.startsWith('avif') || brand.startsWith('avis')) return 'image/avif';
+            if (brand.startsWith('heic') || brand.startsWith('heix')) return 'image/heic';
+            if (brand.startsWith('mif1') || brand.startsWith('msf1')) return 'image/heif';
+        }
+    }
+
+    return null;
+}
+
 const cache = new Map();
 
 export function isConfigured() {
@@ -167,9 +232,9 @@ async function fetchImage(url) {
 
     if (!response.ok) return null;
 
-    const type = response.headers.get('content-type') || '';
+    const declared = (response.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
 
-    if (!type.startsWith('image/')) return null;
+    if (!FETCHABLE.test(declared)) return null;
 
     const length = Number(response.headers.get('content-length') || 0);
 
@@ -178,6 +243,13 @@ async function fetchImage(url) {
     const body = Buffer.from(await response.arrayBuffer());
 
     if (!body.length || body.length > MAX_BYTES) return null;
+
+    // The declared type is discarded here, not reconciled. It got the response
+    // this far and it has no further say: what goes to the decoder is what the
+    // bytes actually are.
+    const type = sniff(body);
+
+    if (!type) return null;
 
     return { body, type };
 }
