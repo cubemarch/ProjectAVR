@@ -131,17 +131,22 @@ YAML
 gcloud resource-manager org-policies set-policy /tmp/drs.yaml --project "$PROJECT"
 ```
 
-### Build and deploy
+### First deploy only
+
+Two of these flags belong to the first deploy and **must not** be repeated.
+
+`--set-env-vars "CENSOR_TOKEN=..."` replaces the token the service checks. Run
+it against a live service and every call from the app starts failing its auth,
+because the app is still sending the old one. The token lives in `.env` and
+`/srv/lustxr/app.env`; it is set here once and read from there afterwards.
+
+`--allow-unauthenticated` writes an IAM policy that persists across revisions,
+so a later deploy without it stays public. It is here once for the same reason.
 
 ```sh
 PROJECT=lustxr-censor
 REGION=us-central1
-IMAGE="$REGION-docker.pkg.dev/$PROJECT/censor/lustxr-censor:latest"
-
-gcloud builds submit services/censor \
-  --project "$PROJECT" \
-  --region "$REGION" \
-  --tag "$IMAGE"
+IMAGE="$REGION-docker.pkg.dev/$PROJECT/censor/censor:latest"
 
 gcloud run deploy lustxr-censor \
   --project "$PROJECT" \
@@ -163,6 +168,92 @@ gcloud run services add-iam-policy-binding lustxr-censor \
   --project lustxr-censor --region us-central1 \
   --member allUsers --role roles/run.invoker
 ```
+
+### Build and deploy
+
+**Nothing below depends on where you are standing, and that is deliberate.**
+`gcloud builds submit` resolves its source argument against the working
+directory, so a documented `services/censor` fails with `could not find
+source` for anyone who is already in `services/censor` — which is where you
+are if you have just edited the thing you are deploying. That error is
+survivable on its own. What is not survivable is that the deploy on the next
+line was not conditional on it: the build fails, the deploy succeeds against
+whatever `:latest` already pointed at, and the service quietly moves to an
+older image while reporting success. That happened twice on 2026-10-21. So
+the source path is derived from `git rev-parse` rather than written down, and
+the two commands are joined with `&&`.
+
+**There is one image.** `censor/censor`, in the `censor` repository, and
+nothing else. For a while there was a second name, `censor/lustxr-censor`,
+holding its own independent `:latest` — the repository name and the image name
+both being free-form made two plausible paths, and the deploy above pushed to
+one while this file documented the other. A stale tag that answers to a
+sensible-looking path is worse than no tag at all. If a second name ever
+appears again, delete it rather than documenting it.
+
+```sh
+PROJECT=lustxr-censor
+REGION=us-central1
+IMAGE="$REGION-docker.pkg.dev/$PROJECT/censor/censor:latest"
+SRC="$(git rev-parse --show-toplevel)/services/censor"
+
+gcloud builds submit "$SRC" \
+  --project "$PROJECT" --region "$REGION" --tag "$IMAGE" \
+&& gcloud run deploy lustxr-censor \
+  --project "$PROJECT" --region "$REGION" --image "$IMAGE" \
+  --cpu 2 --memory 2Gi \
+  --concurrency 8 \
+  --min-instances 0 \
+  --max-instances 4 \
+&& AVR_CENSOR_TOKEN=$(grep -m1 '^AVR_CENSOR_TOKEN=' "$(git rev-parse --show-toplevel)/.env" | cut -d= -f2-) \
+   node "$SRC/scripts/verify-deploy.js" https://lustxr-censor-fupy4bogsq-uc.a.run.app
+```
+
+The verify step is chained on purpose. Checking that the deploy reported
+success tells you a container started, not that it covers anything.
+
+### Verifying a deployment
+
+The only check worth running is whether pixels moved.
+
+Byte counts, content types, latency and compression ratios all pass for a
+re-encoded original, and that is not a theoretical gap: the mosaic was broken
+for its entire first day in production and every one of those signals read as
+healthy, because the file got *smaller*, which looked like evidence the mosaic
+was working. See the docstring on `blocky` in `src/mosaic.js`.
+
+So there is a script, and it decodes:
+
+```sh
+R="$(git rev-parse --show-toplevel)"
+AVR_CENSOR_TOKEN=$(grep -m1 '^AVR_CENSOR_TOKEN=' "$R/.env" | cut -d= -f2-) \
+  node "$R/services/censor/scripts/verify-deploy.js" \
+  https://lustxr-censor-fupy4bogsq-uc.a.run.app
+```
+
+It sends a 4000x3 sliver of fine stripes — nothing anybody has to look at, and
+unintelligible to a 320x320 detector, so the service takes its whole-frame
+fallback. That is the branch it enters whenever it cannot tell, the one its
+own docstring calls safe, and therefore the one whose silent failure costs the
+most. The script decodes both sides and counts, and exits non-zero if the
+service claimed a whole-frame mosaic and the pixels did not move.
+
+**It runs the same probe through this repository's own `pixelate` first** and
+aborts if that does not move the pixels either. That control is not ceremony.
+The first version of this script sent a *solid-colour* sliver, and a solid
+colour put through a correct mosaic comes back the same solid colour — so it
+reported 0.0% against known-good code, and production was declared broken on
+the strength of it. A measurement that cannot tell a working service from a
+broken one is worse than no measurement, because somebody acts on it.
+
+Two things it deliberately does **not** check:
+
+`X-Censor-Confidence` is not a version marker. It is absent whenever `detect`
+does not finish — which is exactly what happens on the sliver — in every build
+there has ever been. Reading its absence as "this is an old image" is a
+mistake that has already been made once.
+
+File size is not evidence. A re-encoded original is smaller too.
 
 ### Why IAM is open
 
