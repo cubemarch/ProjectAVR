@@ -145,6 +145,8 @@ browser            application server              inference service
                           │
                           └─ POST /scan ─────────►  letterbox to 320²
                                                     NudeNet v3 ONNX
+                                                    ├─ again per window,
+                                                    │  if the frame is wide
                                                     decode + NMS
                                                     ellipse mosaic
                              covered JPEG ◄────────  re-encode
@@ -313,6 +315,60 @@ the decisive artifact is the contact sheet of newly-covered images that a
 person opens and looks at. Forty more covered images is good if they are forty
 pictures of genitals and bad if they are forty clothed box covers, and only
 eyes can tell those apart.
+
+### A wide picture is read in pieces, because no threshold reaches thirty pixels
+
+Lowering bars was the wrong tool for the failure that came next, and it took a
+screenshot to see why.
+
+On 2026-10-21, with all three bars at the numbers above, the AEBN pitch banner
+on the shelf came back with **one** mosaic over the leftmost DVD cover and
+four more covers of plainly exposed breasts untouched beside it. A second
+banner came back with the base of a penis covered and the rest of it not.
+
+Nothing was wrong with the thresholds. The banner is **1366x400**, and the
+detector letterboxes a whole frame into a 320x320 square — so a 3.4:1 picture
+lands as a 320x94 strip with **71% of the model's input filled with grey
+padding**, and each of the five covers inside it is about thirty pixels tall
+by the time anything looks at it. A threshold is a question you ask about a
+signal. There was no signal left to ask about.
+
+So a lopsided frame is now read more than once: the whole frame first, as
+before, then square windows stepped along its long axis, each letterboxed to
+the full 320x320 on its own, with the boxes mapped back into frame
+coordinates and merged by the same NMS that already collapses one part seen
+twice. The whole-frame pass always runs, so tiling can only ever add.
+
+Three constants in `services/censor/src/detect.js` govern it, and all three
+are in the `/health` fingerprint:
+
+| | | |
+| --- | --- | --- |
+| `TILE_ASPECT` | 1.2 | how lopsided before a second look. A waste threshold, not a content one |
+| `TILE_OVERLAP` | 0.2 | guarantees any region under 80px on the banner falls *inside* some window rather than across two |
+| `MAX_TILES` | 6 | so an aspect ratio cannot become a fan-out. Past it windows get longer, not more numerous |
+
+**The bars were re-measured underneath it and left alone.** This was the real
+risk: each window gets its own 2100 anchors and its own look at all eighteen
+classes, so 518 images became 1413 windows and the number of chances the
+model has to fire on one picture roughly tripled — and a bar is a per-chance
+quantity. Bars placed against a single pass could easily scatter under
+several. Sweeping all three **upward** through the tiled pipeline says they
+do not: no raise covered a single image that was not already covered, which a
+raise cannot do, and every raise uncovered images that are covered today — up
+to 24 of them at `0.15 / 0.05 / 0.08`.
+
+Tiling does add some false positives; the contact sheets show mosaics landing
+on faces, a mouth, and one opaque white tank top. They stay. They are
+over-covering, which is the direction this whole document says to fail in,
+and the measured price of removing them is two dozen images of uncovered
+skin.
+
+What it costs is CPU. Cam thumbnails are `image_url_360x270` — 4:3, over the
+trigger — so the highest-volume path in the service went from one inference
+per image to three. The corpus averages 2.73. That is known rather than
+discovered, and it is the thing to watch on the bill; see **Cost** in
+`services/censor/README.md`.
 
 ### Fail-closed is not free, and the first time it fired it cost three fifths of a page
 

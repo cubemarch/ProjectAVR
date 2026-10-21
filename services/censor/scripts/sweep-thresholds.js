@@ -15,6 +15,16 @@
  * a copy of its arithmetic, which is the only way the result is about what
  * will actually ship.
  *
+ * ## It tiles, because the service tiles
+ *
+ * An image is now read as a whole frame plus however many windows {@link
+ * tiles} asks for, so the cache holds one head per *window* and each setting
+ * is folded back with the service's own {@link merge}. This is not a detail:
+ * the first version of this script ran one pass per image, and bars measured
+ * that way are measured against roughly a quarter of the chances to fire that
+ * production actually takes. Every number in `src/detect.js` dated 2026-10-21
+ * or later was re-measured through this path for that reason.
+ *
  * ## What it reports, and what it cannot
  *
  * There is no ground truth here. Nobody has labelled these images, so this
@@ -22,11 +32,19 @@
  * exactly is the *change*: which images move from shown to covered, how much
  * of each frame is covered, and how often the whole-frame fallback fires.
  *
- * `--contact` writes the images that newly become covered to a directory, at
- * thumbnail size. That is the part worth looking at. A setting that covers
- * forty more images is good if they are forty pictures of genitals and bad if
- * they are forty clothed box covers, and the only thing that can tell those
- * apart is a person opening the folder.
+ * `--contact` writes the images that change hands to a directory, **as the
+ * visitor would see them** — put through the service's own {@link pixelate}
+ * rather than shown as originals. That is the part worth looking at. A setting
+ * that covers forty more images is good if they are forty pictures of genitals
+ * and bad if they are forty clothed box covers, and the only thing that can
+ * tell those apart is a person opening the folder.
+ *
+ * Two subfolders per setting, because a bar can move either way:
+ *
+ *   - `added/` became covered. Read these for false positives — a mosaic over
+ *     a t-shirt is the cost of the bar being too low.
+ *   - `lost/` stopped being covered, which is what *raising* a bar buys and
+ *     what it risks. Read these for the thing this service exists to prevent.
  *
  *   node scripts/sweep-thresholds.js <corpus-dir> [--model path] [--contact dir]
  *
@@ -38,7 +56,8 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { createRequire } from 'node:module';
 
-import { load, letterbox, toTensor, decode } from '../src/detect.js';
+import { load, letterbox, tiles, toTensor, decode, merge } from '../src/detect.js';
+import { pixelate } from '../src/mosaic.js';
 
 const require = createRequire(import.meta.url);
 const ort = require('onnxruntime-node');
@@ -68,30 +87,49 @@ const SIDE = 320;
  * - `whole`    the score above which an empty box list becomes a whole-frame
  *              cover. Omitted means `conf / 2`, which is what the service does.
  */
+/*
+ * The bars move *up* here, which is the opposite of every earlier sweep, and
+ * the reason is the tiling above rather than anything about the content.
+ *
+ * A wide banner is now read as several windows instead of one — 518 images
+ * came to 1413 windows the last time this ran. Each window gets its own 2100
+ * anchors and its own look at the same 18 classes, so the number of chances
+ * the model has to place a box on one picture went up by about the same
+ * factor — and a bar is a per-chance quantity. The three numbers in the tree
+ * were all measured against one pass, and the first tiled run with them
+ * unchanged put mosaics on an opaque white tank top and on several faces.
+ * Nothing about the model changed; it was asked three times as many questions
+ * at a bar set for asking once.
+ *
+ * There is no "before tiling" row, and there cannot be one: this harness
+ * drives the service's own `tiles`, so everything it reports is tiled. To see
+ * the untiled numbers, read the tables in `src/detect.js` — that is what they
+ * are.
+ */
 const SETTINGS = [
-    { name: '0.18 flat (was live)', conf: 0.18, genital: 0.18, breast: 0.18, whole: 0.09 },
-    { name: 'baseline 0.15 / 0.03', conf: 0.15, genital: 0.03, breast: 0.15 },
+    { name: 'baseline = deployed', conf: 0.15, genital: 0.015, breast: 0.03 },
 
     // The genital bar alone. Everything else pinned, so every delta is one of
     // FEMALE_GENITALIA / MALE_GENITALIA / ANUS.
-    { name: 'genital 0.02', conf: 0.15, genital: 0.02, breast: 0.15 },
-    { name: 'genital 0.015', conf: 0.15, genital: 0.015, breast: 0.15 },
-    { name: 'genital 0.01', conf: 0.15, genital: 0.01, breast: 0.15 },
-    { name: 'genital 0.005', conf: 0.15, genital: 0.005, breast: 0.15 },
+    { name: 'genital 0.02', conf: 0.15, genital: 0.02, breast: 0.03 },
+    { name: 'genital 0.03', conf: 0.15, genital: 0.03, breast: 0.03 },
+    { name: 'genital 0.05', conf: 0.15, genital: 0.05, breast: 0.03 },
+    { name: 'genital 0.08', conf: 0.15, genital: 0.08, breast: 0.03 },
 
-    // The breast bar alone. At 0.15 it is on `conf`, which is where it was.
-    { name: 'breast 0.05', conf: 0.15, genital: 0.03, breast: 0.05 },
-    { name: 'breast 0.03', conf: 0.15, genital: 0.03, breast: 0.03 },
-    { name: 'breast 0.02', conf: 0.15, genital: 0.03, breast: 0.02 },
-    { name: 'breast 0.015', conf: 0.15, genital: 0.03, breast: 0.015 },
+    // The breast bar alone.
+    { name: 'breast 0.05', conf: 0.15, genital: 0.015, breast: 0.05 },
+    { name: 'breast 0.08', conf: 0.15, genital: 0.015, breast: 0.08 },
+    { name: 'breast 0.12', conf: 0.15, genital: 0.015, breast: 0.12 },
 
-    // `conf` alone, which now governs only BUTTOCKS and MALE_BREAST. `whole`
+    // `conf` alone, which governs only BUTTOCKS and MALE_BREAST. `whole`
     // pinned at the baseline's 0.075 so it cannot move underneath these.
-    { name: 'conf 0.10', conf: 0.1, genital: 0.03, breast: 0.15, whole: 0.075 },
-    { name: 'conf 0.06', conf: 0.06, genital: 0.03, breast: 0.15, whole: 0.075 },
+    { name: 'conf 0.25', conf: 0.25, genital: 0.015, breast: 0.03, whole: 0.075 },
+    { name: 'conf 0.35', conf: 0.35, genital: 0.015, breast: 0.03, whole: 0.075 },
 
-    // What the three chosen numbers do together, which is the thing shipping.
-    { name: 'CHOSEN .15/.015/.03', conf: 0.15, genital: 0.015, breast: 0.03 }
+    // Candidates, all three together.
+    { name: 'cand .15/.03/.05', conf: 0.15, genital: 0.03, breast: 0.05 },
+    { name: 'cand .15/.05/.08', conf: 0.15, genital: 0.05, breast: 0.08 },
+    { name: 'cand .25/.05/.08', conf: 0.25, genital: 0.05, breast: 0.08, whole: 0.075 }
 ];
 
 const dir = process.argv[2];
@@ -143,21 +181,40 @@ console.log(`corpus  ${files.length} images in ${dir}\n`);
 
 const session = await load(model);
 
-/** One inference per image, kept, so the settings below are free. */
-const heads = [];
+/** One inference per window, kept, so the settings below are free. */
+const images = [];
 let unreadable = 0;
+let windows = 0;
+
+/** The model over one window, with the head kept rather than decoded. */
+async function head(buffer, region) {
+    const box = await letterbox(buffer, region);
+    const input = new ort.Tensor('float32', toTensor(box.data), [1, 3, SIDE, SIDE]);
+    const output = await session.run({ [session.inputNames[0]]: input });
+    const out = output[session.outputNames[0]];
+
+    return { box, data: out.data, dims: out.dims };
+}
 
 for (const [i, file] of files.entries()) {
-    if (i % 50 === 0) process.stderr.write(`  inference ${i}/${files.length}\r`);
+    if (i % 25 === 0) process.stderr.write(`  inference ${i}/${files.length}\r`);
 
     try {
         const buffer = await fs.readFile(path.join(dir, file));
-        const box = await letterbox(buffer);
-        const input = new ort.Tensor('float32', toTensor(box.data), [1, 3, SIDE, SIDE]);
-        const output = await session.run({ [session.inputNames[0]]: input });
-        const head = output[session.outputNames[0]];
+        const whole = await head(buffer, null);
+        const passes = [whole];
 
-        heads.push({ file, box, data: head.data, dims: head.dims });
+        for (const region of tiles(whole.box.imageWidth, whole.box.imageHeight)) {
+            passes.push(await head(buffer, region));
+        }
+
+        windows += passes.length;
+        images.push({
+            file,
+            passes,
+            width: whole.box.imageWidth,
+            height: whole.box.imageHeight
+        });
     } catch {
         // The service covers the whole frame when it cannot read an image, so
         // these are already handled and are not what a threshold affects.
@@ -166,7 +223,11 @@ for (const [i, file] of files.entries()) {
 }
 
 process.stderr.write(' '.repeat(40) + '\r');
-console.log(`decoded ${heads.length}, unreadable ${unreadable} (those are covered whole regardless)\n`);
+console.log(
+    `decoded ${images.length} images as ${windows} windows ` +
+        `(${(windows / Math.max(1, images.length)).toFixed(1)} per image), ` +
+        `unreadable ${unreadable} (those are covered whole regardless)\n`
+);
 
 const results = [];
 
@@ -188,14 +249,16 @@ for (const setting of SETTINGS) {
     // decision depending on whether they are vulvas or buttocks.
     const byLabel = new Map();
 
-    for (const h of heads) {
-        const v = decode(h.data, h.dims, h.box, opts);
-        const area = v.whole ? 1 : coveredFraction(v.boxes, h.box.width, h.box.height);
+    for (const image of images) {
+        // Decoded per window and folded with the service's own `merge`, so
+        // what is counted here is what `detect` would have returned.
+        const v = merge(image.passes.map((p) => decode(p.data, p.dims, p.box, opts)));
+        const area = v.whole ? 1 : coveredFraction(v.boxes, image.width, image.height);
 
         boxes += v.boxes.length;
         if (v.whole) wholes++;
         areaSum += area;
-        if (v.boxes.length || v.whole) covered.add(h.file);
+        if (v.boxes.length || v.whole) covered.add(image.file);
 
         for (const b of v.boxes) byLabel.set(b.label, (byLabel.get(b.label) || 0) + 1);
     }
@@ -206,8 +269,8 @@ for (const setting of SETTINGS) {
         wholes,
         covered,
         byLabel,
-        shown: heads.length - covered.size,
-        meanArea: areaSum / heads.length
+        shown: images.length - covered.size,
+        meanArea: areaSum / images.length
     });
 }
 
@@ -248,7 +311,31 @@ for (const r of results) {
 
 // The diff against what is in the tree today, which is the decision being
 // made. The count is the headline; the folder is the evidence.
-const baseline = results[1];
+//
+// First row by construction, not by name: `SETTINGS[0]` is the deployed bars,
+// and every other row is read as a move away from it.
+const baseline = results[0];
+
+/** Write what a visitor would be served for `files` at `setting`. */
+async function sheet(where, files, setting) {
+    if (!files.length) return;
+
+    await fs.mkdir(where, { recursive: true });
+
+    const opts = { conf: setting.conf, genitalConf: setting.genital, breastConf: setting.breast };
+    if (setting.whole !== undefined) opts.wholeTile = setting.whole;
+
+    for (const file of files) {
+        const image = images.find((i) => i.file === file);
+        const verdict = merge(image.passes.map((p) => decode(p.data, p.dims, p.box, opts)));
+        const buffer = await fs.readFile(path.join(dir, file));
+
+        await sharp(await pixelate(buffer, verdict))
+            .resize(260, 260, { fit: 'inside' })
+            .jpeg({ quality: 80 })
+            .toFile(path.join(where, file.replace(/\.\w+$/, '.jpg')));
+    }
+}
 
 console.log(`\nagainst "${baseline.name}":`);
 
@@ -258,19 +345,17 @@ for (const r of results.slice(2)) {
 
     console.log(
         `  ${r.name.padEnd(pad)} +${String(added.length).padStart(3)} newly covered, ` +
-            `-${lost.length} no longer covered`
+            `-${String(lost.length).padStart(3)} no longer covered`
     );
 
-    if (contact && added.length) {
+    if (contact) {
         const out = path.join(contact, r.name.replace(/[^\w.]+/g, '_'));
-        await fs.mkdir(out, { recursive: true });
 
-        for (const file of added) {
-            await sharp(path.join(dir, file))
-                .resize(220, 220, { fit: 'inside' })
-                .jpeg({ quality: 80 })
-                .toFile(path.join(out, file));
-        }
+        // `added` at the new setting, because the question is what the mosaic
+        // lands on there. `lost` at the *baseline*, because the question is
+        // what the picture being given back used to have covered.
+        await sheet(path.join(out, 'added'), added, r);
+        await sheet(path.join(out, 'lost'), lost, baseline);
     }
 }
 

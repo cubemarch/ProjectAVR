@@ -32,14 +32,19 @@ POST /scan
 ```
 
 ```
-GET /health   ->   { "ok": true, "model": "loaded", "bars": "34cd3b0fb3c5" }
+GET /health   ->   { "ok": true, "model": "loaded", "bars": "1cb5708b5bec" }
 ```
 
-`bars` is a fingerprint of the thresholds this container is running — the one
-field that distinguishes one build from another, and the thing `verify-deploy`
-checks before it checks anything else. Hashed rather than printed because
-`/health` is the unauthenticated route; see `policyFingerprint` in
-`src/detect.js`.
+`bars` is a fingerprint of the covering policy this container is running — the
+one field that distinguishes one build from another, and the thing
+`verify-deploy` checks before it checks anything else. Hashed rather than
+printed because `/health` is the unauthenticated route; see
+`policyFingerprint` in `src/detect.js`.
+
+It covers the thresholds *and* the tiling geometry, because what matters is
+whether two builds cover an image the same way, not whether their numbers
+match. The tiling deploy moved no threshold, so until the geometry went in
+this field could not tell it apart from the build it replaced.
 
 **There is no response that returns the original image.** That is the single
 invariant the whole service is arranged around. A model that failed to load, a
@@ -82,7 +87,8 @@ upstream change cannot alter what is covering what.
 Project **`lustxr-censor`** (number 522448295028), in the `cubemarch.com`
 organisation, region `us-central1`. A CPU-only service: NudeNet at 320px is
 ~40ms on a CPU, the load is a few images a second, and a GPU VM that has to
-stay up costs more per month than this will cost per year.
+stay up costs more per month than this will cost per year. One image is no
+longer one inference, though — see [Cost](#cost).
 
 **It has a project to itself, and that is load-bearing** — see
 [Why a dedicated project](#why-a-dedicated-project). It lived in
@@ -419,3 +425,28 @@ image for a room is identical for everyone. Cloud Run bills per request and
 per CPU-second; this lands in single-digit dollars a month at the traffic this
 site has, and scales with the number of *rooms being looked at* rather than
 the number of people looking.
+
+### One scan is no longer one inference
+
+Since tiling, a lopsided image is read as a whole frame plus up to six
+windows. Cloud Run still bills one *request*, but CPU-seconds are what this
+service actually spends, and those multiply:
+
+| | windows | inferences | ~ms on 2 vCPU |
+| --- | --- | --- | --- |
+| Square-ish boxcover, under 1.2 | 0 | 1 | ~40 |
+| Cam thumbnail, `image_url_360x270` | 2 | 3 | ~120 |
+| 16:9 still | 2 | 3 | ~120 |
+| 1366x400 AEBN pitch banner | 5 | 6 | ~230 |
+| The `verify-deploy` 4000x3 sliver | 6 | 7 | ~280 |
+
+Across the 518-image corpus that averages **2.73 inferences per image**.
+
+Two consequences worth holding onto. The cam row is 4:3, so it is in the
+tiling band and its CPU cost roughly tripled — that is the volume path, and it
+is where any bill surprise will come from. And `server/media/censor.js` gives
+up at `TIMEOUT_MS = 4_000`, which a 230ms warm scan sits comfortably inside,
+but a *cold* start is 2.4s before the first inference begins; cold plus a
+banner is now around 2.7s, against a 4s budget that used to have 1.6s of slack
+and now has about 1.3s. If that starts firing, `--min-instances 1` is the
+first move, not a bigger timeout.

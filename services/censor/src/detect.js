@@ -141,6 +141,37 @@ const BREAST_CONF = 0.03;
  * re-measured whenever one of them moves; `scripts/sweep-thresholds.js` is the
  * measurement and the tables above are its output. Production passes nothing
  * and gets the three constants.
+ *
+ * ## Re-measured under tiling, 2026-10-21, and left alone
+ *
+ * Every table above was measured against one whole-image pass. Tiling gives
+ * each window its own 2100 anchors and its own look at all eighteen classes,
+ * so the chances to fire roughly tripled — 518 images became 1413 windows —
+ * and a bar is a per-chance quantity. The reasonable worry was that bars
+ * placed against one pass would scatter under several, so the sweep was run
+ * again through the tiled pipeline, this time moving all three bars *upward*:
+ *
+ * | setting             | boxes | whole | shown uncovered | lost cover |
+ * | ------------------- | ----- | ----- | --------------- | ---------- |
+ * | these three bars    |  2949 |     1 |              85 |          — |
+ * | genital 0.03        |  2564 |     2 |              88 |         -3 |
+ * | genital 0.05        |  2362 |     5 |              91 |         -6 |
+ * | breast 0.08         |  2660 |     3 |             101 |        -16 |
+ * | 0.15 / 0.05 / 0.08  |  2067 |     8 |             109 |        -24 |
+ *
+ * No upward move covered a single image that was not already covered — it
+ * cannot, a higher bar only removes boxes — and every one of them uncovered
+ * images that are covered today, up to 24 of them. The `whole` column rises
+ * as the bars do for the same reason it fell when they dropped: strip the last
+ * box off an image the model is sure about and the only answer left is to
+ * destroy the whole picture.
+ *
+ * What the sweep cannot measure is a false positive, because there is no
+ * ground truth here. Tiling does add some: the contact sheets show mosaics
+ * landing on faces, a mouth and one opaque white tank top. Those are left in.
+ * They are over-covering, which is the direction `docs/CENSOR.md` says this
+ * service fails in, and the measured price of removing them is twenty-four
+ * images of uncovered skin.
  */
 function barFor(id, conf, genitalConf, breastConf) {
     if (GENITAL_IDS.includes(id)) return genitalConf;
@@ -150,6 +181,95 @@ function barFor(id, conf, genitalConf, breastConf) {
 
 /** Boxes overlapping more than this are the same part seen twice. */
 const IOU = 0.45;
+
+/**
+ * How lopsided an image has to be before it is also read in pieces.
+ *
+ * ## The bug this exists to fix
+ *
+ * {@link letterbox} scales the whole frame to fit a 320x320 square and pads
+ * the rest grey, which keeps people the right shape but spends the model's
+ * entire input on one picture however little of the square that picture fills.
+ * The fraction it fills is exactly the inverse of the aspect ratio, and the
+ * artwork this service is pointed at includes a 1366x400 promotional banner
+ * from AEBN's pitch feed. That is 3.4:1, so the banner lands as a 320x94 strip
+ * with 71% of the input grey — and the five DVD covers inside it are about
+ * thirty pixels tall each by the time the model sees them.
+ *
+ * What that looked like in production on 2026-10-21: the Nubiles sale banner
+ * came back with a single mosaic over the leftmost cover and four more covers
+ * of plainly exposed breasts untouched, and the amateur banner came back with
+ * the base of a penis covered and the rest of it not. Both had been through
+ * the current bars, which were already as low as measurement supports. No
+ * threshold reaches a region that is thirty pixels tall; the signal is gone
+ * before anything is compared to a number.
+ *
+ * ## Why 1.2 and not higher
+ *
+ * It is a waste threshold, not a content one. At 1.2 the whole-image pass
+ * still uses 83% of the input and a second look buys little; past it the waste
+ * grows fast and so does what tiling finds. Set against the corpus this is not
+ * a finely balanced number — the images that matter are at 1.78 and 3.42, and
+ * anything from 1.1 to 1.5 picks up both.
+ *
+ * ## What it costs, and why it is not 1.4
+ *
+ * Measured over the 518-image corpus, 2026-10-21 — which images tiling newly
+ * covered, by how lopsided they are:
+ *
+ * | aspect      | images | extra windows | newly covered |
+ * | ----------- | ------ | ------------- | ------------- |
+ * | 1.00 - 1.20 |     78 |             0 |             0 |
+ * | 1.20 - 1.35 |      6 |            12 |             0 |
+ * | 1.35 - 1.50 |     83 |           166 |             7 |
+ * | 1.50 - 1.80 |    346 |           692 |            10 |
+ * | 2.50 and up |      5 |            25 |             0 |
+ *
+ * The narrowest win is at 1.42, and the band below it won nothing, which reads
+ * as an argument for raising this to 1.4 — the more so because cam thumbnails
+ * are `image_url_360x270`, exactly 1.33, and the cam row is the highest-volume
+ * path this service has. At 1.2 every one of those costs three inferences
+ * instead of one.
+ *
+ * That argument does not survive the sample size. The 1.35-1.50 band wins on
+ * 7 of 83 images, about 8%; at that rate a six-image band expects half a win,
+ * so observing none is what you would see whether or not the bands differ.
+ * Nothing here distinguishes them, and the corpus holds no cam thumbnail at
+ * all — every image in it is from `pic.aebn.net` or `i.bang.com`.
+ *
+ * So it stays at 1.2, which is the fail-closed side, and the cost is known
+ * rather than discovered: see the cam-row note in `README.md`. Raising it is a
+ * decision to make on a corpus that actually contains the images it would
+ * stop reading.
+ */
+const TILE_ASPECT = 1.2;
+
+/**
+ * Fraction of a window shared with the next one along.
+ *
+ * Sets what is guaranteed to be *inside* a window rather than split across
+ * two: with windows of side `w` stepping `w * (1 - overlap)`, every region
+ * narrower than `w * overlap` falls wholly within at least one of them. At
+ * 0.2 on the 1366x400 banner that is 80px, comfortably more than the parts
+ * being missed, and anything larger than that is what the whole-frame pass —
+ * which always runs — is good at.
+ */
+const TILE_OVERLAP = 0.2;
+
+/**
+ * Hard cap on windows, so an aspect ratio cannot turn into a fan-out.
+ *
+ * Without one, window side is the short edge and the count is the aspect
+ * ratio: `verify-deploy.js` sends a deliberate 4000x3 sliver, which would ask
+ * for over a thousand 3x3 inferences. Past the cap the windows get *longer*
+ * instead of more numerous — see {@link tiles} — so coverage of the long axis
+ * stays complete and only the overlap narrows.
+ *
+ * Six is the number that covers 1366x400 at full overlap while bounding the
+ * worst case at seven inferences, which is where the per-image latency stays
+ * inside the four seconds `server/media/censor.js` allows.
+ */
+const MAX_TILES = 6;
 
 /**
  * Cover the entire image when the best censorable score is above this but no
@@ -215,14 +335,32 @@ const WHOLE_TILE = CONF / 2;
  * is not handled as one — but there is no reason to hand them to a casual
  * reader of a public endpoint in plain text either.
  *
- * Covers every censorable class's own bar, and `WHOLE_TILE`. Change any one
- * of them and this changes; change something that does not affect what gets
- * covered and it does not.
+ * Covers every censorable class's own bar, `WHOLE_TILE`, and the tiling
+ * geometry. Change any one of them and this changes; change something that
+ * does not affect what gets covered and it does not.
+ *
+ * ## Why the tiling constants are in here
+ *
+ * They were not, for the length of one deploy, and that deploy was the one
+ * that introduced them. Tiling moved no bar, so the fingerprint it produced
+ * was byte-identical to the build before it — `/health` would have answered
+ * "policy 34cd3b0fb3c5, all correct" on an image that read every banner once
+ * and missed four breasts in it. That is precisely the failure this function
+ * was written for, reappearing because the thing that changed was *how much
+ * of the picture the model sees* rather than what score it needs.
+ *
+ * So the rule is what gets covered, not what the bars are: anything that
+ * changes the answer for a given image belongs in here.
  */
 export function policyFingerprint() {
     const canonical = CENSOR_IDS.map((id) => `${CLASSES[id]}=${barFor(id, CONF, GENITAL_CONF, BREAST_CONF)}`)
         .sort()
-        .concat(`WHOLE_TILE=${WHOLE_TILE}`)
+        .concat(
+            `WHOLE_TILE=${WHOLE_TILE}`,
+            `TILE_ASPECT=${TILE_ASPECT}`,
+            `TILE_OVERLAP=${TILE_OVERLAP}`,
+            `MAX_TILES=${MAX_TILES}`
+        )
         .join('|');
 
     return createHash('sha256').update(canonical).digest('hex').slice(0, 12);
@@ -253,29 +391,97 @@ export async function load(modelPath) {
 }
 
 /**
- * Letterbox to the model's square input without distorting the subject.
+ * The extra windows a frame of this shape is read in, beyond the whole of it.
+ *
+ * Square, stepped along the long axis, and empty for anything squarer than
+ * {@link TILE_ASPECT} — a square frame already fills the model's input, so
+ * there is nothing to recover by looking again.
+ *
+ * Two properties this has to hold, both of which a simpler loop gets wrong:
+ *
+ *   - **The long axis is covered end to end.** The step is derived from the
+ *     window count rather than the count from the step, so the last window
+ *     lands exactly on the far edge. Computing the count from a fixed stride
+ *     and then clamping it to {@link MAX_TILES} is the version that silently
+ *     leaves a strip of the image unread, which here means a strip nothing
+ *     ever looks at.
+ *   - **The count is bounded.** Past the cap the window gets longer rather
+ *     than the list getting longer, so a 4000x3 sliver is six wide windows
+ *     and not thirteen hundred tiny ones.
+ *
+ * Deriving the step also means overlap is *at least* {@link TILE_OVERLAP}
+ * whenever the cap is not binding, because a count rounded up to a whole
+ * window spreads back out over the same axis.
+ *
+ * Exported for the tests, which check both properties arithmetically rather
+ * than by running a model.
+ *
+ * @returns {{left: number, top: number, width: number, height: number}[]}
+ */
+export function tiles(width, height) {
+    const short = Math.min(width, height);
+    const long = Math.max(width, height);
+
+    if (long <= short * TILE_ASPECT) return [];
+
+    const horizontal = width >= height;
+    const len = Math.max(short, Math.ceil(long / MAX_TILES));
+    const stride = Math.max(1, Math.round(len * (1 - TILE_OVERLAP)));
+    const count = Math.min(MAX_TILES, Math.ceil((long - len) / stride) + 1);
+    const step = (long - len) / (count - 1);
+
+    const out = [];
+
+    for (let i = 0; i < count; i += 1) {
+        const at = Math.round(i * step);
+
+        out.push(
+            horizontal
+                ? { left: at, top: 0, width: len, height: short }
+                : { left: 0, top: at, width: short, height: len }
+        );
+    }
+
+    return out;
+}
+
+/**
+ * Letterbox an image, or one window of it, to the model's square input.
  *
  * A plain `resize` to 320x320 squashes a 360x270 thumbnail by a third
  * vertically. The model was trained on undistorted people, so squashing them
  * costs recall exactly where it is already weakest. Returns the scale and pad
- * needed to map boxes back.
+ * needed to map boxes back, and the offset of the window within the frame so
+ * that {@link detect} can put them where they belong.
+ *
+ * `region` is one of {@link tiles}. Without it this is the whole frame and
+ * behaves exactly as it always did — `extract` is skipped rather than called
+ * with the full bounds, so the common square case costs nothing new.
+ *
+ * `width` and `height` describe the *window*, because that is the space
+ * {@link decode} works in and clamps to. The frame's own size comes back
+ * separately as `imageWidth` and `imageHeight`.
  */
-export async function letterbox(buffer) {
+export async function letterbox(buffer, region = null) {
     const image = sharpOf()(buffer, { failOn: 'none' });
     const meta = await image.metadata();
 
-    const width = meta.width ?? 0;
-    const height = meta.height ?? 0;
+    const imageWidth = meta.width ?? 0;
+    const imageHeight = meta.height ?? 0;
 
-    if (!width || !height) throw new Error('unreadable image');
+    if (!imageWidth || !imageHeight) throw new Error('unreadable image');
 
-    const scale = Math.min(SIDE / width, SIDE / height);
-    const drawWidth = Math.round(width * scale);
-    const drawHeight = Math.round(height * scale);
+    const crop = region ?? { left: 0, top: 0, width: imageWidth, height: imageHeight };
+    const everything =
+        crop.left === 0 && crop.top === 0 && crop.width === imageWidth && crop.height === imageHeight;
+
+    const scale = Math.min(SIDE / crop.width, SIDE / crop.height);
+    const drawWidth = Math.round(crop.width * scale);
+    const drawHeight = Math.round(crop.height * scale);
     const padX = Math.floor((SIDE - drawWidth) / 2);
     const padY = Math.floor((SIDE - drawHeight) / 2);
 
-    const { data } = await image
+    const { data } = await (everything ? image : image.extract(crop))
         .resize(drawWidth, drawHeight, { fit: 'fill', kernel: 'cubic' })
         .extend({
             top: padY,
@@ -288,7 +494,18 @@ export async function letterbox(buffer) {
         .raw()
         .toBuffer({ resolveWithObject: true });
 
-    return { data, scale, padX, padY, width, height };
+    return {
+        data,
+        scale,
+        padX,
+        padY,
+        width: crop.width,
+        height: crop.height,
+        left: crop.left,
+        top: crop.top,
+        imageWidth,
+        imageHeight
+    };
 }
 
 /** HWC bytes to the NCHW float tensor the model wants, normalised to 0..1. */
@@ -345,7 +562,7 @@ export function toTensor(data) {
 export function decode(
     raw,
     dims,
-    { scale, padX, padY, width, height },
+    { scale, padX, padY, width, height, left = 0, top = 0 },
     {
         all = false,
         conf = CONF,
@@ -368,30 +585,40 @@ export function decode(
     let bestCensorable = 0;
 
     for (let a = 0; a < anchors; a += 1) {
-        let top = -1;
+        // Named `winner`, not `top`. `top` is this window's offset down the
+        // frame, and a loop variable of that name shadowed it here long
+        // enough to ship boxes displaced vertically by a class index.
+        let winner = -1;
         let topScore = 0;
 
         for (let c = 0; c < classes; c += 1) {
             const score = raw[(4 + c) * anchors + a];
             if (score > topScore) {
                 topScore = score;
-                top = c;
+                winner = c;
             }
         }
 
-        if (top < 0) continue;
+        if (winner < 0) continue;
 
-        // cx, cy, w, h in letterboxed 320-space -> x, y, w, h in source space.
-        // One anchor is one box; only the label and score differ between the
-        // candidates below.
+        // cx, cy, w, h in letterboxed 320-space -> x, y, w, h in the frame's
+        // own pixels. One anchor is one box; only the label and score differ
+        // between the candidates below.
+        //
+        // `left` and `top` are where this window sits in the picture, and
+        // adding them here rather than in the caller is deliberate: boxes
+        // leave this function in frame coordinates whoever called it, so there
+        // is no window-local intermediate for a second call site to forget to
+        // translate. They are zero for a whole-frame pass, which is every
+        // caller that does not tile.
         const cx = raw[a];
         const cy = raw[anchors + a];
         const bw = raw[anchors * 2 + a];
         const bh = raw[anchors * 3 + a];
 
         const geometry = {
-            x: (cx - bw / 2 - padX) / scale,
-            y: (cy - bh / 2 - padY) / scale,
+            x: (cx - bw / 2 - padX) / scale + left,
+            y: (cy - bh / 2 - padY) / scale + top,
             w: bw / scale,
             h: bh / scale
         };
@@ -429,12 +656,12 @@ export function decode(
 
         // The thirteen classes this service does not cover exist only for the
         // label self-test. Nothing in production reads them.
-        if (all && !placed && !CENSOR_IDS.includes(top) && topScore >= conf) {
-            out.push({ label: CLASSES[top], score: topScore, ...geometry });
+        if (all && !placed && !CENSOR_IDS.includes(winner) && topScore >= conf) {
+            out.push({ label: CLASSES[winner], score: topScore, ...geometry });
         }
     }
 
-    const boxes = clamp(nms(out), width, height);
+    const boxes = clamp(nms(out), left, top, width, height);
 
     // Counted rather than `boxes.length`, because under `all` the list also
     // holds faces and feet, and a frame with a face in it and nothing covered
@@ -477,37 +704,43 @@ function iou(a, b) {
     return overlap / (a.w * a.h + b.w * b.h - overlap);
 }
 
-/** Keep boxes inside the frame; a box half off the edge still has to cover. */
-function clamp(boxes, width, height) {
+/**
+ * Keep boxes inside the window they were found in; a box half off the edge
+ * still has to cover.
+ *
+ * Bounded by the window rather than by the frame because a tiled pass can only
+ * speak for what it saw — a box regressed off the edge of one window is not
+ * evidence about the next one along, which gets its own look.
+ */
+function clamp(boxes, left, top, width, height) {
+    const right = left + width;
+    const bottom = top + height;
+
     return boxes
         .map((box) => {
-            const x = Math.max(0, box.x);
-            const y = Math.max(0, box.y);
+            const x = Math.max(left, box.x);
+            const y = Math.max(top, box.y);
 
             return {
                 ...box,
                 x,
                 y,
-                w: Math.min(width - x, box.w + Math.min(0, box.x)),
-                h: Math.min(height - y, box.h + Math.min(0, box.y))
+                w: Math.min(right - x, box.w - (x - box.x)),
+                h: Math.min(bottom - y, box.h - (y - box.y))
             };
         })
         .filter((box) => box.w > 1 && box.h > 1);
 }
 
 /**
- * One image in, a verdict out.
+ * Run the model over one letterboxed window.
  *
- * `whole` is the instruction to cover everything, and it is set both by the
- * confidence fallback and by anything that went wrong. A caller that cannot
- * tell "clean" from "broken" would show a broken image uncensored, so the two
- * are never the same return value — see the service's error path.
+ * Split out of {@link detect} because it is now called several times per
+ * image. The boxes come back in frame coordinates — see {@link decode}, which
+ * applies the window offset itself.
  */
-export async function detect(buffer, options = {}) {
-    const box = await letterbox(buffer);
-    const tensor = toTensor(box.data);
-
-    const input = new (ort().Tensor)('float32', tensor, [1, 3, SIDE, SIDE]);
+async function pass(box, options) {
+    const input = new (ort().Tensor)('float32', toTensor(box.data), [1, 3, SIDE, SIDE]);
     const output = await session.run({ [session.inputNames[0]]: input });
     const head = output[session.outputNames[0]];
 
@@ -518,9 +751,83 @@ export async function detect(buffer, options = {}) {
         );
     }
 
-    const { boxes, bestCensorable, whole } = decode(head.data, head.dims, box, options);
-
-    return { width: box.width, height: box.height, boxes, whole, confidence: bestCensorable };
+    return decode(head.data, head.dims, box, options);
 }
 
-export const _internals = { SIDE, CONF, GENITAL_CONF, BREAST_CONF, IOU, WHOLE_TILE, ANCHORS };
+/**
+ * Fold the passes over one frame into the single verdict the service acts on.
+ *
+ * Boxes are unioned and run through {@link nms} once, so a part caught in two
+ * overlapping windows collapses to one box rather than being mosaiced twice.
+ *
+ * `whole` stays {@link decode}'s decision rather than becoming a second
+ * implementation of it here. `covering === 0` across the union means no pass
+ * placed a censorable box — tile boxes are clamped inside their own window and
+ * a window is inside the frame, so none can be lost on the way out — which
+ * means every pass computed its own `whole` as "was I confident anyway", and
+ * asking whether *any* of them was is the same question as asking whether the
+ * highest score found anywhere cleared the bar.
+ *
+ * Exported so `scripts/sweep-thresholds.js` measures this merge rather than a
+ * copy of it. A sweep that reimplements the fold is a sweep that can report a
+ * setting the service will not actually produce.
+ */
+export function merge(passes) {
+    const boxes = nms(passes.flatMap((p) => p.boxes));
+    const covering = boxes.filter((b) => CENSOR_IDS.includes(CLASSES.indexOf(b.label))).length;
+
+    return {
+        boxes,
+        whole: covering === 0 && passes.some((p) => p.whole),
+        confidence: Math.max(...passes.map((p) => p.bestCensorable))
+    };
+}
+
+/**
+ * One image in, a verdict out.
+ *
+ * `whole` is the instruction to cover everything, and it is set both by the
+ * confidence fallback and by anything that went wrong. A caller that cannot
+ * tell "clean" from "broken" would show a broken image uncensored, so the two
+ * are never the same return value — see the service's error path.
+ *
+ * ## The frame is read whole and then, if it is lopsided, in pieces
+ *
+ * See {@link TILE_ASPECT} for what a single whole-frame pass does to a wide
+ * banner and why that was serving uncovered genitals through bars that were
+ * already at their measured floor. The whole-frame pass still runs first and
+ * still runs always: it is what sees a subject larger than a window, it keeps
+ * the square case exactly as it was, and tiling can therefore only ever add.
+ *
+ * Sequential rather than concurrent, for the reason the session is built with
+ * one intra-op thread — concurrency here belongs to the container, and several
+ * inferences racing inside one request only take latency from the next one.
+ *
+ * See {@link merge} for how the passes are folded back into one verdict.
+ */
+export async function detect(buffer, options = {}) {
+    const first = await letterbox(buffer);
+    const width = first.imageWidth;
+    const height = first.imageHeight;
+
+    const passes = [await pass(first, options)];
+
+    for (const region of tiles(width, height)) {
+        passes.push(await pass(await letterbox(buffer, region), options));
+    }
+
+    return { width, height, ...merge(passes) };
+}
+
+export const _internals = {
+    SIDE,
+    CONF,
+    GENITAL_CONF,
+    BREAST_CONF,
+    IOU,
+    WHOLE_TILE,
+    ANCHORS,
+    TILE_ASPECT,
+    TILE_OVERLAP,
+    MAX_TILES
+};
