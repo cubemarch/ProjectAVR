@@ -30,11 +30,20 @@ const analyticsSource = readFileSync(new URL('../src/analytics.js', import.meta.
 const gateSource = readFileSync(new URL('../src/ui/age-gate.js', import.meta.url), 'utf8');
 const browseSource = readFileSync(new URL('../src/ui/browse.js', import.meta.url), 'utf8');
 const camsSource = readFileSync(new URL('../src/ui/cams.js', import.meta.url), 'utf8');
+const imageGateSource = readFileSync(new URL('../src/ui/image-gate.js', import.meta.url), 'utf8');
+const videoGateSource = readFileSync(new URL('../src/ui/video-gate.js', import.meta.url), 'utf8');
 
 const callSites = [
     ['age-gate.js', gateSource],
     ['browse.js', browseSource],
-    ['cams.js', camsSource]
+    ['cams.js', camsSource],
+
+    // The two surfaces added on 2026-10-21 that offer the gate from
+    // somewhere other than the banner. Both are holding a performer's name or
+    // a room's username at the moment they fire, which is the temptation the
+    // hard rule below exists for.
+    ['image-gate.js', imageGateSource],
+    ['video-gate.js', videoGateSource]
 ];
 
 /**

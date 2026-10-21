@@ -7,6 +7,13 @@
  * [`services/censor/`](../../services/censor/README.md) — so this file has no
  * native dependencies and this repository gains none.
  *
+ * Two ways in. {@link censor} takes a partner URL and fetches it;
+ * {@link censorStored} takes a key for one of our own objects and reads it
+ * from storage. A creator's avatar or poster has not been through the model
+ * either, and whose disk the file sits on is not a distinction
+ * `docs/CENSOR.md` makes. Everything after the bytes are in hand is the same
+ * code.
+ *
  * ## Why the service is remote
  *
  * Two reasons, and neither is performance. The first is that `onnxruntime` and
@@ -40,6 +47,20 @@ const TIMEOUT_MS = 4_000;
  * makes the whole thing affordable: the work is per *room*, not per viewer.
  */
 const TTL_MS = 6_000;
+
+/**
+ * How long a covered image is reused when the original cannot change.
+ *
+ * A cam thumbnail is a frame of a live room and six seconds is already
+ * generous. A boxcover, an avatar and a poster are the same file tomorrow, so
+ * re-scanning one every six seconds buys nothing and costs an inference per
+ * viewer — which is the opposite of what {@link TTL_MS} is for.
+ *
+ * It became worth separating when our own uploads started coming through
+ * here: a profile page fetches one avatar per card, and at six seconds a busy
+ * page is a scan per card per refresh.
+ */
+const STATIC_TTL_MS = 6 * 3_600_000;
 
 /**
  * Hard cap on cached images.
@@ -134,15 +155,45 @@ export function isConfigured() {
  * @returns {Promise<Buffer|null>} The covered image, or `null` — never the original.
  */
 export async function censor(url) {
-    const hit = cache.get(url);
+    return through(url, TTL_MS, () => run(url));
+}
+
+/**
+ * Cover one of our own stored objects and return the JPEG.
+ *
+ * Same contract as {@link censor} and the same fail-closed rule: a missing
+ * object, an oversized one, a file that is not an image and a dead service
+ * all resolve `null`, and the caller turns that into the placeholder.
+ *
+ * Creator uploads are not partner artwork and the difference is only where
+ * the bytes come from — there is no fetch and no allowlist, because the key
+ * names an object in our own bucket. Everything after that is identical.
+ *
+ * @param {string} key Storage key, already verified as one this server minted.
+ * @returns {Promise<Buffer|null>} The covered image, or `null` — never the original.
+ */
+export async function censorStored(key) {
+    return through(`storage:${key}`, STATIC_TTL_MS, () => runStored(key));
+}
+
+/**
+ * The cache, shared by both entry points.
+ *
+ * @param {string} cacheKey Namespaced, so a partner URL and a storage key
+ *   cannot collide.
+ * @param {number} ttlMs
+ * @param {() => Promise<Buffer|null>} work
+ */
+function through(cacheKey, ttlMs, work) {
+    const hit = cache.get(cacheKey);
 
     if (hit && hit.expires > Date.now()) return hit.value;
 
     // The in-flight promise goes in before it settles, so sixty cards
     // refreshing on the same second produce one upstream fetch and one scan.
-    const value = run(url);
+    const value = work();
 
-    cache.set(url, { value, expires: Date.now() + TTL_MS });
+    cache.set(cacheKey, { value, expires: Date.now() + ttlMs });
 
     if (cache.size > MAX_ENTRIES) {
         for (const key of [...cache.keys()].slice(0, cache.size - MAX_ENTRIES)) {
@@ -151,14 +202,15 @@ export async function censor(url) {
     }
 
     // Never hold on to a failure. Both arms are needed and the first is easy
-    // to miss: `run` reports an unreachable service by resolving `null`, not
-    // by throwing, so a `catch` alone would quietly pin the placeholder onto
-    // a card for the whole TTL after a single blip.
+    // to miss: the work reports an unreachable service by resolving `null`,
+    // not by throwing, so a `catch` alone would quietly pin the placeholder
+    // onto a card for the whole TTL after a single blip. It matters more now
+    // that one of the TTLs is six hours.
     value.then(
         (out) => {
-            if (!out) cache.delete(url);
+            if (!out) cache.delete(cacheKey);
         },
-        () => cache.delete(url)
+        () => cache.delete(cacheKey)
     );
 
     return value;
@@ -170,6 +222,37 @@ async function run(url) {
     const source = await fetchImage(url);
     if (!source) return null;
 
+    return scan(source);
+}
+
+async function runStored(key) {
+    if (!isConfigured()) return null;
+
+    // Imported here rather than at the top: `getStorage` reads the
+    // environment on first call and builds an S3 client from it, and a
+    // module-level import would do that in every process that merely
+    // mentions the censor, including the tests that do not use storage.
+    const { getStorage } = await import('../storage/index.js');
+
+    const body = await getStorage()
+        .readObject(key, { maxBytes: MAX_BYTES })
+        .catch(() => null);
+
+    if (!body?.length) return null;
+
+    // The same check the partner path makes, for the same reason. A creator
+    // uploading a renamed PDF must not get those bytes to the decoder, and
+    // the upload route's own type check is a different check at a different
+    // time on a value that was a header.
+    const type = sniff(body);
+
+    if (!type) return null;
+
+    return scan({ body, type });
+}
+
+/** Post the bytes to the inference service and return what comes back. */
+async function scan(source) {
     const endpoint = new URL('/scan', process.env.AVR_CENSOR_ENDPOINT).toString();
     const signal = AbortSignal.timeout(TIMEOUT_MS);
 
@@ -288,4 +371,4 @@ export function stats() {
     return { scanned, wholeFrames, cached: cache.size, configured: isConfigured() };
 }
 
-export const _internals = { TTL_MS, TIMEOUT_MS, MAX_ENTRIES, MAX_BYTES, cache };
+export const _internals = { TTL_MS, STATIC_TTL_MS, TIMEOUT_MS, MAX_ENTRIES, MAX_BYTES, cache, sniff };

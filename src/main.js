@@ -17,6 +17,8 @@ import { authModal } from './ui/auth-modal.js';
 import { CreatorPortal } from './ui/creator/portal.js';
 import { ProfilePage } from './ui/profile.js';
 import { initAgeGate } from './ui/age-gate.js';
+import { initImageGate } from './ui/image-gate.js';
+import { allowPlayback } from './ui/video-gate.js';
 import { onAgeChange } from './age-state.js';
 
 /**
@@ -99,6 +101,12 @@ async function boot() {
     // row appears beneath it rather than dropping in on top of it.
     await initAgeGate();
 
+    // One delegated listener, installed once, that offers the same gate when a
+    // covered picture is clicked. After the banner rather than before it only
+    // because it reads the state the banner just settled; it is inert for a
+    // visitor who is already through.
+    initImageGate();
+
     // Not awaited: these are other people's servers, and a slow partner must
     // not hold up the page. Called here and nowhere else — the partner rows
     // are the same for every visitor, signed in or not, so no session change
@@ -154,6 +162,11 @@ async function boot() {
      * @param {{enterVr?: boolean}} [opts]
      */
     async function playItem(item, opts = {}) {
+        // Before `load()`, which is the whole point: it starts the fetch and
+        // decodes the first frames, so a check after it would be a cover over
+        // a video that is already playing. See `ui/video-gate.js`.
+        if (!(await allowPlayback('title'))) return;
+
         state.item = item;
         state.format = { ...item.format };
 

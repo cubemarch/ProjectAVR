@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { resolveFormat, buildConventionalFilename, PROJECTION, STEREO } from '../src/catalog/media-format.js';
 import { titles as titlesRepo } from './db/index.js';
 import { getStorage } from './storage/index.js';
+import { signedStorageUrl } from './media/proxy.js';
 import { TtlCache } from './cache.js';
 
 /**
@@ -215,8 +216,57 @@ function fromDbRow(row) {
         creatorId: row.creator_id,
         poster: row.poster_key ? storage.deliveryUrl(row.poster_key) : undefined,
         backdrop: row.backdrop_key ? storage.deliveryUrl(row.backdrop_key) : undefined,
+
+        // Carried so {@link coverOwnArtwork} can re-point them per visitor.
+        // `buildLibrary` is cached once for the whole process and cannot know
+        // who is asking, so the covering has to happen on the way out — and
+        // the URLs above cannot be turned back into keys, because an S3
+        // delivery URL is presigned or a CDN path depending on deployment.
+        posterKey: row.poster_key || undefined,
+        backdropKey: row.backdrop_key || undefined,
         publishedAt: row.published_at
     };
+}
+
+/**
+ * The same items with our own artwork routed through the censoring proxy.
+ *
+ * For a visitor who has not passed the gate. A poster and a backdrop are
+ * frames a creator chose out of their own film and nothing has looked at
+ * them, which is the same position a partner's boxcover is in — see
+ * `server/media/proxy.js`, and `routes/bang.js` for the shape this follows.
+ *
+ * Only database-backed titles are touched. Items from `public/media/` and
+ * `catalog.json` carry a generated `/art/<slug>-poster.svg`, which is a
+ * drawing of a format name and has nothing to cover.
+ *
+ * There is no "is the censor up" branch, on purpose. A signed URL always
+ * resolves through `/api/media`, and that route answers with the locked
+ * placeholder when the inference service is unset, down or slow. An outage
+ * costs the artwork, never uncovers it.
+ *
+ * The keys themselves come out of the payload. Under `CDN_BASE_URL` a
+ * delivery URL is the base and the key with nothing else in it, so a key
+ * left in a covered response is the uncovered picture written out in two
+ * fields instead of one.
+ *
+ * @param {object[]} items
+ * @returns {object[]} a copy; the cached originals are not touched
+ */
+export function coverOwnArtwork(items) {
+    return items.map((item) => {
+        if (!item.posterKey && !item.backdropKey) return item;
+
+        const covered = { ...item };
+
+        if (item.posterKey) covered.poster = signedStorageUrl(item.posterKey);
+        if (item.backdropKey) covered.backdrop = signedStorageUrl(item.backdropKey);
+
+        delete covered.posterKey;
+        delete covered.backdropKey;
+
+        return covered;
+    });
 }
 
 /**

@@ -1,8 +1,13 @@
 import express from 'express';
 
 import { rateLimit } from '../auth/middleware.js';
-import { censor, isConfigured as censorConfigured, PLACEHOLDER } from '../media/censor.js';
-import { verifyMediaUrl } from '../media/proxy.js';
+import {
+    censor,
+    censorStored,
+    isConfigured as censorConfigured,
+    PLACEHOLDER
+} from '../media/censor.js';
+import { verifyMediaUrl, verifyStorageUrl } from '../media/proxy.js';
 
 /**
  * Partner artwork, with anything explicit covered.
@@ -16,11 +21,20 @@ import { verifyMediaUrl } from '../media/proxy.js';
  * ## It serves one thing and never the other
  *
  * Every answer from this route is either a covered image or the placeholder.
- * There is no branch that returns the partner's original bytes, and there is
- * no parameter that asks for them: a verified visitor is given the partner URL
+ * There is no branch that returns the original bytes, and there is no
+ * parameter that asks for them: a verified visitor is given the real URL
  * directly in the JSON and never comes here at all. That is what keeps this
  * route uninteresting to attack — passing the gate is not something it can
  * grant, because it has nothing ungated to hand out.
+ *
+ * **That rule is why `?k=` does not become a file reader.** The second
+ * parameter names one of our own stored objects — a creator's avatar, poster
+ * or backdrop, which has never been through the model either — and it is
+ * tempting to let a verified visitor use the same URL and skip the covering.
+ * Doing that would turn this route into a signed download endpoint for any
+ * object whose key has ever been minted, and the thing standing between that
+ * and the source video is the HMAC alone. The covering is load-bearing: it
+ * means a leaked link is worth a pixelated avatar.
  *
  * ## It is not itself gated
  *
@@ -28,6 +42,22 @@ import { verifyMediaUrl } from '../media/proxy.js';
  * covered, so there is nothing here for a gate to protect, and gating it would
  * make a visitor who *passed* the gate the only one who gets refused.
  */
+/**
+ * The covered bytes for whichever reference verified, or `null`.
+ *
+ * At most one of the two is ever non-null. An unconfigured censor is the same
+ * answer as a bad signature, deliberately: both are the placeholder, and a
+ * route that distinguished them would be telling an unauthenticated caller
+ * whether their forgery was the thing that failed.
+ */
+function cover(url, key) {
+    if (!censorConfigured()) return Promise.resolve(null);
+    if (url) return censor(url);
+    if (key) return censorStored(key);
+
+    return Promise.resolve(null);
+}
+
 export function mountMedia(app) {
     const router = express.Router();
 
@@ -43,13 +73,18 @@ export function mountMedia(app) {
     router.get('/', rateLimit({ windowMs: 60_000, max: 900 }), async (req, res) => {
         res.set('X-Robots-Tag', 'noindex, nofollow');
 
+        // A partner's URL or one of our own keys, never both. They are signed
+        // over different strings — see `media/proxy.js` — so a signature for
+        // one does not verify as the other, and `u` is read first only so
+        // that a request carrying both is answered once.
         const url = verifyMediaUrl(req.query.u, req.query.s);
+        const key = url ? null : verifyStorageUrl(req.query.k, req.query.s);
 
         // Unsigned, re-signed, tampered with, or pointing somewhere this proxy
         // will not fetch. One answer for all four, and it is the same answer a
         // dead inference service gets: there is nothing to be learned here
         // about which of them it was.
-        const covered = url && censorConfigured() ? await censor(url).catch(() => null) : null;
+        const covered = await cover(url, key).catch(() => null);
 
         if (!covered) {
             res.set('Content-Type', 'image/svg+xml');

@@ -1,7 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 
-import { allowedImage, signedMediaUrl, verifyMediaUrl, _internals } from '../server/media/proxy.js';
+import {
+    allowedImage,
+    signedMediaUrl,
+    signedStorageUrl,
+    verifyMediaUrl,
+    verifyStorageUrl,
+    _internals
+} from '../server/media/proxy.js';
 
 /**
  * The signature on a censoring image proxy.
@@ -123,4 +130,87 @@ test('garbage in the query string is refused rather than thrown over', () => {
 
 test('the signature is long enough to be worth having', () => {
     assert.ok(_internals.SIG_BYTES >= 16, 'a truncated HMAC still has to be 128 bits');
+});
+
+/* ------------------------------------------------------------ our own keys -- */
+
+/**
+ * The second namespace: a key in our own bucket rather than a partner's URL.
+ *
+ * It reaches the same route through the same `s` parameter, which is the whole
+ * reason the cases below are worth having. Nothing structural keeps the two
+ * apart — only the string each signature is computed over.
+ */
+
+const KEY = 'poster/7/42/9f3c1a2b4d5e6f70.jpg';
+
+test('a key this server minted comes back, byte for byte', () => {
+    const signed = signedStorageUrl(KEY);
+
+    assert.ok(signed.startsWith('/api/media?'), 'the same route the partner URLs use');
+
+    const { searchParams } = new URL(signed, 'https://example.test');
+
+    assert.equal(searchParams.get('u'), null, 'and it carries no `u` to be read first');
+    assert.equal(verifyStorageUrl(searchParams.get('k'), searchParams.get('s')), KEY);
+});
+
+test('a signature cannot cross between a URL and a key', () => {
+    // The forgery this namespace exists to prevent. Both parameters are
+    // attacker-supplied and both are checked against the same HMAC key, so if
+    // the signed string were the bare value, a signature handed out for one
+    // would verify as the other and `?k=` would become a reader for any
+    // partner URL — or `?u=` a way to name an object in our bucket.
+    const url = new URL(signedMediaUrl(OK), 'https://example.test').searchParams;
+    const key = new URL(signedStorageUrl(OK), 'https://example.test').searchParams;
+
+    assert.equal(url.get('u'), key.get('k'), 'the same string, signed in each namespace');
+    assert.notEqual(url.get('s'), key.get('s'), 'and it must not sign to the same value');
+
+    assert.equal(verifyStorageUrl(url.get('u'), url.get('s')), null, 'a URL signature as a key');
+    assert.equal(verifyMediaUrl(key.get('k'), key.get('s')), null, 'and a key signature as a URL');
+});
+
+test('a key nobody signed is refused', () => {
+    const { searchParams } = new URL(signedStorageUrl(KEY), 'https://example.test');
+    const k = searchParams.get('k');
+
+    assert.equal(verifyStorageUrl(k, ''), null, 'no signature');
+    assert.equal(verifyStorageUrl(k, 'AAAAAAAAAAAAAAAAAAAAAA'), null, 'one of the right length');
+    assert.equal(verifyStorageUrl(k, 'short'), null, 'and one of the wrong length');
+
+    const other = new URL(signedStorageUrl('poster/7/43/0000.jpg'), 'https://example.test').searchParams;
+    assert.equal(verifyStorageUrl(k, other.get('s')), null, 'a signature moved between keys');
+});
+
+test('a traversing key is refused even when the signature is ours', () => {
+    // Belt and braces: nothing mints a key like these, so reaching this check
+    // means something upstream already went wrong. The storage layer refuses
+    // them too — this is the copy that stops a bad key being handed to it on
+    // the strength of an HMAC alone.
+    for (const bad of ['../../etc/passwd', '/etc/passwd', 'a\\..\\b.jpg', 'a\0b.jpg', 'poster/../../x']) {
+        const signed = signedStorageUrl(bad);
+        const { searchParams } = new URL(signed, 'https://example.test');
+
+        assert.equal(verifyStorageUrl(searchParams.get('k'), searchParams.get('s')), null, bad);
+    }
+});
+
+test('garbage in the key parameters is refused rather than thrown over', () => {
+    // Same reasoning as the URL half: these arrive off `req.query`, where a
+    // value is an array or an object as easily as a string, and a throw here
+    // is a 500 on a request that deserves a placeholder.
+    for (const bad of [[], {}, 42, null, undefined, 'not base64 !!!', '']) {
+        assert.doesNotThrow(() => verifyStorageUrl(bad, bad));
+        assert.equal(verifyStorageUrl(bad, bad), null);
+    }
+
+    // Signing is the other direction and has a narrower job: it is called
+    // with a key off a database row, so what it refuses is the row being
+    // empty or the column being something other than text. A string is signed
+    // whatever is in it — the decode on the way back is what has to be
+    // careful, not the encode on the way out.
+    for (const bad of [[], {}, 42, null, undefined, '']) {
+        assert.equal(signedStorageUrl(bad), null);
+    }
 });

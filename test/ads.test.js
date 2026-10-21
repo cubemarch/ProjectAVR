@@ -395,22 +395,29 @@ function zIndexes() {
     return [...CSS.matchAll(/z-index:\s*(-?\d+)\s*;/g)].map((m) => Number(m[1]));
 }
 
-test('the age gate is the top layer, then its banner, then the profile card', () => {
-    // One ordering, because the two elements allowed above the profile card
-    // are the age gate and the banner that opens it. Anything else appearing
-    // up there is an ad format that has escaped its slot, which is the bug
-    // this section exists to catch.
+test('the age gate is the top layer, then the interstitial, then the banner, then the profile card', () => {
+    // One ordering, because the only elements allowed above the profile card
+    // are the age gate and the two things that open it. Anything else
+    // appearing up there is an ad format that has escaped its slot, which is
+    // the bug this section exists to catch.
     //
     // The banner joined the list on 2026-10-20, when the gate stopped being a
     // blocking interstitial. It has to be under the dialog — it opens it, so
     // a banner painting over its own dialog would cover the thing it just
     // asked for — and over everything else, because it is the only standing
     // explanation of why every image on the page is a mosaic.
+    //
+    // The image interstitial joined on 2026-10-21, between the two. Over the
+    // banner because they offer the same gate and the standing strip should
+    // not poke through this one's backdrop; under the dialog for the reason
+    // below.
     const gate = CSS.match(/\.age-gate\s*\{[^}]*?z-index:\s*(\d+)/)?.[1];
+    const image = CSS.match(/\.image-gate\s*\{[^}]*?z-index:\s*(\d+)/)?.[1];
     const banner = CSS.match(/\.age-banner\s*\{[^}]*?z-index:\s*(\d+)/)?.[1];
     const card = CSS.match(/\.star-bio\s*\{[^}]*?z-index:\s*(\d+)/)?.[1];
 
     assert.ok(gate, '.age-gate has no z-index at all');
+    assert.ok(image, '.image-gate has no z-index at all');
     assert.ok(banner, '.age-banner has no z-index at all');
     assert.ok(card, '.star-bio has no z-index at all');
 
@@ -423,10 +430,12 @@ test('the age gate is the top layer, then its banner, then the profile card', ()
 
     // The gate is what stands between a minor and the page. A popup over it
     // is not a cosmetic defect.
-    assert.ok(Number(gate) > Number(banner), 'the banner can cover the dialog it opens');
+    assert.ok(Number(gate) > Number(image), 'the interstitial can cover the dialog it opens');
+    assert.ok(Number(image) > Number(banner), 'the banner can poke through the interstitial');
     assert.ok(Number(banner) > Number(card), 'the profile card can cover the age banner');
 
-    const others = all.filter((n) => n !== Number(gate) && n !== Number(banner));
+    const overlays = [Number(gate), Number(image), Number(banner)];
+    const others = all.filter((n) => !overlays.includes(n));
     assert.equal(
         Number(card),
         Math.max(...others),

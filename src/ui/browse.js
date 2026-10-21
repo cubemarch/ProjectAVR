@@ -25,6 +25,7 @@ import {
     formatSummary
 } from '../catalog/media-format.js';
 import { dollars, perMinute } from './money.js';
+import { allowPlayback } from './video-gate.js';
 import { api } from '../api/client.js';
 
 /** How long the partner's promo banner holds each slide. Their feed asks 3s. */
@@ -564,7 +565,7 @@ export class BrowseUI extends pc.EventHandler {
             if (!row) return;
 
             if (button.dataset.recordingAction === 'watch') {
-                this._openRecording(row);
+                await this._openRecording(row);
                 return;
             }
 
@@ -574,7 +575,7 @@ export class BrowseUI extends pc.EventHandler {
                 await api.recordings.buy(row.id);
                 this.fire('notice', `Bought “${row.title}”.`);
                 await this.refreshRecordings();
-                this._openRecording({ ...row, owned: true });
+                await this._openRecording({ ...row, owned: true });
             } catch (err) {
                 button.disabled = false;
                 this.fire(
@@ -594,8 +595,15 @@ export class BrowseUI extends pc.EventHandler {
      * side-by-side MP4 and the catalogue player is built around a title in the
      * library, which this is not. The note under it says what the picture is,
      * rather than leaving somebody to wonder why they can see two of it.
+     *
+     * Gated like every other player. In practice the gate is a no-op here —
+     * this needs an account and a purchase, and both are upstream of it — but
+     * "they must already be through" is an assumption about two other
+     * subsystems, and the check is one line.
      */
-    _openRecording(row) {
+    async _openRecording(row) {
+        if (!(await allowPlayback('recording'))) return;
+
         const modal = this.mount.querySelector('#detail-modal');
         const panel = modal.querySelector('.modal');
 

@@ -122,6 +122,26 @@ class LocalStorage {
         return this._pathFor(key);
     }
 
+    /**
+     * The whole object as a Buffer, or `null` if it is not there.
+     *
+     * Bounded, because the one caller is the censor and the one thing it
+     * covers is a picture. Without the cap this is a way to ask the process
+     * to hold a video in memory.
+     */
+    async readObject(key, { maxBytes = 8 * 1024 * 1024 } = {}) {
+        try {
+            const target = this._pathFor(key);
+            const { size } = await fsp.stat(target);
+
+            if (size > maxBytes) return null;
+
+            return await fsp.readFile(target);
+        } catch {
+            return null;
+        }
+    }
+
     /** Local delivery goes back through the app, which is the whole limitation. */
     deliveryUrl(key) {
         return `/stream/${encodeKey(key)}`;
@@ -179,6 +199,39 @@ class S3Storage {
     /** Presigned PUT so the browser uploads straight to the bucket. */
     uploadUrl(key, { expiresIn = 3600 } = {}) {
         return this._sign('PUT', key, expiresIn);
+    }
+
+    /**
+     * The whole object as a Buffer, or `null` if it cannot be had.
+     *
+     * A presigned GET and a `fetch`, rather than an SDK client: the bucket is
+     * already reachable by URL from here and a second way to read the same
+     * bytes is a second thing to configure wrong. `signed: true` forces the
+     * origin even when a CDN is set, because the CDN may be serving a cached
+     * copy and this read is the one that has to be current.
+     *
+     * Bounded, because the one caller is the censor and the one thing it
+     * covers is a picture. Without the cap this is a way to ask the process
+     * to hold a video in memory. Never throws: every failure is a `null` the
+     * caller turns into the placeholder.
+     */
+    async readObject(key, { maxBytes = 8 * 1024 * 1024, timeoutMs = 4_000 } = {}) {
+        try {
+            const url = this.deliveryUrl(key, { expiresIn: 300, signed: true });
+            const res = await fetch(url, { signal: AbortSignal.timeout(timeoutMs) });
+
+            if (!res.ok) return null;
+
+            // The header first, so an oversized object is refused before it
+            // is read rather than after.
+            if (Number(res.headers.get('content-length') || 0) > maxBytes) return null;
+
+            const body = Buffer.from(await res.arrayBuffer());
+
+            return body.length && body.length <= maxBytes ? body : null;
+        } catch {
+            return null;
+        }
     }
 
     async putStream(key, stream) {

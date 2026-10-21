@@ -38,6 +38,14 @@
  * and an expiry would have a real cost — a page left open in a tab would fill
  * with broken tiles, and every mint would have to bust the browser cache. The
  * signature answers *which* URL, not *when*.
+ *
+ * ## Two kinds of reference
+ *
+ * {@link signedMediaUrl} names a partner's URL. {@link signedStorageUrl} names
+ * an object in our own bucket — an avatar, a poster, a backdrop — because a
+ * creator's upload has never been through the model either. They are signed
+ * over different strings so one can never be presented as the other, and they
+ * arrive on different query parameters so the route never has to guess.
  */
 
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
@@ -128,6 +136,75 @@ export function signedMediaUrl(raw) {
     const s = signature(url).toString('base64url');
 
     return `/api/media?u=${u}&s=${s}`;
+}
+
+/**
+ * The covered-proxy URL for one of our own stored objects.
+ *
+ * Avatars, posters and backdrops are uploaded by creators and have never been
+ * through the model. They are no less a picture of somebody than a partner's
+ * boxcover is, and `docs/CENSOR.md` does not have a clause about whose server
+ * the file sits on — so for a visitor who has not passed the gate they go the
+ * same way, through `/api/media`.
+ *
+ * Signed over `storage:` rather than the bare key, so a signature minted for
+ * an object can never be presented as a signature for a URL. Without that
+ * separation the two parameters are one namespace and the only thing keeping
+ * them apart is that the route happens to read `u` before `k`.
+ *
+ * There is no host allowlist on this side and none is wanted: the key names
+ * an object in our own bucket, the signature says we chose it, and there is
+ * no outbound fetch to point anywhere.
+ *
+ * @param {string} key Storage key, as held in the database.
+ * @returns {string|null}
+ */
+export function signedStorageUrl(key) {
+    if (typeof key !== 'string' || !key || key.length > 1024) return null;
+
+    const k = Buffer.from(key, 'utf8').toString('base64url');
+    const s = signature(`storage:${key}`).toString('base64url');
+
+    return `/api/media?k=${k}&s=${s}`;
+}
+
+/**
+ * Recover the storage key behind a signed pair, or `null`.
+ *
+ * @param {unknown} k base64url of the key
+ * @param {unknown} s base64url of the truncated HMAC
+ * @returns {string|null}
+ */
+export function verifyStorageUrl(k, s) {
+    if (typeof k !== 'string' || typeof s !== 'string') return null;
+
+    let key;
+    let given;
+
+    try {
+        key = Buffer.from(k, 'base64url').toString('utf8');
+        given = Buffer.from(s, 'base64url');
+    } catch {
+        return null;
+    }
+
+    if (!key || key.length > 1024) return null;
+    if (given.length !== SIG_BYTES) return null;
+
+    // Length first: `timingSafeEqual` throws on a mismatch rather than
+    // returning false, and a thrown comparison is a 500 where a refusal
+    // belongs. The note in {@link verifyMediaUrl} about tamper tests applies
+    // here too.
+    if (!timingSafeEqual(given, signature(`storage:${key}`))) return null;
+
+    // The signature says this server minted it, which is the real bound. This
+    // is the same traversal check the storage layer makes, repeated here so a
+    // key never reaches a path join on the strength of an HMAC alone.
+    if (key.includes('..') || key.startsWith('/') || key.includes('\\') || key.includes('\0')) {
+        return null;
+    }
+
+    return key;
 }
 
 /**

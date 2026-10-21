@@ -1,27 +1,57 @@
 # Covering what an unverified visitor may not see
 
 The rule is one sentence: **unless a visitor is age-verified, they do not see
-genitals.** This is how that is enforced on artwork the site does not own.
+genitals.** This is how that is enforced on every image the site displays.
 
 ## Why there is anything to do here
 
 `AFFILIATES_ONLY` turned the front page into a directory, and a directory has
 to show something. Until 2026-10-20 the age gate was a blocking interstitial,
 so that was a narrow problem — nothing rendered at all until a visitor was
-through it. Now the gate is a banner over a browsable page, and every partner
-surface on it reaches a signed-out visitor:
+through it. Now the gate is a banner over a browsable page, and every surface
+on it reaches a signed-out visitor:
 
 | Surface | Before | Now |
 | --- | --- | --- |
 | Cam shelf | withheld entirely (`rooms: []`) | **covered and shown**, everywhere |
 | Bang scenes, stills and cast | shown uncovered | **covered and shown** |
 | AEBN movies, stars and pitch slider | shown uncovered | **covered and shown** |
+| Our own posters and backdrops | shown uncovered | **covered and shown** |
+| Creator avatars, on profiles and channel pages | shown uncovered | **covered and shown** |
+| Video playback, anywhere | played | **withheld** — see [below](#video-is-withheld-not-covered) |
 | Ad slots | shown | **withheld** — see [below](#ads-cannot-be-covered) |
 
 The cam change is a *relaxation*, and that is the point. A blank row protects
 nobody and persuades nobody: a visitor who is shown nothing has no reason to
 pass a gate they cannot see the value of. A visitor shown a real shelf with
 the explicit regions pixelated knows exactly what verifying buys them.
+
+### Ours goes through the same model as theirs
+
+Rows four and five were added on 2026-10-21 and they are the ones with no
+argument behind them worth preserving. A poster is a frame a creator picked
+out of their own film and an avatar is a photograph a creator uploaded;
+nothing has looked at either, and the fact that it is ours makes no difference
+to the viewer and none to the statutes. The original scope said *artwork the
+site does not own*, which was a description of where the work had got to
+rather than a principle, and David's instruction closed it: **"this should
+apply to all images on the website and videos. Any image that's loaded and
+displayed."**
+
+Our own objects reach the same `/api/media` route by a second parameter,
+`?k=`, signed over `storage:<key>` so a signature minted for an object can
+never be presented as one for a partner URL. The route still serves exactly
+one thing — a covered image or the placeholder — which is what keeps a signed
+key from being a download link for the bucket. See
+[below](#catalogue-artwork-and-the-ssrf-answer-it-needed).
+
+Covering happens on the way out, not in the item shape:
+`buildLibrary()` is cached once per process and cannot know who is asking, so
+`coverOwnArtwork` in `server/library.js` runs over the response at
+`/api/catalog`. It also deletes `posterKey` and `backdropKey` from the covered
+copy — under `CDN_BASE_URL` a delivery URL is the base and the key with
+nothing in between, so a key left in the payload is the uncovered picture
+written out a second time.
 
 ## One rule, everywhere
 
@@ -47,6 +77,58 @@ If that judgment is ever retracted, the branch to restore is in
 `server/routes/cams.js`, where the old `owes === 'verification'` test is named
 in the comment above the covering check. The artwork routes would need the
 same treatment and do not currently have a withholding path at all.
+
+## Video is withheld, not covered
+
+Everything above is about stills. Video gets the other answer, and the reason
+is arithmetic rather than policy: **a mosaic works for a still and not for a
+stream.** The detector runs at a few frames a second on one server. A cover
+that lags half a second is not a cover, and there is no version of this that
+scales to covering every frame of every concurrent stream.
+
+So `playbackAllowed()` in `src/ui/video-gate.js` is `ageOk()`, and three call
+sites ask before anything decodes:
+
+| Surface | Call site | `surface` |
+| --- | --- | --- |
+| A catalogue title | `playItem` in `src/main.js`, before `video.load()` | `title` |
+| A past broadcast | `_openRecording` in `src/ui/browse.js` | `recording` |
+| A live cam room | `_openTheatre` in `src/ui/cams.js`, before the iframe exists | `cam` |
+
+The check is before `load()` in every case, which is the whole point: `load()`
+starts the fetch and decodes the first frames, so a check after it is a cover
+over a video that is already playing.
+
+The cam theatre still *opens* for a visitor who declines — it shows the room's
+own thumbnail, blurred, with a verify button where the player would be. That
+is deliberate and it is what keeps the interstitial below honest: cancelling
+is supposed to show you the page, censored, rather than nothing.
+
+## Clicking a covered picture asks
+
+A pixelated thumbnail with no way to act on it is a dead end. So a plain
+left-click on any covered image opens an interstitial offering the gate
+(`src/ui/image-gate.js`), and **cancelling is a supported outcome**: the
+visitor continues to the linked page and sees it covered. There is no close
+cross, because a dialog with three ways out and one of them unlabelled is a
+dialog people dismiss without reading the choice.
+
+Which images count is `coveredPicture` in `src/ui/covered-image.js` — a walk
+up from the click target looking for a `/api/media` or `/api/cams/thumb/` URL,
+in `src` or in an inline `background-image`. It is a separate, dependency-free
+module for a boring reason worth knowing before you move it back: `node --test`
+cannot import anything that reaches `src/assets/`, so logic left inside
+`image-gate.js` cannot be tested at all.
+
+Ad slots are excluded from the interstitial. They are already withheld
+entirely for an unverified visitor, so the exclusion is belt-and-braces — but
+an ad is a paid click going somewhere else and interposing a dialog on it is
+both useless and a billing problem.
+
+The three overlays stack in a fixed order, asserted in `test/ads.test.js`
+because getting it wrong is invisible until somebody is looking at the wrong
+thing: **age gate (95) > interstitial (94) > banner (93)**, then everything
+else below.
 
 ## The pipeline
 
@@ -91,7 +173,7 @@ system that answers a request with the original image.
 
 | What breaks | What the visitor sees |
 | --- | --- |
-| `AVR_CENSOR_ENDPOINT` unset | cam row withheld; catalogue artwork all placeholder |
+| `AVR_CENSOR_ENDPOINT` unset | cam row withheld; all other artwork, ours and theirs, placeholder |
 | Inference service down / timing out | placeholder tile |
 | Model failed to load in the container | whole frame mosaiced |
 | Detector threw on an image | whole frame mosaiced |
@@ -100,7 +182,10 @@ system that answers a request with the original image.
 | Image undecodable | placeholder tile |
 | Unknown room name | placeholder tile |
 | Signature missing, forged, or re-used on another URL | placeholder tile |
+| A `?u=` signature presented as `?k=`, or the reverse | placeholder tile |
+| Storage object missing, oversized, or not an image | placeholder tile |
 | Partner serves artwork from a host not in the allowlist | image dropped; a gap in the row |
+| Any of the above, while video is involved | nothing plays; the gate is asked for instead |
 
 ### The one response that is not covered
 
@@ -109,16 +194,19 @@ puts a partner's own pixels in front of somebody who has not verified their
 age, and it is worth stating on its own because the rest of this document is
 about the cases where that cannot happen:
 
-> The detector ran, placed no box, and scored **below half of `CONF`** on
-> every censorable class.
+> The detector ran, placed no box **at its class's own bar**, and scored
+> below half of `CONF` on every censorable class.
 
 That image is re-encoded and handed back. Nothing else is. Above that floor
 and below a placed box, the frame is mosaiced entirely — the model declining
 to commit is not the model saying no.
 
 The floor lives in `WHOLE_TILE` in `services/censor/src/detect.js` and is
-written as `CONF / 2` rather than a number so the two move together.
-Measured over the 51 boxcovers on the three Bang shelves, 2026-10-20:
+written as `CONF / 2` rather than a number so the two move together — which
+with `CONF` at 0.15 puts it at **0.075**.
+
+Measured over the 51 boxcovers on the three Bang shelves, 2026-10-20, under
+the flat 0.18 this replaced:
 
 | | confidence |
 | --- | --- |
@@ -127,15 +215,51 @@ Measured over the 51 boxcovers on the three Bang shelves, 2026-10-20:
 | Covered as uncertain (2) | 0.110, 0.152 |
 
 The populations do not overlap and the gap is wide, so anywhere between
-0.16 and 0.22 would split this sample identically. The floor sits at 0.09,
-below the gap rather than inside it, because 51 images of one kind is not
-enough to put a threshold in a gap and the two mistakes do not cost the
-same: too high shows a photograph, too low mosaics a clothed cover.
+0.09 and 0.22 would split this sample identically. The floor sits below the
+gap rather than inside it, because 51 images of one kind is not enough to put
+a threshold in a gap and the two mistakes do not cost the same: too high shows
+a photograph, too low mosaics a clothed cover.
 
 Both of the closest calls were checked by eye rather than by score — the
 highest-scoring pass-through, at 0.088, is a performer in a crop top and
 underwear. `X-Censor-Confidence` is on every response so this stays
 checkable without re-deriving it.
+
+Read that table against the current numbers and the change is visible: at
+0.075 the 0.088 cover is now mosaiced as uncertain rather than shown, and the
+cleared population shrinks to the 24 images under the floor. That is the
+intended direction. What the table no longer establishes is where the
+*box-placing* boundary sits, because `CONF` moved to 0.15 and the three
+genital classes moved to 0.03 — the sample has not been re-scored at those
+numbers, and the comparison that was run instead is in the next section.
+
+### The split threshold
+
+One bar cannot do both jobs, and the evidence for that is in the docstring on
+`GENITAL_CONF`. Sampling 30 live cam thumbnails on 2026-10-20 and looking at
+the output rather than the box count, four showed uncovered genitals; probing
+those regions, the model had scored them **0.022 and 0.024**. Not close to the
+old 0.18, not close to the whole-frame fallback either. On the same images
+breasts and buttocks scored in the tenths. The detector is not uniformly weak
+— it is weak on exactly the part the one-sentence rule names.
+
+Lowering the single threshold to reach them was measured and rejected:
+
+| thresholds | cam boxes | covers shown | mean cam area |
+| --- | --- | --- | --- |
+| 0.18 flat (was) | 42 | 25 | 17% |
+| **0.15 / 0.03 (this)** | **67** | **24** | **21%** |
+| 0.08 flat | 58 | 19 | – |
+
+A flat 0.08 costs six of the 51 catalogue boxcovers — clothed promotional art,
+mosaiced, for every unverified visitor. Splitting costs one, because the low
+bar applies to three of the eighteen classes and those three almost never fire
+on a clothed photograph.
+
+The area column is the one that matters. A threshold low enough to scatter
+boxes everywhere would cover the frame while reporting that it placed boxes,
+and a count alone cannot tell that apart from good recall. Four points of
+extra area for three fifths more boxes is boxes landing on things.
 
 ### Fail-closed is not free, and the first time it fired it cost three fifths of a page
 
@@ -308,16 +432,51 @@ There is no expiry, deliberately: the capability granted is "fetch a public
 partner image and pixelate it", which is not worth time-bounding, and an
 expiry would fill a page left open in a tab with broken tiles.
 
+### Two kinds of reference, one route
+
+Our own posters, backdrops and avatars arrive at the same endpoint by a
+different parameter, because there is no URL to sign — the object lives in our
+bucket and its address depends on whether a CDN is configured:
+
+| | names | signed over | verified by |
+| --- | --- | --- | --- |
+| `?u=` | a partner's URL | the URL | `verifyMediaUrl` + host allowlist |
+| `?k=` | a storage key | `` `storage:${key}` `` | `verifyStorageUrl` + traversal check |
+
+**The prefix is the whole point.** Both parameters are attacker-supplied and
+both are checked against the same HMAC key, so if each signed the bare value a
+signature handed out for one would verify as the other — `?k=` would become a
+reader for any partner URL, or `?u=` a way to name an object in the bucket.
+Domain-separating them means the only thing keeping the namespaces apart is
+not that the route happens to read `u` before `k`.
+`test/media-proxy.test.js` asserts the crossing in both directions.
+
+**And `?k=` is still not a file reader.** It is tempting to let a verified
+visitor use the same URL and skip the covering, which would turn this into a
+signed download endpoint for any object whose key has ever been minted, with
+the HMAC as the only thing between it and the source video. The covering is
+load-bearing: it is what makes a leaked link worth a pixelated avatar. A
+verified visitor gets the real delivery URL in the JSON and never comes here.
+
 Three things follow, and they are what make covering a whole catalogue
 affordable:
 
 - **The route serves one thing.** Every answer is a covered image or the
-  placeholder. There is no branch returning the partner's bytes and no
-  parameter that asks for them — a verified visitor is handed the partner URL
+  placeholder. There is no branch returning the original bytes and no
+  parameter that asks for them — a verified visitor is handed the real URL
   in the JSON and never comes here.
 - **The covered image is cacheable forever.** A boxcover is the same boxcover
   tomorrow, so inference runs once per image ever, not once per viewer. Unlike
-  a cam thumbnail, which changes every nine seconds.
+  a cam thumbnail, which changes every nine seconds — hence the two TTLs in
+  [Tuning](#tuning).
+- **A response that differs by visitor is never shared-cacheable.** Whether
+  the artwork in a payload is covered depends on a cookie, so `viewFor` in
+  `server/media/view.js` returns the covering decision and the
+  `Cache-Control` header together and every route that covers sets both from
+  that one call. Getting them apart is how a covered catalogue reaches a
+  proxy and is handed to everybody — or, worse, an uncovered one. It is
+  `private, no-store` rather than a short TTL so passing the gate redraws the
+  page immediately instead of a few minutes later.
 - **The feeds had to move server-side to make any of it possible.** AEBN's
   three were read straight from the browser until 2026-10-20; artwork this
   server never sees is artwork it cannot cover. `server/routes/aebn.js` reads
@@ -325,6 +484,27 @@ affordable:
   payload rather than naming fields, because a list of field names is a list
   that goes stale the first time a partner adds an image size, and it goes
   stale silently and in the wrong direction.
+
+## What this does not reach
+
+Everything above is the website. Two surfaces are outside it and a mosaic
+would not help either one, which is worth stating plainly rather than leaving
+to be discovered:
+
+**`GET /deovr`, the headset feed.** Unauthenticated, cookieless by design —
+DeoVR and Play'a have no login flow — and it returns the published catalogue
+with poster thumbnails *and* the video URLs in the same response. Covering the
+thumbnails there would be the embed mistake from the section above, in its
+purest form: a pixelated picture next to a playable file. The gate this needs
+is the route requiring a feed token like `/deovr/u/:token` already does, which
+would break any headset pointed at the bare address. Not done, named here.
+
+**DLNA.** Same shape, LAN-scoped, and the protocol has nowhere to put a gate.
+
+Both predate this work. Neither is reachable from a browser session, so
+neither is what the one-sentence rule at the top was written about — but
+neither is covered, and "the site covers everything" would be the wrong thing
+to carry away from this document.
 
 ## Ads cannot be covered
 
@@ -355,11 +535,25 @@ All in `services/censor/src/`:
 
 | | | |
 | --- | --- | --- |
-| `CONF` | `0.18` | box threshold; low on purpose, recall over precision |
-| `WHOLE_TILE` | `0.30` | confident-but-unplaceable → cover everything |
+| `CONF` | `0.15` | box threshold for fifteen of the eighteen classes; low on purpose, recall over precision |
+| `GENITAL_CONF` | `0.03` | and for the three in `GENITAL_IDS`, which the model is measurably weak on |
+| `WHOLE_TILE` | `CONF / 2` | confident-but-unplaceable → cover everything |
 | `PAD` | `1.22` | margin on every box before drawing |
 | `ELLIPSE_FIT` | `√2` | so a circle *circumscribes* its box instead of fitting inside it |
 | `BLOCKS` | `26` | mosaic blocks across the long edge |
 
 The asymmetry to keep in mind while tuning: a false positive mosaics a
 shoulder, and a false negative is the thing this exists to prevent.
+
+Two caching numbers in `server/media/censor.js` rather than the service:
+
+| | | |
+| --- | --- | --- |
+| `TTL_MS` | `6_000` | a cam thumbnail, which changes every nine seconds |
+| `STATIC_TTL_MS` | `6h` | a poster, a boxcover or an avatar, which does not change at all |
+
+The second was the first's bug. Everything went through the six-second cache,
+including artwork that is the same artwork tomorrow, so a catalogue page
+re-ran inference on every image every six seconds for as long as anybody was
+looking at it. The two share one `through(cacheKey, ttlMs, work)` helper, so
+the only difference between them is the number.

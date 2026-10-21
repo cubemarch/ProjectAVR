@@ -4,7 +4,8 @@ import { progress, myList, analytics, titles } from '../db/index.js';
 import { requireAuth, loadFullUser } from '../auth/middleware.js';
 import { requireAgeAssurance } from '../identity/age.js';
 import { identityEnforced } from '../identity/providers.js';
-import { buildLibrary } from '../library.js';
+import { buildLibrary, coverOwnArtwork } from '../library.js';
+import { viewFor } from '../media/view.js';
 
 /**
  * Viewer-facing state: resume position, My List, and view recording.
@@ -133,19 +134,44 @@ export function mountViewer(app) {
      * reachable by anyone holding a URL, exactly as they were before. Closing
      * that is signed delivery URLs, which is a different change - see
      * docs/IDENTITY.md.
+     *
+     * ## Artwork is covered independently of all that
+     *
+     * Enforcement is the whole-catalogue switch and is off nearly everywhere;
+     * the covering below is not, and applies to every unverified visitor on
+     * the ungated branch. A poster is a frame out of the film, so the gate it
+     * answers to is the same one the partner shelves answer to - see
+     * `coverOwnArtwork` in `server/library.js` and docs/CENSOR.md.
+     *
+     * The shared cache goes with it. `s-maxage=30` in front of a response
+     * whose artwork depends on a cookie is one proxy away from handing a
+     * verified visitor's catalogue to everybody, so a covered response is
+     * `private, no-store` - which also means passing the gate redraws the
+     * shelves immediately rather than up to 30 seconds later.
      */
     app.get('/api/catalog', async (req, res, next) => {
+        const view = viewFor(req);
+
         if (!identityEnforced()) {
             const library = await buildLibrary();
-            res.set('Cache-Control', 'public, max-age=5, s-maxage=30, stale-while-revalidate=120');
-            res.json(library);
+            res.set(
+                'Cache-Control',
+                view.covered
+                    ? view.cacheControl
+                    : 'public, max-age=5, s-maxage=30, stale-while-revalidate=120'
+            );
+            res.json(view.covered ? { ...library, items: coverOwnArtwork(library.items) } : library);
             return;
         }
 
+        // Enforced: everyone who gets here is past an age check already, so
+        // `viewFor` agrees and there is nothing left to cover. Applied anyway,
+        // because a branch that assumes two gates can never disagree is the
+        // kind of assumption that stops being true in a later edit.
         runGate([requireAuth, loadFullUser, requireAgeAssurance], req, res, next, async () => {
             const library = await buildLibrary();
             res.set('Cache-Control', 'private, no-store');
-            res.json(library);
+            res.json(view.covered ? { ...library, items: coverOwnArtwork(library.items) } : library);
         });
     });
 }

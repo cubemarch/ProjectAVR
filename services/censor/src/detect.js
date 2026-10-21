@@ -1,6 +1,6 @@
 import { createRequire } from 'node:module';
 
-import { CLASSES, CENSOR_IDS } from './labels.js';
+import { CLASSES, CENSOR_IDS, GENITAL_IDS } from './labels.js';
 
 /**
  * Both native modules are resolved on first use rather than imported.
@@ -41,7 +41,48 @@ const ANCHORS = (SIDE / 8) ** 2 + (SIDE / 16) ** 2 + (SIDE / 32) ** 2;
  * recall and backstopped by {@link WHOLE_TILE} below, which catches the case
  * where the model is confident something is there and not confident where.
  */
-const CONF = 0.18;
+const CONF = 0.15;
+
+/**
+ * The bar for the three classes in {@link GENITAL_IDS}, well under {@link CONF}.
+ *
+ * ## Why these get their own number
+ *
+ * Because the evidence says one threshold cannot serve both jobs. Sampling 30
+ * live cam thumbnails on 2026-10-20 and looking at the output rather than the
+ * box count, four tiles showed uncovered genitals. Probing those regions, the
+ * model had scored them 0.022 and 0.024 — not close to `CONF`, not close to
+ * the whole-frame fallback either, so nothing fired and the frame was served.
+ * On the same images breasts and buttocks scored in the tenths. The detector
+ * is not uniformly weak; it is weak on exactly the part the brief names.
+ *
+ * Lowering `CONF` to reach them was measured and rejected. At 0.08 across the
+ * board, six of the 51 catalogue boxcovers that are currently shown get
+ * covered instead — clothed promotional art, mosaiced, for every unverified
+ * visitor. Splitting the threshold costs one, because this bar only applies
+ * to three of the eighteen classes and those three almost never fire on a
+ * clothed photograph.
+ *
+ * Measured over 81 images (51 boxcovers, 30 cam thumbnails), 2026-10-20:
+ *
+ * | thresholds            | cam boxes | covers shown | mean cam area |
+ * | --------------------- | --------- | ------------ | ------------- |
+ * | 0.18 flat (was)       |        42 |           25 |           17% |
+ * | 0.15 / 0.03 (this)    |        67 |           24 |           21% |
+ * | 0.08 flat             |        58 |           19 |             - |
+ *
+ * The area column is the check that matters: a threshold low enough to
+ * scatter boxes everywhere would cover the frame while reporting that it
+ * placed boxes, and the count alone cannot tell that apart from good recall.
+ * Four points of extra area for three fifths more boxes is boxes landing on
+ * things, not noise.
+ */
+const GENITAL_CONF = 0.03;
+
+/** The bar a given class has to clear. */
+function barFor(id) {
+    return GENITAL_IDS.includes(id) ? GENITAL_CONF : CONF;
+}
 
 /** Boxes overlapping more than this are the same part seen twice. */
 const IOU = 0.45;
@@ -209,31 +250,57 @@ export function decode(raw, dims, { scale, padX, padY, width, height }, { all = 
 
         if (top < 0) continue;
 
-        // Tracked across every anchor, including ones that lose to a face or
-        // a foot, because the whole-tile fallback asks "was the model sure
-        // something censorable was here" and that question is not limited to
-        // anchors where it also won.
-        for (const id of CENSOR_IDS) {
-            const score = raw[(4 + id) * anchors + a];
-            if (score > bestCensorable) bestCensorable = score;
-        }
-
-        if (topScore < CONF || (!all && !CENSOR_IDS.includes(top))) continue;
-
         // cx, cy, w, h in letterboxed 320-space -> x, y, w, h in source space.
+        // One anchor is one box; only the label and score differ between the
+        // candidates below.
         const cx = raw[a];
         const cy = raw[anchors + a];
         const bw = raw[anchors * 2 + a];
         const bh = raw[anchors * 3 + a];
 
-        out.push({
-            label: CLASSES[top],
-            score: topScore,
+        const geometry = {
             x: (cx - bw / 2 - padX) / scale,
             y: (cy - bh / 2 - padY) / scale,
             w: bw / scale,
             h: bh / scale
-        });
+        };
+
+        // Every censorable class is judged on its own score, against its own
+        // bar, whether or not it won the anchor.
+        //
+        // It used to have to win: the anchor's top class was taken and then
+        // tested for censorability, so genitalia scoring 0.14 under a belly
+        // scoring 0.40 placed nothing. That reads as reasonable and is the
+        // wrong shape for this service — "the model thinks this is mostly a
+        // torso and also thinks there is a penis in it" is not a frame to
+        // leave alone. It is also the exact failure mode at thumbnail scale,
+        // where a small part sits inside a larger one that scores better.
+        //
+        // The cost is bounded by NMS, which suppresses on overlap without
+        // regard to label, so two classes firing on one anchor collapse back
+        // to one box rather than compounding.
+        let placed = false;
+
+        for (const id of CENSOR_IDS) {
+            const score = raw[(4 + id) * anchors + a];
+
+            // Tracked across every anchor, including ones that place nothing,
+            // because the whole-tile fallback asks "was the model sure
+            // something censorable was here" and that question is not limited
+            // to anchors that cleared a bar.
+            if (score > bestCensorable) bestCensorable = score;
+
+            if (score < barFor(id)) continue;
+
+            out.push({ label: CLASSES[id], score, ...geometry });
+            placed = true;
+        }
+
+        // The thirteen classes this service does not cover exist only for the
+        // label self-test. Nothing in production reads them.
+        if (all && !placed && !CENSOR_IDS.includes(top) && topScore >= CONF) {
+            out.push({ label: CLASSES[top], score: topScore, ...geometry });
+        }
     }
 
     const boxes = clamp(nms(out), width, height);
@@ -325,4 +392,4 @@ export async function detect(buffer, options = {}) {
     return { width: box.width, height: box.height, boxes, whole, confidence: bestCensorable };
 }
 
-export const _internals = { SIDE, CONF, IOU, WHOLE_TILE, ANCHORS };
+export const _internals = { SIDE, CONF, GENITAL_CONF, IOU, WHOLE_TILE, ANCHORS };

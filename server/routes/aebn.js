@@ -2,8 +2,8 @@ import express from 'express';
 
 import { rateLimit } from '../auth/middleware.js';
 import { TtlCache } from '../cache.js';
-import { visitorGate } from '../identity/visitor-gate.js';
 import { signedMediaUrl } from '../media/proxy.js';
+import { viewFor } from '../media/view.js';
 import { AFFILIATE_PROGRAMS } from '../../src/catalog/affiliates.js';
 
 /**
@@ -171,14 +171,13 @@ export function mountAebn(app) {
             return;
         }
 
-        const covered = !visitorGate(req).ok;
-
         // Visitor-specific in exactly one way, so the header follows the gate.
-        // Same rule and same reasoning as `viewFor` in `routes/bang.js`:
-        // `no-store` rather than a short TTL, so that passing the gate redraws
-        // the page uncovered at once instead of a few minutes later.
-        res.set('Cache-Control', covered ? 'private, no-store' : 'public, max-age=300');
-        res.json(covered ? coverDeep(payload) : payload);
+        // Both answers come from one call for the reason written on it in
+        // `server/media/view.js`.
+        const view = viewFor(req);
+
+        res.set('Cache-Control', view.cacheControl);
+        res.json(view.covered ? coverDeep(payload) : payload);
     });
 
     app.use('/api/aebn', router);

@@ -646,6 +646,119 @@ test('a viewer is not a creator page', async () => {
     assert.equal((await anon.fetch('/api/creators/made-up')).status, 404);
 });
 
+/* --------------------------------------------------------- covered avatars -- */
+
+/**
+ * A creator's own photograph goes through the censor for a visitor who has
+ * not passed the age gate, exactly as a partner's boxcover does.
+ *
+ * These live here rather than with the censor tests because what they are
+ * really guarding is a default. `profileView` covers only when asked, so the
+ * failure mode is a *new* public surface calling it and leaving the flag off
+ * — which reads as fine, passes every other test, and puts an uncovered
+ * photograph in front of somebody who has not verified.
+ */
+
+const OREGON = { 'x-geo-country': 'US', 'x-geo-region': 'OR' };
+
+/** A browser through the gate in a state where a click is enough. */
+async function attested(agent) {
+    const gate = await agent.fetch('/api/identity/gate', { headers: OREGON });
+
+    await agent.fetch('/api/identity/gate/attest', {
+        method: 'POST',
+        headers: OREGON,
+        body: JSON.stringify({
+            confirmed: true,
+            version: gate.body?.jurisdiction?.attestation?.version
+        })
+    });
+
+    return agent;
+}
+
+test("an unverified visitor gets a creator's avatar covered, and no way round it", async () => {
+    const creator = makeAgent();
+    await creator.register('creator');
+    profiles.update(creator.id, { avatarKey: 'avatar/mine.jpg' });
+
+    const anon = makeAgent();
+    const { body } = await anon.fetch(`/api/creators/${creator.id}`);
+    const url = body.profile.avatarUrl;
+
+    assert.ok(url.startsWith('/api/media?'), `went straight to storage: ${url}`);
+    assert.equal(url.includes('avatar/mine.jpg'), false, 'the key is not in the URL in the clear');
+});
+
+test('and the real one once they are through the gate', async () => {
+    const creator = makeAgent();
+    await creator.register('creator');
+    profiles.update(creator.id, { avatarKey: 'avatar/mine.jpg' });
+
+    const visitor = await attested(makeAgent());
+    const { body } = await visitor.fetch(`/api/creators/${creator.id}`, { headers: OREGON });
+
+    assert.equal(body.profile.avatarUrl.startsWith('/api/media?'), false);
+    assert.ok(body.profile.avatarUrl.includes('avatar/mine.jpg'));
+});
+
+test('the live list covers avatars too, not just the profile page', async () => {
+    readiness.clear();
+
+    const creator = makeAgent();
+    await creator.register('creator');
+    profiles.update(creator.id, { avatarKey: 'avatar/listed.jpg' });
+
+    const session = goLive(creator.id);
+    await creator.fetch('/api/live/checks/standard', {
+        method: 'POST',
+        body: JSON.stringify({ confirmed: true })
+    });
+    session.close();
+
+    const anon = makeAgent();
+    const { body } = await anon.fetch('/api/creators/live');
+    const listed = body.creators.find((c) => c.id === creator.id);
+
+    assert.ok(listed, JSON.stringify(body));
+    assert.ok(listed.avatarUrl.startsWith('/api/media?'));
+});
+
+test('a channel page covers the avatar on it', async () => {
+    const creator = makeAgent();
+    await creator.register('creator');
+    profiles.update(creator.id, { avatarKey: 'avatar/channel.jpg' });
+
+    // A literal rather than something derived from the id: channel names are
+    // 3 to 30 characters of lowercase, digits and hyphens, and an id is not
+    // guaranteed to fit that.
+    const slug = 'covered-avatar-channel';
+
+    const claimed = await creator.fetch('/api/profile/names', {
+        method: 'POST',
+        body: JSON.stringify({ slug })
+    });
+
+    assert.equal(claimed.status, 201, JSON.stringify(claimed.body));
+
+    const anon = makeAgent();
+    const { body } = await anon.fetch(`/api/channels/${slug}`);
+
+    assert.ok(body.channel.avatarUrl.startsWith('/api/media?'), JSON.stringify(body));
+});
+
+test('a covered profile response is never shared-cacheable', async () => {
+    // The header has to move with the body or a proxy hands one visitor's
+    // view to the next — which, in the direction that matters, is a verified
+    // visitor's uncovered picture served to somebody who is not.
+    const creator = makeAgent();
+    await creator.register('creator');
+
+    const res = await fetch(`${base}/api/creators/${creator.id}`);
+
+    assert.match(res.headers.get('cache-control') ?? '', /no-store/);
+});
+
 /* ------------------------------------------------------------ the invariant -- */
 
 test('every credit in existence came from a purchase or an adjustment', () => {

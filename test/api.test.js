@@ -350,8 +350,38 @@ test('unpublished titles never appear in the public catalog', async () => {
     assert.equal(items.some((i) => i.title === "Alice's Private Cut"), false);
 });
 
-test('the public catalog is cacheable', async () => {
+/**
+ * Shared-cacheable only once the artwork in it is the same for everybody.
+ *
+ * It used to be unconditional, and that was right while every item carried
+ * the same poster for every visitor. Now an unverified visitor's posters are
+ * covered, so an `s-maxage` copy of their catalogue is one a proxy would hand
+ * to a verified one and the other way round — see `coverOwnArtwork` in
+ * `server/library.js`.
+ */
+test('a covered catalog is never shared-cacheable', async () => {
     const res = await fetch(`${base}/api/catalog`);
+    const cacheControl = res.headers.get('cache-control') ?? '';
+
+    assert.doesNotMatch(cacheControl, /s-maxage/);
+    assert.match(cacheControl, /no-store/);
+});
+
+test('the catalog is cacheable once the visitor is through the gate', async () => {
+    const agent = makeAgent();
+    const geo = { 'x-geo-country': 'US', 'x-geo-region': 'OR' };
+
+    const gate = await agent.fetch('/api/identity/gate', { headers: geo });
+    await agent.fetch('/api/identity/gate/attest', {
+        method: 'POST',
+        headers: geo,
+        body: JSON.stringify({
+            confirmed: true,
+            version: gate.body?.jurisdiction?.attestation?.version
+        })
+    });
+
+    const res = await agent.fetch('/api/catalog', { headers: geo });
     assert.match(res.headers.get('cache-control') ?? '', /s-maxage/);
 });
 

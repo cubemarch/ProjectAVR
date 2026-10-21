@@ -4117,15 +4117,16 @@ body.is-profile {
    opens, and deliberately not dismissible: it is the standing explanation for
    why every image on the page is a mosaic.
 
-   `z-index: 94` is one under `.age-gate` and above the performer card at 90,
-   so opening the dialog from it draws over it rather than beside it. */
+   `z-index: 93` is under `.age-gate` at 95 and the image interstitial at 94,
+   and above the performer card at 90, so opening either dialog from it draws
+   over it rather than beside it. */
 
 .age-banner {
     position: fixed;
     right: 0;
     bottom: 0;
     left: 0;
-    z-index: 94;
+    z-index: 93;
     background: rgba(10, 10, 16, 0.97);
     border-top: 1px solid rgba(255, 255, 255, 0.14);
     box-shadow: 0 -8px 32px rgba(0, 0, 0, 0.6);
@@ -4178,6 +4179,79 @@ body.has-age-banner {
     body.has-age-banner {
         padding-bottom: 116px;
     }
+}
+
+/* ---------------------------------------------------- image interstitial --
+   Shown when a visitor clicks a covered picture. `z-index: 94` sits directly
+   under `.age-gate` at 95 and over the banner at 93: over the banner because
+   the two offer the same gate and the standing strip should not poke through
+   this backdrop, and under the dialog because nothing outranks the thing
+   standing between a minor and the page. The two are never on screen together
+   anyway — the verify button removes this before opening that one — so the
+   ordering is an invariant rather than a layout.
+
+   Not `position: fixed` on the panel: the backdrop is the full-screen element
+   and the panel is centred in it, so a long jurisdiction name wraps rather
+   than pushing the buttons off a narrow screen. */
+
+.image-gate {
+    position: fixed;
+    inset: 0;
+    z-index: 94;
+    display: grid;
+    place-items: center;
+    padding: 24px;
+}
+
+.image-gate-backdrop {
+    position: absolute;
+    inset: 0;
+    background: rgba(4, 4, 8, 0.82);
+    backdrop-filter: blur(6px);
+}
+
+.image-gate-panel {
+    position: relative;
+    width: min(420px, 100%);
+    padding: 24px;
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    border-radius: 12px;
+    background: rgba(14, 14, 20, 0.98);
+    box-shadow: 0 24px 64px rgba(0, 0, 0, 0.7);
+    text-align: center;
+}
+
+.image-gate-title {
+    margin: 0 0 8px;
+    font-size: 19px;
+    color: #fff;
+}
+
+.image-gate-text {
+    margin: 0 0 20px;
+    font-size: 14px;
+    line-height: 1.5;
+    color: var(--text-dim, #c9c8d4);
+}
+
+.image-gate-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+/* The decline is a real, legible button and not a grey whisper under the
+   primary one. It is an outcome this gate supports rather than a mistake —
+   see the head of `src/ui/image-gate.js`. */
+.image-gate-actions .btn {
+    width: 100%;
+}
+
+.image-gate-note {
+    margin: 16px 0 0;
+    font-size: 12px;
+    line-height: 1.45;
+    color: var(--text-dim, #86858f);
 }
 
 body.age-gate-open {
@@ -4837,6 +4911,45 @@ fieldset.age-gate-methods {
     width: 100%;
     height: 100%;
     border: 0;
+}
+
+/* What fills the stage before the age gate is passed. The still underneath is
+   the same mosaiced thumbnail the card was showing, so this reads as "the room
+   you clicked, still covered" rather than as an error. */
+.cam-theatre-gate {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    place-items: center;
+}
+
+.cam-theatre-still {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+
+    /* Covered already — this is on top of that, not instead of it. A live
+       room's thumbnail is a few seconds old at best and the mosaic was drawn
+       for a frame that has moved on. */
+    filter: blur(14px) brightness(0.45);
+    transform: scale(1.08);
+}
+
+.cam-theatre-ask {
+    position: relative;
+    max-width: 380px;
+    padding: 20px;
+    text-align: center;
+}
+
+.cam-theatre-ask p {
+    margin: 0 0 16px;
+    font-size: 14px;
+    line-height: 1.5;
+    color: #e8e7f0;
+    text-shadow: 0 1px 8px rgba(0, 0, 0, 0.9);
 }
 
 .cam-theatre-foot {

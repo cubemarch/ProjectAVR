@@ -2,8 +2,8 @@ import express from 'express';
 
 import { rateLimit } from '../auth/middleware.js';
 import { TtlCache } from '../cache.js';
-import { visitorGate } from '../identity/visitor-gate.js';
 import { signedMediaUrl } from '../media/proxy.js';
+import { viewFor } from '../media/view.js';
 
 /**
  * Bang's affiliate catalogue, proxied.
@@ -388,24 +388,6 @@ function cover(items) {
     }));
 }
 
-/**
- * What this visitor's artwork should look like, and how it may be cached.
- *
- * The two answers come together because getting them apart is how a covered
- * payload ends up in a shared cache and is then handed to everybody. A
- * response that differs by visitor is `private`, and it is `no-store` rather
- * than short-lived so that passing the gate redraws the page as the real one
- * immediately instead of a few minutes later.
- */
-function viewFor(req) {
-    const covered = !visitorGate(req).ok;
-
-    return {
-        covered,
-        cacheControl: covered ? 'private, no-store' : 'public, max-age=300'
-    };
-}
-
 /* ---------------------------------------------------------------- fetching -- */
 
 /**
@@ -539,7 +521,7 @@ export function mountBang(app) {
             // Visitor-specific now, and only in one way: whether the artwork
             // is covered. That is enough to make an edge cache in front of
             // this wrong, so the header follows the gate rather than being
-            // fixed - see `viewFor`.
+            // fixed - see `viewFor` in `server/media/view.js`.
             res.set('Cache-Control', view.cacheControl);
             res.json({
                 configured: true,

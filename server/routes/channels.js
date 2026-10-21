@@ -5,6 +5,7 @@ import { reserveName, resolveChannel, unreserveName } from '../channels/index.js
 import { loadFullUser, requireRole } from '../auth/middleware.js';
 import { profileView } from './profiles.js';
 import { profiles, reservedSlugs } from '../db/index.js';
+import { viewFor } from '../media/view.js';
 
 /**
  * Channel pages: `/<name>`, the one address a creator can write on a poster.
@@ -58,10 +59,15 @@ export function mountChannels(app) {
         // "offline" is the failure the whole page exists to avoid.
         res.set('Cache-Control', 'no-store');
 
+        // Already `no-store` above, so only the avatar changes with the gate.
+        // A channel page answers to anybody and the picture on it is one a
+        // creator uploaded — see `avatarUrl` in `routes/profiles.js`.
         res.json({
             slug: found.slug,
             canonical: found.canonical,
-            channel: profileView(found.user, profiles.byId(found.user.id)),
+            channel: profileView(found.user, profiles.byId(found.user.id), {
+                covered: viewFor(req).covered
+            }),
             live: live ? describeSession(live) : null
         });
     });

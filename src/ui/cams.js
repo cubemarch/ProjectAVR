@@ -1,5 +1,6 @@
 import { icons } from './icons.js';
 import { AFFILIATE_LINK_REL } from '../catalog/affiliates.js';
+import { allowPlayback, playbackAllowed } from './video-gate.js';
 
 // Aliased, and it has to be. `track` is already the name of the `.cam-track`
 // element in two methods here, and an import shadowed by a local would fail
@@ -1093,6 +1094,12 @@ export class CamShelf {
      * The frame is **created on open and destroyed on close**, which is what
      * actually stops the stream. Hiding it leaves a live video decoding behind
      * a `display: none`.
+     *
+     * For a visitor who has not been through the age gate the frame is never
+     * created at all — see {@link _theatreGate}. The dialog still opens,
+     * because the interstitial in `ui/image-gate.js` promises that declining
+     * shows you the page you clicked with the covering still on, and this is
+     * that page.
      */
     _openTheatre(room, anchor) {
         this._closeTheatre();
@@ -1134,27 +1141,9 @@ export class CamShelf {
                 </p>
             </div>`;
 
-        const frame = document.createElement('iframe');
-        frame.src = room.embed;
-        frame.title = `${room.name}, live from Chaturbate`;
-        frame.allow = 'autoplay; fullscreen; encrypted-media; picture-in-picture';
-        frame.allowFullscreen = true;
-        frame.referrerPolicy = 'origin';
+        const stage = el.querySelector('.cam-theatre-stage');
+        stage.append(playbackAllowed() ? camFrame(room) : this._theatreGate(room, stage));
 
-        // `allow-top-navigation` is the one omitted on purpose, and it is the
-        // whole point of the attribute: a third-party frame that can navigate
-        // the top window can replace this site with anything. `allow-popups`
-        // plus `allow-popups-to-escape-sandbox` is what the player's own
-        // "join" links use instead, so they open a tab rather than nothing.
-        // `allow-same-origin` is required — their player stores session state
-        // — and it means this sandbox is a navigation guard, not a jail.
-        frame.setAttribute(
-            'sandbox',
-            'allow-scripts allow-same-origin allow-forms allow-popups ' +
-                'allow-popups-to-escape-sandbox allow-presentation'
-        );
-
-        el.querySelector('.cam-theatre-stage').append(frame);
         document.body.append(el);
         document.body.classList.add('cam-theatre-open');
 
@@ -1182,11 +1171,12 @@ export class CamShelf {
 
             if (event.key !== 'Tab') return;
 
-            // Focus trap. Only two things in here are focusable — close and
-            // the outbound link — so this is a two-element cycle rather than
-            // a general implementation, and the iframe is intentionally not
-            // in it: focus inside a cross-origin frame is the frame's to
-            // manage and Tab cannot be observed leaving it.
+            // Focus trap. Two or three things in here are focusable — close,
+            // the outbound link, and the verify button before the gate is
+            // passed — and the iframe is intentionally not among them: focus
+            // inside a cross-origin frame is the frame's to manage and Tab
+            // cannot be observed leaving it. Read from the DOM each time
+            // rather than captured, because passing the gate removes one.
             const stops = [...el.querySelectorAll('button, a[href]')];
             if (!stops.length) return;
 
@@ -1206,6 +1196,57 @@ export class CamShelf {
 
         this.theatre = el;
         el.querySelector('.cam-theatre-close')?.focus();
+    }
+
+    /**
+     * What the stage holds instead of the stream, before the gate is passed.
+     *
+     * The covered thumbnail rather than a black box, because the thumbnail is
+     * already mosaiced by `services/censor/` on its way through
+     * `/api/cams/thumb/` and showing it is the honest version of "this is the
+     * room you clicked". A still can be covered; a live stream cannot, which
+     * is the whole reason this stands here — `ui/video-gate.js` has the
+     * argument.
+     *
+     * The outbound link below it is untouched. Chaturbate runs its own gate
+     * and a visitor who would rather answer to them than to us may; refusing
+     * to show the link would not protect anybody, it would just cost the
+     * commission.
+     *
+     * @param {object} room
+     * @param {Element} stage The node to replace on success.
+     */
+    _theatreGate(room, stage) {
+        const el = document.createElement('div');
+        el.className = 'cam-theatre-gate';
+
+        el.innerHTML = `
+            <img class="cam-theatre-still" src="${escapeHtml(room.thumb)}" alt=""
+                 referrerpolicy="no-referrer" decoding="async">
+            <div class="cam-theatre-ask">
+                <p>Live video is not covered the way pictures are, so it does not
+                   play until we know you are 18 or older.</p>
+                <button type="button" class="btn btn-primary" data-verify>
+                    Confirm my age and watch
+                </button>
+            </div>`;
+
+        el.querySelector('[data-verify]').addEventListener('click', async (event) => {
+            // Or the dialog's own delegated handler reads this as a click on
+            // the backdrop and closes the thing that is about to show a video.
+            event.stopPropagation();
+
+            if (!(await allowPlayback('cam'))) return;
+
+            // The visitor may have closed the theatre while the gate was up,
+            // in which case there is nothing to put a stream into.
+            if (!stage.isConnected) return;
+
+            el.remove();
+            stage.append(camFrame(room));
+        });
+
+        return el;
     }
 
     _closeTheatre() {
@@ -1246,6 +1287,38 @@ export class CamShelf {
 
         this.onScreen.clear();
     }
+}
+
+/**
+ * The partner's player, sandboxed.
+ *
+ * Built here rather than inline so there is exactly one of these: it is
+ * created on first open and again when somebody passes the gate from inside
+ * the theatre, and two copies of a sandbox attribute is how one of them ends
+ * up missing a flag.
+ */
+function camFrame(room) {
+    const frame = document.createElement('iframe');
+    frame.src = room.embed;
+    frame.title = `${room.name}, live from Chaturbate`;
+    frame.allow = 'autoplay; fullscreen; encrypted-media; picture-in-picture';
+    frame.allowFullscreen = true;
+    frame.referrerPolicy = 'origin';
+
+    // `allow-top-navigation` is the one omitted on purpose, and it is the
+    // whole point of the attribute: a third-party frame that can navigate
+    // the top window can replace this site with anything. `allow-popups`
+    // plus `allow-popups-to-escape-sandbox` is what the player's own
+    // "join" links use instead, so they open a tab rather than nothing.
+    // `allow-same-origin` is required — their player stores session state
+    // — and it means this sandbox is a navigation guard, not a jail.
+    frame.setAttribute(
+        'sandbox',
+        'allow-scripts allow-same-origin allow-forms allow-popups ' +
+            'allow-popups-to-escape-sandbox allow-presentation'
+    );
+
+    return frame;
 }
 
 function escapeHtml(str) {

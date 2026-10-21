@@ -65,6 +65,33 @@ export const CENSOR = Object.freeze([
 export const CENSOR_IDS = Object.freeze(CENSOR.map((name) => CLASSES.indexOf(name)));
 
 /**
+ * The subset held to a lower bar than the rest.
+ *
+ * These three are the ones the brief is actually about, and they are also the
+ * three the model is worst at. They are small, they are frequently occluded by
+ * a hand or a thigh, and at 360x270 they can be a dozen pixels across — so the
+ * score they come back with is low even when a person looking at the tile
+ * would call it obvious. Measured on 30 live cam thumbnails on 2026-10-20,
+ * plainly visible male genitalia scored 0.022 and 0.024 against a `CONF` of
+ * 0.18; breasts and buttocks, which are larger and rarely occluded, scored an
+ * order of magnitude higher on the same frames.
+ *
+ * So the threshold is split rather than lowered across the board. Dropping
+ * `CONF` far enough to catch those would have mosaiced clothed promotional art
+ * throughout the catalogue; dropping it only here cost one boxcover out of 51
+ * and raised the number of boxes placed on the cam shelf by three fifths. See
+ * {@link GENITAL_CONF} in `detect.js` for the measurement.
+ */
+export const GENITALS = Object.freeze([
+    'FEMALE_GENITALIA_EXPOSED',
+    'MALE_GENITALIA_EXPOSED',
+    'ANUS_EXPOSED'
+]);
+
+/** Indices of {@link GENITALS} within {@link CLASSES}, resolved once. */
+export const GENITAL_IDS = Object.freeze(GENITALS.map((name) => CLASSES.indexOf(name)));
+
+/**
  * Refuse to start if the transcription above has drifted from the model.
  *
  * Called at boot with the output of a single inference over a committed

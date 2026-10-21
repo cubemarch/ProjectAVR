@@ -19,7 +19,7 @@ import { decode, nms, _internals } from '../src/detect.js';
  * See `scripts/verify-labels.js`.
  */
 
-const { SIDE, CONF, WHOLE_TILE } = _internals;
+const { SIDE, CONF, GENITAL_CONF, WHOLE_TILE } = _internals;
 
 /**
  * Build a `[1, 4 + classes, anchors]` tensor, channel-major.
@@ -122,9 +122,12 @@ test('a face is detected and not covered', () => {
 });
 
 test('below threshold is not a box, but is still remembered', () => {
+    // Deliberately a breast and not genitalia: the three genital classes are
+    // held to GENITAL_CONF, which is far under CONF, so a score a hair below
+    // CONF is a *placed box* for them and this case does not exist.
     const score = CONF - 0.01;
     const { raw, dims } = tensor(10, [
-        { at: 4, box: [100, 100, 20, 20], scores: { MALE_GENITALIA_EXPOSED: score } }
+        { at: 4, box: [100, 100, 20, 20], scores: { FEMALE_BREAST_EXPOSED: score } }
     ]);
 
     const { boxes, bestCensorable, whole } = decode(raw, dims, FLAT);
@@ -145,7 +148,7 @@ test('the band between confidently-clean and a placed box is covered', () => {
     // wrong in the safe direction.
     const at = (score) => {
         const { raw, dims } = tensor(10, [
-            { at: 3, box: [100, 100, 20, 20], scores: { FEMALE_GENITALIA_EXPOSED: score } }
+            { at: 3, box: [100, 100, 20, 20], scores: { FEMALE_BREAST_EXPOSED: score } }
         ]);
         return decode(raw, dims, FLAT);
     };
@@ -162,6 +165,72 @@ test('the band between confidently-clean and a placed box is covered', () => {
     assert.equal(placed.boxes.length, 1, 'over CONF it is a box');
 
     assert.ok(WHOLE_TILE < CONF, 'the band has to exist at all');
+});
+
+test('genitalia clear a far lower bar than anything else', () => {
+    // The reason this exists: on 30 live cam thumbnails, plainly visible male
+    // genitalia scored 0.022 and 0.024 while the flat threshold was 0.18, and
+    // four tiles were served with nothing covered. Breasts on the same frames
+    // scored in the tenths. One threshold cannot serve both.
+    const score = (label, value) => {
+        const { raw, dims } = tensor(10, [
+            { at: 2, box: [100, 100, 24, 24], scores: { [label]: value } }
+        ]);
+        return decode(raw, dims, FLAT).boxes;
+    };
+
+    assert.ok(GENITAL_CONF < CONF, 'the whole point is that the two differ');
+
+    const weak = (CONF + GENITAL_CONF) / 2;
+
+    for (const label of ['FEMALE_GENITALIA_EXPOSED', 'MALE_GENITALIA_EXPOSED', 'ANUS_EXPOSED']) {
+        assert.equal(score(label, weak).length, 1, `${label} is placed at ${weak.toFixed(3)}`);
+    }
+
+    // And the lower bar is scoped to those three. Dropping it for everything
+    // was measured and rejected — it mosaics clothed promotional art.
+    for (const label of ['FEMALE_BREAST_EXPOSED', 'BUTTOCKS_EXPOSED']) {
+        assert.deepEqual(score(label, weak), [], `${label} still needs CONF`);
+    }
+
+    // Under its own bar it is still not a box.
+    assert.deepEqual(score('MALE_GENITALIA_EXPOSED', GENITAL_CONF - 0.005), [], 'the floor is a floor');
+});
+
+test('a censorable part is covered even when it loses its own anchor', () => {
+    // The shape that leaked: the model reads the region as mostly torso and
+    // also, less confidently, as a penis. Taking the anchor's winning class
+    // and then asking whether it is censorable throws the second reading
+    // away, which at thumbnail scale is where small parts live — inside
+    // larger ones that score better.
+    const { raw, dims } = tensor(10, [
+        {
+            at: 7,
+            box: [120, 140, 30, 30],
+            scores: { BELLY_EXPOSED: 0.62, MALE_GENITALIA_EXPOSED: 0.09 }
+        }
+    ]);
+
+    const { boxes } = decode(raw, dims, FLAT);
+
+    assert.equal(boxes.length, 1, 'the runner-up still places a box');
+    assert.equal(boxes[0].label, 'MALE_GENITALIA_EXPOSED', 'and it is labelled as what it covers');
+    assert.equal(boxes[0].score.toFixed(2), '0.09', 'carrying its own score, not the belly\'s');
+});
+
+test('two censorable classes on one anchor do not become two boxes', () => {
+    // The cost of scoring every class independently is bounded by NMS, which
+    // suppresses on overlap without regard to label. Without that, a low bar
+    // multiplies boxes per anchor rather than finding more parts.
+    const { raw, dims } = tensor(10, [
+        {
+            at: 1,
+            box: [100, 100, 40, 40],
+            scores: { FEMALE_GENITALIA_EXPOSED: 0.3, ANUS_EXPOSED: 0.2 }
+        }
+    ]);
+
+    assert.equal(decode(raw, dims, FLAT).boxes.length, 1, 'one anchor is one box');
 });
 
 test('confident but unplaceable covers the whole frame', () => {

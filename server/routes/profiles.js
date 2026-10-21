@@ -5,6 +5,8 @@ import { Readable } from 'node:stream';
 import { profiles, creatorSettings, users, channelSlugs, reservedSlugs } from '../db/index.js';
 import { requireAuth, requireRole, rateLimit, loadFullUser } from '../auth/middleware.js';
 import { getStorage } from '../storage/index.js';
+import { signedStorageUrl } from '../media/proxy.js';
+import { viewFor } from '../media/view.js';
 import { readiness } from '../live/readiness.js';
 import { sessions } from '../live/sessions.js';
 import { rooms } from '../live/rooms.js';
@@ -108,20 +110,36 @@ function settingsView(row) {
     };
 }
 
-/** The avatar as a URL the browser can use, or null. */
-export function avatarUrl(profileRow) {
-    return profileRow?.avatar_key ? getStorage().deliveryUrl(profileRow.avatar_key) : null;
+/**
+ * The avatar as a URL the browser can use, or null.
+ *
+ * `covered` routes it through `/api/media` instead of straight at storage. An
+ * avatar is a photograph a creator chose and uploaded, and nothing has looked
+ * at it — so for a visitor who has not passed the gate it goes the same way a
+ * partner's boxcover does. See `server/media/proxy.js`.
+ *
+ * The default is uncovered because most callers here are a signed-in person
+ * looking at their own profile. The surfaces that face a visitor pass the
+ * flag — which makes a new one forgetting it the failure mode worth testing,
+ * and the covered-avatar block in `test/credits.test.js` is what does.
+ */
+export function avatarUrl(profileRow, { covered = false } = {}) {
+    const key = profileRow?.avatar_key;
+
+    if (!key) return null;
+
+    return covered ? signedStorageUrl(key) : getStorage().deliveryUrl(key);
 }
 
 /** The shape every profile is returned in, self or otherwise. */
-export function profileView(user, profileRow) {
+export function profileView(user, profileRow, { covered = false } = {}) {
     return {
         id: user.id,
         name: user.display_name ?? user.name ?? null,
         role: user.role,
         tagline: profileRow?.tagline ?? null,
         bio: profileRow?.bio ?? null,
-        avatarUrl: avatarUrl(profileRow)
+        avatarUrl: avatarUrl(profileRow, { covered })
     };
 }
 
@@ -420,6 +438,9 @@ export function mountProfiles(app) {
         const profileRows = profiles.forUsers(ids);
         const settingRows = creatorSettings.forUsers(ids);
 
+        // Already `no-store` below, so only the body changes with the gate.
+        const view = viewFor(req);
+
         const creators = ids
             .map((id) => {
                 const user = users.byId(id);
@@ -429,7 +450,7 @@ export function mountProfiles(app) {
                 const pricing = creatorSettings.publicView(settingRows.get(id));
 
                 return {
-                    ...profileView(user, profileRows.get(id)),
+                    ...profileView(user, profileRows.get(id), { covered: view.covered }),
                     pricing,
                     status: session ? 'live' : 'ready',
                     live: session
@@ -471,9 +492,15 @@ export function mountProfiles(app) {
             return;
         }
 
-        res.set('Cache-Control', 'public, max-age=30');
+        // The avatar on this page is a creator's own photograph and this
+        // route answers to anybody, so it follows the gate — and the header
+        // follows it too, or a shared cache hands one visitor's view to the
+        // next. See `server/media/view.js`.
+        const view = viewFor(req);
+
+        res.set('Cache-Control', view.cacheControl);
         res.json({
-            profile: profileView(user, profiles.byId(user.id)),
+            profile: profileView(user, profiles.byId(user.id), { covered: view.covered }),
             pricing: creatorSettings.publicView(creatorSettings.byId(user.id))
         });
     });
