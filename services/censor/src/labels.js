@@ -65,9 +65,9 @@ export const CENSOR = Object.freeze([
 export const CENSOR_IDS = Object.freeze(CENSOR.map((name) => CLASSES.indexOf(name)));
 
 /**
- * The subset held to a lower bar than the rest.
+ * The subset held to the lowest of the three bars.
  *
- * These three are the ones the brief is actually about, and they are also the
+ * These three are the ones the brief is most about, and they are also the
  * three the model is worst at. They are small, they are frequently occluded by
  * a hand or a thigh, and at 360x270 they can be a dozen pixels across — so the
  * score they come back with is low even when a person looking at the tile
@@ -77,10 +77,13 @@ export const CENSOR_IDS = Object.freeze(CENSOR.map((name) => CLASSES.indexOf(nam
  * order of magnitude higher on the same frames.
  *
  * So the threshold is split rather than lowered across the board. Dropping
- * `CONF` far enough to catch those would have mosaiced clothed promotional art
+ * `CONF` far enough to catch these would have mosaiced clothed promotional art
  * throughout the catalogue; dropping it only here cost one boxcover out of 51
- * and raised the number of boxes placed on the cam shelf by three fifths. See
- * {@link GENITAL_CONF} in `detect.js` for the measurement.
+ * and raised the number of boxes placed on the cam shelf by three fifths.
+ *
+ * {@link BREAST} is the second split, added 2026-10-21, and the reason this
+ * list is "the lowest bar" and not "the low bar". See `GENITAL_CONF` and
+ * `BREAST_CONF` in `detect.js` for what each one costs, measured.
  */
 export const GENITALS = Object.freeze([
     'FEMALE_GENITALIA_EXPOSED',
@@ -90,6 +93,22 @@ export const GENITALS = Object.freeze([
 
 /** Indices of {@link GENITALS} within {@link CLASSES}, resolved once. */
 export const GENITAL_IDS = Object.freeze(GENITALS.map((name) => CLASSES.indexOf(name)));
+
+/**
+ * The one class on a bar of its own, between the two above.
+ *
+ * Not folded into {@link GENITALS}, and not left with the rest, because it is
+ * neither. The three above are the classes the model scores in the hundredths
+ * when they are plainly visible; breasts it scores in the tenths, so the bar
+ * that rescues a vulva would, applied here, start covering t-shirts. But the
+ * brief names breasts too, and at `CONF` the detector was walking past sheer
+ * tops and lingerie it had scored perfectly well. See `BREAST_CONF` in
+ * `detect.js` for what each step of that bar costs, measured.
+ */
+export const BREAST = 'FEMALE_BREAST_EXPOSED';
+
+/** Index of {@link BREAST} within {@link CLASSES}, resolved once. */
+export const BREAST_ID = CLASSES.indexOf(BREAST);
 
 /**
  * Refuse to start if the transcription above has drifted from the model.

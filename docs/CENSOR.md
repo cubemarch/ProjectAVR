@@ -229,9 +229,10 @@ Read that table against the current numbers and the change is visible: at
 0.075 the 0.088 cover is now mosaiced as uncertain rather than shown, and the
 cleared population shrinks to the 24 images under the floor. That is the
 intended direction. What the table no longer establishes is where the
-*box-placing* boundary sits, because `CONF` moved to 0.15 and the three
-genital classes moved to 0.03 — the sample has not been re-scored at those
-numbers, and the comparison that was run instead is in the next section.
+*box-placing* boundary sits, because `CONF` moved to 0.15 and the genital
+classes to 0.03 and then 0.015 — the sample has not been re-scored at those
+numbers, and the comparisons that were run instead are in the next two
+sections.
 
 ### The split threshold
 
@@ -248,7 +249,7 @@ Lowering the single threshold to reach them was measured and rejected:
 | thresholds | cam boxes | covers shown | mean cam area |
 | --- | --- | --- | --- |
 | 0.18 flat (was) | 42 | 25 | 17% |
-| **0.15 / 0.03 (this)** | **67** | **24** | **21%** |
+| **0.15 / 0.03** | **67** | **24** | **21%** |
 | 0.08 flat | 58 | 19 | – |
 
 A flat 0.08 costs six of the 51 catalogue boxcovers — clothed promotional art,
@@ -260,6 +261,58 @@ The area column is the one that matters. A threshold low enough to scatter
 boxes everywhere would cover the frame while reporting that it placed boxes,
 and a count alone cannot tell that apart from good recall. Four points of
 extra area for three fifths more boxes is boxes landing on things.
+
+### Three bars, and the measurement mistake that found the third
+
+On 2026-10-21 the bars were lowered again, and the interesting part is not the
+new numbers but why the previous ones were wrong.
+
+The sweep that set `0.15 / 0.03` moved both numbers **together**. It reported
+that going lower covered dozens more pictures and that most of them were
+clothed, and the obvious reading — the low bar is as low as it can go — was
+wrong. `WHOLE_TILE` defaults to `CONF / 2`, so every step down in `CONF` had
+also been dropping the whole-frame fallback, and the clothed false positives
+were whole-frame mosaics fired by that, not boxes placed by either bar. The
+rig could not see this because it never held one number still.
+
+Re-run over **518 uncovered partner images** with each bar moved alone and
+`WHOLE_TILE` pinned whenever `CONF` moved — `services/censor/scripts/sweep-thresholds.js`,
+which drives the real `decode` rather than a copy of its arithmetic — the
+picture is different:
+
+- **`CONF` is not the lever.** Dropping it from 0.15 to 0.06 places 71 more
+  buttocks boxes and covers **zero** images that were not already covered. It
+  adds mosaic to frames that are already mosaiced. It stays at 0.15.
+- **The genital bar goes to 0.015.** At 0.015 it covers five more images, all
+  underwear and swimwear crotches. At 0.01 it starts covering men's headshots.
+- **Breasts get a bar of their own, at 0.03.** This is the biggest single
+  lever on this corpus and it did not exist before: 17 more images covered —
+  sheer tops, lingerie, topless — and it is the part of the rule that was
+  least well served. At 0.02 the additions include a man in a white
+  button-down and a woman in a plain t-shirt, so 0.03 is the floor.
+- **Buttocks stay on `CONF`.** Not in the rule, most often fired by a pair of
+  jeans, and the sweep says moving them buys nothing.
+
+| setting | boxes | whole-frame | shown uncovered | mean area |
+| --- | --- | --- | --- | --- |
+| 0.18 flat (was deployed) | 1078 | 10 | 130 | 12.2% |
+| 0.15 / 0.03 | 1360 | 7 | 123 | 13.0% |
+| **0.15 / 0.015 / 0.03** | **1747** | **2** | **101** | **13.3%** |
+
+Two columns are worth reading twice. **Whole-frame covers went down**, from
+seven to two: a whole-frame mosaic is what this service does when it is sure
+something is there and cannot say where, so a bar low enough to place the box
+is a bar that stops it having to destroy the picture instead. And **mean
+covered area moved three tenths of a point while 22 more images became
+covered** — the extra boxes are landing on things. Scattering would have shown
+up here as area climbing with nothing changing hands.
+
+There is no ground truth corpus here, so none of this is precision or recall
+and the script does not pretend otherwise. What it reports is the delta, and
+the decisive artifact is the contact sheet of newly-covered images that a
+person opens and looks at. Forty more covered images is good if they are forty
+pictures of genitals and bad if they are forty clothed box covers, and only
+eyes can tell those apart.
 
 ### Fail-closed is not free, and the first time it fired it cost three fifths of a page
 
@@ -535,8 +588,9 @@ All in `services/censor/src/`:
 
 | | | |
 | --- | --- | --- |
-| `CONF` | `0.15` | box threshold for fifteen of the eighteen classes; low on purpose, recall over precision |
-| `GENITAL_CONF` | `0.03` | and for the three in `GENITAL_IDS`, which the model is measurably weak on |
+| `CONF` | `0.15` | box threshold for fourteen of the eighteen classes; low on purpose, recall over precision |
+| `BREAST_CONF` | `0.03` | and for `FEMALE_BREAST_EXPOSED` alone, which at `CONF` walked past sheer tops |
+| `GENITAL_CONF` | `0.015` | and for the three in `GENITAL_IDS`, which the model is measurably weak on |
 | `WHOLE_TILE` | `CONF / 2` | confident-but-unplaceable → cover everything |
 | `PAD` | `1.22` | margin on every box before drawing |
 | `ELLIPSE_FIT` | `√2` | so a circle *circumscribes* its box instead of fitting inside it |
@@ -544,6 +598,12 @@ All in `services/censor/src/`:
 
 The asymmetry to keep in mind while tuning: a false positive mosaics a
 shoulder, and a false negative is the thing this exists to prevent.
+
+Do not change one of the three bars by reasoning about it. Run
+`scripts/sweep-thresholds.js` over a few hundred real images, move **one**
+number at a time — pinning `WHOLE_TILE` by hand if the one you are moving is
+`CONF` — and open the contact sheet it writes. Skipping that is how breasts
+spent a day on the wrong threshold.
 
 Two caching numbers in `server/media/censor.js` rather than the service:
 

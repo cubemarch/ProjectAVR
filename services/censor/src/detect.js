@@ -1,6 +1,6 @@
 import { createRequire } from 'node:module';
 
-import { CLASSES, CENSOR_IDS, GENITAL_IDS } from './labels.js';
+import { CLASSES, CENSOR_IDS, GENITAL_IDS, BREAST_ID } from './labels.js';
 
 /**
  * Both native modules are resolved on first use rather than imported.
@@ -56,32 +56,95 @@ const CONF = 0.15;
  * On the same images breasts and buttocks scored in the tenths. The detector
  * is not uniformly weak; it is weak on exactly the part the brief names.
  *
- * Lowering `CONF` to reach them was measured and rejected. At 0.08 across the
- * board, six of the 51 catalogue boxcovers that are currently shown get
- * covered instead — clothed promotional art, mosaiced, for every unverified
- * visitor. Splitting the threshold costs one, because this bar only applies
- * to three of the eighteen classes and those three almost never fire on a
- * clothed photograph.
+ * Lowering `CONF` to reach them was measured and rejected, and remeasured and
+ * rejected again on 2026-10-21 once the bars were properly separated: with
+ * breasts moved to {@link BREAST_CONF}, dropping `CONF` from 0.15 to 0.06
+ * covers **zero** additional pictures out of 518. All it does is add buttocks
+ * boxes to frames that were already covered. It is not the lever. This is.
  *
- * Measured over 81 images (51 boxcovers, 30 cam thumbnails), 2026-10-20:
+ * ## Why 0.015 and not lower
  *
- * | thresholds            | cam boxes | covers shown | mean cam area |
- * | --------------------- | --------- | ------------ | ------------- |
- * | 0.18 flat (was)       |        42 |           25 |           17% |
- * | 0.15 / 0.03 (this)    |        67 |           24 |           21% |
- * | 0.08 flat             |        58 |           19 |             - |
+ * 0.01 is where the model starts calling men's faces genitals. Stepping this
+ * bar alone over 518 uncovered partner images on 2026-10-21, with the other
+ * two pinned so every difference is attributable to this number:
  *
- * The area column is the check that matters: a threshold low enough to
- * scatter boxes everywhere would cover the frame while reporting that it
- * placed boxes, and the count alone cannot tell that apart from good recall.
- * Four points of extra area for three fifths more boxes is boxes landing on
- * things, not noise.
+ * | this bar | genital boxes | newly covered | what the new ones are      |
+ * | -------- | ------------- | ------------- | -------------------------- |
+ * | 0.03     |           727 |             — | baseline                   |
+ * | 0.02     |           837 |            +1 | clean                      |
+ * | 0.015    |           924 |            +5 | all crotch regions, clean  |
+ * | 0.01     |          1033 |            +7 | two men's headshots        |
+ * | 0.005    |          1380 |           +16 | worse                      |
+ *
+ * So: 0.015. The five it gains there are underwear and swimwear crotches —
+ * the exact miss the cam sampling above found — and the first false positive
+ * is one step further down.
  */
-const GENITAL_CONF = 0.03;
+const GENITAL_CONF = 0.015;
 
-/** The bar a given class has to clear. */
-function barFor(id) {
-    return GENITAL_IDS.includes(id) ? GENITAL_CONF : CONF;
+/**
+ * The bar for `FEMALE_BREAST_EXPOSED`, between the other two.
+ *
+ * ## Why breasts are not on either of the other numbers
+ *
+ * They were on `CONF` until 2026-10-21, and that was measured wrong rather
+ * than reasoned wrong: the sweep that set it moved `CONF` and `GENITAL_CONF`
+ * together, so a change it attributed to the breast bar had in fact come from
+ * the whole-frame fallback dropping with `CONF`. Separating the two showed the
+ * breast bar is the single biggest lever on this corpus, and that it has its
+ * own floor, nowhere near the other two.
+ *
+ * Over the same 518 images, this bar alone, the other two pinned:
+ *
+ * | this bar | breast boxes | newly covered | what the new ones are         |
+ * | -------- | ------------ | ------------- | ----------------------------- |
+ * | 0.15     |          466 |             — | baseline, breasts on `CONF`   |
+ * | 0.05     |          577 |            +6 | sheer and lingerie            |
+ * | 0.03     |          659 |           +17 | sheer, lingerie, topless      |
+ * | 0.02     |          746 |           +31 | a clothed man in a shirt      |
+ * | 0.015    |          816 |           +38 | worse                         |
+ *
+ * 0.03 is the floor. One step down and the additions include a man in a white
+ * button-down, a woman in a plain t-shirt and a sundress on a road — clothed
+ * promotional art, which is the failure this whole file is written to avoid.
+ *
+ * `BUTTOCKS_EXPOSED` deliberately stays on `CONF`. It is not in the brief, it
+ * is the class most often fired by a pair of jeans, and the sweep says moving
+ * it buys nothing: `CONF` at 0.06 places 71 more buttocks boxes and covers no
+ * image that was not already covered.
+ *
+ * ## What the three bars together do
+ *
+ * | setting                  | boxes | whole-frame | shown | mean area |
+ * | ------------------------ | ----- | ----------- | ----- | --------- |
+ * | 0.18 flat (was deployed) |  1078 |          10 |   130 |     12.2% |
+ * | 0.15 / 0.03              |  1360 |           7 |   123 |     13.0% |
+ * | 0.15 / 0.015 / 0.03      |  1747 |           2 |   101 |     13.3% |
+ *
+ * Two columns are worth reading twice. The whole-frame count went *down*, not
+ * up: a whole-frame mosaic is what this service does when it is sure something
+ * is there and cannot say where, so a bar low enough to place the box is a bar
+ * that stops it having to destroy the picture instead. And mean covered area
+ * moved three tenths of a point while 22 more images became covered — the
+ * extra boxes are landing on things. A bar low enough to scatter would have
+ * shown up here as area climbing with no images changing hands.
+ */
+const BREAST_CONF = 0.03;
+
+/**
+ * The bar a given class has to clear.
+ *
+ * Three tiers, not a global threshold, because the model's confidence is not
+ * calibrated the same way across classes and the brief does not weight them
+ * the same either. Which class sits on which number is a measured decision,
+ * re-measured whenever one of them moves; `scripts/sweep-thresholds.js` is the
+ * measurement and the tables above are its output. Production passes nothing
+ * and gets the three constants.
+ */
+function barFor(id, conf, genitalConf, breastConf) {
+    if (GENITAL_IDS.includes(id)) return genitalConf;
+    if (id === BREAST_ID) return breastConf;
+    return conf;
 }
 
 /** Boxes overlapping more than this are the same part seen twice. */
@@ -221,8 +284,37 @@ export function toTensor(data) {
  * position in a photograph is known in advance, so they are the only
  * evidence that the index-to-name mapping is right at all. Filtering them
  * out leaves that script able to see only the classes it is trying to prove.
+ *
+ * `conf`, `genitalConf`, `breastConf` and `wholeTile` default to the constants
+ * above and exist so a threshold sweep can drive this function rather than a
+ * copy of it. Every number in the docstrings here came from such a sweep, and
+ * a reimplementation of the decode is the one way to measure a setting that
+ * the service will not actually use.
+ *
+ * `wholeTile` follows `conf` unless given explicitly, which keeps the
+ * relationship the constant expresses — but a sweep moving `conf` must pin it,
+ * or the whole-frame fallback moves underneath the measurement and the result
+ * gets attributed to the wrong bar. That mistake is what put breasts on the
+ * wrong threshold until 2026-10-21.
+ *
+ * **Nothing in the service passes them.** `detect` forwards its options, the
+ * server passes `{}`, and the only caller that sets them is
+ * `scripts/sweep-thresholds.js`. They are not a runtime knob and must not
+ * become one: a censor whose bar can be raised by a request parameter is a
+ * censor with a bypass.
  */
-export function decode(raw, dims, { scale, padX, padY, width, height }, { all = false } = {}) {
+export function decode(
+    raw,
+    dims,
+    { scale, padX, padY, width, height },
+    {
+        all = false,
+        conf = CONF,
+        genitalConf = GENITAL_CONF,
+        breastConf = BREAST_CONF,
+        wholeTile = conf / 2
+    } = {}
+) {
     const [, channels, anchors] = dims;
     const classes = channels - 4;
 
@@ -290,7 +382,7 @@ export function decode(raw, dims, { scale, padX, padY, width, height }, { all = 
             // to anchors that cleared a bar.
             if (score > bestCensorable) bestCensorable = score;
 
-            if (score < barFor(id)) continue;
+            if (score < barFor(id, conf, genitalConf, breastConf)) continue;
 
             out.push({ label: CLASSES[id], score, ...geometry });
             placed = true;
@@ -298,7 +390,7 @@ export function decode(raw, dims, { scale, padX, padY, width, height }, { all = 
 
         // The thirteen classes this service does not cover exist only for the
         // label self-test. Nothing in production reads them.
-        if (all && !placed && !CENSOR_IDS.includes(top) && topScore >= CONF) {
+        if (all && !placed && !CENSOR_IDS.includes(top) && topScore >= conf) {
             out.push({ label: CLASSES[top], score: topScore, ...geometry });
         }
     }
@@ -318,7 +410,7 @@ export function decode(raw, dims, { scale, padX, padY, width, height }, { all = 
         // place that can answer "cover everything" and it is the same place
         // that knows why. A caller recomputing this from `bestCensorable` is
         // a caller that can get it wrong in the direction that shows skin.
-        whole: covering === 0 && bestCensorable >= WHOLE_TILE
+        whole: covering === 0 && bestCensorable >= wholeTile
     };
 }
 
@@ -392,4 +484,4 @@ export async function detect(buffer, options = {}) {
     return { width: box.width, height: box.height, boxes, whole, confidence: bestCensorable };
 }
 
-export const _internals = { SIDE, CONF, GENITAL_CONF, IOU, WHOLE_TILE, ANCHORS };
+export const _internals = { SIDE, CONF, GENITAL_CONF, BREAST_CONF, IOU, WHOLE_TILE, ANCHORS };

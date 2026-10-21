@@ -19,7 +19,7 @@ import { decode, nms, _internals } from '../src/detect.js';
  * See `scripts/verify-labels.js`.
  */
 
-const { SIDE, CONF, GENITAL_CONF, WHOLE_TILE } = _internals;
+const { SIDE, CONF, GENITAL_CONF, BREAST_CONF, WHOLE_TILE } = _internals;
 
 /**
  * Build a `[1, 4 + classes, anchors]` tensor, channel-major.
@@ -122,12 +122,12 @@ test('a face is detected and not covered', () => {
 });
 
 test('below threshold is not a box, but is still remembered', () => {
-    // Deliberately a breast and not genitalia: the three genital classes are
-    // held to GENITAL_CONF, which is far under CONF, so a score a hair below
-    // CONF is a *placed box* for them and this case does not exist.
+    // Deliberately buttocks: it is the only censorable class still judged at
+    // CONF. Genitalia and breasts have bars far under it, so a score a hair
+    // below CONF is a *placed box* for them and this case does not exist.
     const score = CONF - 0.01;
     const { raw, dims } = tensor(10, [
-        { at: 4, box: [100, 100, 20, 20], scores: { FEMALE_BREAST_EXPOSED: score } }
+        { at: 4, box: [100, 100, 20, 20], scores: { BUTTOCKS_EXPOSED: score } }
     ]);
 
     const { boxes, bestCensorable, whole } = decode(raw, dims, FLAT);
@@ -146,9 +146,13 @@ test('the band between confidently-clean and a placed box is covered', () => {
     // somebody who has not verified their age, so the boundary between the
     // first and the second is the one number in this service that has to be
     // wrong in the safe direction.
+    //
+    // Buttocks because the band only exists for a class judged at CONF, and
+    // that is now the only censorable one. For genitalia and breasts the
+    // middle outcome is a placed box, which is the point of their own bars.
     const at = (score) => {
         const { raw, dims } = tensor(10, [
-            { at: 3, box: [100, 100, 20, 20], scores: { FEMALE_BREAST_EXPOSED: score } }
+            { at: 3, box: [100, 100, 20, 20], scores: { BUTTOCKS_EXPOSED: score } }
         ]);
         return decode(raw, dims, FLAT);
     };
@@ -167,11 +171,13 @@ test('the band between confidently-clean and a placed box is covered', () => {
     assert.ok(WHOLE_TILE < CONF, 'the band has to exist at all');
 });
 
-test('genitalia clear a far lower bar than anything else', () => {
+test('each class is judged at its own bar, and the three bars are ordered', () => {
     // The reason this exists: on 30 live cam thumbnails, plainly visible male
     // genitalia scored 0.022 and 0.024 while the flat threshold was 0.18, and
     // four tiles were served with nothing covered. Breasts on the same frames
-    // scored in the tenths. One threshold cannot serve both.
+    // scored in the tenths, and buttocks higher still. One threshold cannot
+    // serve all three, and two cannot either — see the measurement tables in
+    // `src/detect.js`, where each bar's own floor is a different number.
     const score = (label, value) => {
         const { raw, dims } = tensor(10, [
             { at: 2, box: [100, 100, 24, 24], scores: { [label]: value } }
@@ -179,22 +185,40 @@ test('genitalia clear a far lower bar than anything else', () => {
         return decode(raw, dims, FLAT).boxes;
     };
 
-    assert.ok(GENITAL_CONF < CONF, 'the whole point is that the two differ');
+    assert.ok(GENITAL_CONF < BREAST_CONF, 'genitals sit under breasts');
+    assert.ok(BREAST_CONF < CONF, 'breasts sit under everything else');
 
-    const weak = (CONF + GENITAL_CONF) / 2;
+    const GENITALIA = ['FEMALE_GENITALIA_EXPOSED', 'MALE_GENITALIA_EXPOSED', 'ANUS_EXPOSED'];
 
-    for (const label of ['FEMALE_GENITALIA_EXPOSED', 'MALE_GENITALIA_EXPOSED', 'ANUS_EXPOSED']) {
+    // A score the genital bar clears and the breast bar does not. Nothing but
+    // those three may be placed here.
+    const faint = (GENITAL_CONF + BREAST_CONF) / 2;
+
+    for (const label of GENITALIA) {
+        assert.equal(score(label, faint).length, 1, `${label} is placed at ${faint.toFixed(4)}`);
+    }
+
+    for (const label of ['FEMALE_BREAST_EXPOSED', 'BUTTOCKS_EXPOSED']) {
+        assert.deepEqual(score(label, faint), [], `${label} is not placed at ${faint.toFixed(4)}`);
+    }
+
+    // A score the breast bar clears and `CONF` does not. This band is the
+    // 2026-10-21 change: breasts used to be judged at `CONF` and walked past
+    // sheer tops and lingerie the model had scored perfectly well here.
+    const weak = (BREAST_CONF + CONF) / 2;
+
+    for (const label of [...GENITALIA, 'FEMALE_BREAST_EXPOSED']) {
         assert.equal(score(label, weak).length, 1, `${label} is placed at ${weak.toFixed(3)}`);
     }
 
-    // And the lower bar is scoped to those three. Dropping it for everything
-    // was measured and rejected — it mosaics clothed promotional art.
-    for (const label of ['FEMALE_BREAST_EXPOSED', 'BUTTOCKS_EXPOSED']) {
-        assert.deepEqual(score(label, weak), [], `${label} still needs CONF`);
-    }
+    // Buttocks stay on `CONF`, deliberately. They are not in the brief, they
+    // are what a pair of jeans fires, and lowering their bar was measured and
+    // bought no image that was not already covered.
+    assert.deepEqual(score('BUTTOCKS_EXPOSED', weak), [], 'BUTTOCKS_EXPOSED still needs CONF');
 
-    // Under its own bar it is still not a box.
-    assert.deepEqual(score('MALE_GENITALIA_EXPOSED', GENITAL_CONF - 0.005), [], 'the floor is a floor');
+    // And each floor is a floor.
+    assert.deepEqual(score('MALE_GENITALIA_EXPOSED', GENITAL_CONF - 0.005), [], 'under the genital bar');
+    assert.deepEqual(score('FEMALE_BREAST_EXPOSED', BREAST_CONF - 0.005), [], 'under the breast bar');
 });
 
 test('a censorable part is covered even when it loses its own anchor', () => {
@@ -238,12 +262,12 @@ test('confident but unplaceable covers the whole frame', () => {
     // cannot say where well enough to clear the box threshold. Covering none
     // of it is the one answer that is not allowed.
     const { raw, dims } = tensor(10, [
-        { at: 5, box: [100, 100, 8, 8], scores: { FEMALE_BREAST_EXPOSED: WHOLE_TILE + 0.05 } }
+        { at: 5, box: [100, 100, 8, 8], scores: { BUTTOCKS_EXPOSED: WHOLE_TILE + 0.05 } }
     ]);
 
     // Force the box below threshold by making a non-censorable class win the
     // anchor, which is exactly the real shape of this: the detector thinks
-    // the anchor is mostly a belly, with real breast confidence underneath.
+    // the anchor is mostly a belly, with real buttock confidence underneath.
     raw[(4 + CLASSES.indexOf('BELLY_EXPOSED')) * 10 + 5] = 0.99;
 
     const { boxes, whole, bestCensorable } = decode(raw, dims, FLAT);
