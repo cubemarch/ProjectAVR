@@ -146,8 +146,15 @@ export function toTensor(data) {
  * Exported for the tests, which drive it with a hand-built tensor. That is
  * the only way to check the decode without shipping a 10MB model into the
  * test suite.
+ *
+ * `all` keeps the thirteen classes the service does not cover. Production
+ * never wants them — it only needs to know what to mosaic — but the label
+ * self-test does, and badly: faces and feet are the two classes whose
+ * position in a photograph is known in advance, so they are the only
+ * evidence that the index-to-name mapping is right at all. Filtering them
+ * out leaves that script able to see only the classes it is trying to prove.
  */
-export function decode(raw, dims, { scale, padX, padY, width, height }) {
+export function decode(raw, dims, { scale, padX, padY, width, height }, { all = false } = {}) {
     const [, channels, anchors] = dims;
     const classes = channels - 4;
 
@@ -184,7 +191,7 @@ export function decode(raw, dims, { scale, padX, padY, width, height }) {
             if (score > bestCensorable) bestCensorable = score;
         }
 
-        if (topScore < CONF || !CENSOR_IDS.includes(top)) continue;
+        if (topScore < CONF || (!all && !CENSOR_IDS.includes(top))) continue;
 
         // cx, cy, w, h in letterboxed 320-space -> x, y, w, h in source space.
         const cx = raw[a];
@@ -204,6 +211,11 @@ export function decode(raw, dims, { scale, padX, padY, width, height }) {
 
     const boxes = clamp(nms(out), width, height);
 
+    // Counted rather than `boxes.length`, because under `all` the list also
+    // holds faces and feet, and a frame with a face in it and nothing covered
+    // is still a frame with nothing covered.
+    const covering = boxes.filter((b) => CENSOR_IDS.includes(CLASSES.indexOf(b.label))).length;
+
     return {
         boxes,
         bestCensorable,
@@ -212,7 +224,7 @@ export function decode(raw, dims, { scale, padX, padY, width, height }) {
         // place that can answer "cover everything" and it is the same place
         // that knows why. A caller recomputing this from `bestCensorable` is
         // a caller that can get it wrong in the direction that shows skin.
-        whole: boxes.length === 0 && bestCensorable >= WHOLE_TILE
+        whole: covering === 0 && bestCensorable >= WHOLE_TILE
     };
 }
 
@@ -266,7 +278,7 @@ function clamp(boxes, width, height) {
  * tell "clean" from "broken" would show a broken image uncensored, so the two
  * are never the same return value — see the service's error path.
  */
-export async function detect(buffer) {
+export async function detect(buffer, options = {}) {
     const box = await letterbox(buffer);
     const tensor = toTensor(box.data);
 
@@ -281,7 +293,7 @@ export async function detect(buffer) {
         );
     }
 
-    const { boxes, bestCensorable, whole } = decode(head.data, head.dims, box);
+    const { boxes, bestCensorable, whole } = decode(head.data, head.dims, box, options);
 
     return { width: box.width, height: box.height, boxes, whole, confidence: bestCensorable };
 }

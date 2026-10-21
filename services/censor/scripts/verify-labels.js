@@ -38,7 +38,12 @@ const model = process.env.CENSOR_MODEL || '/app/model/320n.onnx';
 await load(model);
 
 const image = await readFile(file);
-const verdict = await detect(image);
+
+// `all` — this script is the one caller that wants the classes the service
+// throws away. Faces and feet are the only two whose position in a photograph
+// is known before you look, so they are the evidence that the mapping holds;
+// running this in production mode would show only the classes under suspicion.
+const verdict = await detect(image, { all: true });
 
 console.log(`model    ${model}`);
 console.log(`classes  ${CLASSES.length} transcribed, censoring ${CENSOR.length}`);
@@ -52,7 +57,15 @@ if (!verdict.boxes.length) {
 } else {
     for (const box of verdict.boxes) {
         const at = `${Math.round(box.x)},${Math.round(box.y)} ${Math.round(box.w)}x${Math.round(box.h)}`;
-        console.log(`  ${box.score.toFixed(3)}  ${box.label.padEnd(26)} ${at}`);
+        const mark = CENSOR.includes(box.label) ? 'cover' : '     ';
+
+        // Vertical centre as a fraction of height. The number to read when
+        // you are checking the mapping rather than the detection: a FACE_*
+        // near 1.0 or a FEET_* near 0.0 means the list is wrong, whatever
+        // the scores say.
+        const y = ((box.y + box.h / 2) / verdict.height).toFixed(2);
+
+        console.log(`  ${box.score.toFixed(3)}  ${mark}  y=${y}  ${box.label.padEnd(26)} ${at}`);
     }
 }
 

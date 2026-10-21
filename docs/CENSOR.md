@@ -108,6 +108,37 @@ reports success — and covers faces while genitals stay on screen. Run
 `npm run verify` once per model file. It is the only failure here that looks
 completely healthy from the outside.
 
+### What was checked, 2026-10-20
+
+The weights in the Dockerfile are `320n.onnx` from NudeNet's `v3.4-weights`
+release, 12,150,158 bytes, SHA-256 `c15d8273…11f0f`, now pinned in the build.
+Three things were established against that exact file:
+
+| | |
+| --- | --- |
+| Shape | It emits `[1, 22, 2100]` — four box channels plus eighteen classes, and the 2100 anchors `detect.js` asserts for a 320px input |
+| Transcription | All eighteen names diffed position by position against `nudenet/nudenet.py` upstream — identical |
+| Behaviour | Faces came back at mean y=0.287 of frame height and feet at y=0.880, over a batch of ordinary photographs |
+
+The third is the one that matters, because the first two only prove the list
+matches their *source*. The weights carry no class names — the ONNX export
+stripped the metadata — so the mapping has to be checked against something
+outside the code. Faces are near the top of a photograph and feet are near
+the bottom, and those two sit at indices 1 and 12 against 7 and 9, far
+enough apart that a shifted list scrambles the ordering. Nobody has to label
+anything by hand.
+
+That is also why `decode()` takes `all`. In production it returns only the
+five classes on the censor list, which is everything the service needs and
+precisely the wrong set for this check — it would leave `npm run verify`
+able to see only the classes under suspicion.
+
+One number worth knowing before tuning: on sixty ordinary stock photographs,
+two picked up a censor box at 0.25–0.29, just over the 0.18 threshold. That
+is the deliberate recall bias showing up as a false positive on about three
+per cent of benign images. On a shelf of cam thumbnails a spurious mosaic is
+invisible; on anything else it would not be.
+
 ## What is not covered
 
 Bang, AEBN and performer artwork is still shown uncovered to signed-out

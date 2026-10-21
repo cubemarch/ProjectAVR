@@ -14,8 +14,13 @@ FROM node:22-slim
 # discard - a multi-stage build here would add a layer and save nothing.
 WORKDIR /app
 
-COPY package.json ./
-RUN npm install --omit=dev --no-audit --no-fund
+# The lockfile is copied and `ci` is used rather than `install`, so the image
+# is built from the exact tree that was tested. This container is handed
+# arbitrary bytes from a partner CDN and decodes them with native code; a
+# transitive dependency drifting between a test run and a production build is
+# not a reproducibility nicety here.
+COPY package.json package-lock.json ./
+RUN npm ci --omit=dev --no-audit --no-fund
 
 # The model is baked in rather than fetched at boot. Cloud Run scales to zero,
 # so a cold start that has to pull 10MB from the internet before it can answer
@@ -23,20 +28,28 @@ RUN npm install --omit=dev --no-audit --no-fund
 # to mosaic the entire frame, which would make a slow start look like a
 # site-wide outage of the artwork.
 #
-# VERIFY THIS URL AND CHECKSUM AGAINST THE PROJECT'S OWN RELEASES BEFORE THE
-# FIRST PRODUCTION BUILD. The class order in src/labels.js is a transcription
-# of one specific model's training order; a different file silently breaks it
-# in the one direction that matters. See `npm run verify`.
+# Both verified 2026-10-20 against the release list from the GitHub API:
+# 320n.onnx, 12,150,158 bytes, tag v3.4-weights. The running model was checked
+# the same day - it emits [1, 22, 2100], which is 4 box channels plus the
+# eighteen classes in src/labels.js, and that list was diffed position by
+# position against nudenet/nudenet.py upstream. See docs/CENSOR.md.
+#
+# The checksum is not decoration. The class order in src/labels.js is a
+# transcription of one specific model's training order, and the file carries
+# no metadata to check it against - the export stripped it. A different file
+# with the same name still loads, still returns boxes, and covers the wrong
+# thing. If this hash stops matching, do not bypass it: re-run `npm run
+# verify` against the new weights before changing the number.
 ARG MODEL_URL=https://github.com/notAI-tech/NudeNet/releases/download/v3.4-weights/320n.onnx
-ARG MODEL_SHA256=
+ARG MODEL_SHA256=c15d8273adad2d0a92f014cc69ab2d6c311a06777a55545f2c4eb46f51911f0f
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends ca-certificates curl \
     && mkdir -p /app/model \
     && curl -fsSL "$MODEL_URL" -o /app/model/320n.onnx \
-    && if [ -n "$MODEL_SHA256" ]; then \
-    echo "$MODEL_SHA256  /app/model/320n.onnx" | sha256sum -c -; \
-    else echo "WARNING: built without MODEL_SHA256"; fi \
+    && if [ -z "$MODEL_SHA256" ]; then \
+    echo "refusing to build without MODEL_SHA256 - verify the weights first" >&2; exit 1; fi \
+    && echo "$MODEL_SHA256  /app/model/320n.onnx" | sha256sum -c - \
     && apt-get purge -y curl \
     && apt-get autoremove -y \
     && rm -rf /var/lib/apt/lists/*

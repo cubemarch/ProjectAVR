@@ -153,6 +153,33 @@ test('confident but unplaceable covers the whole frame', () => {
     assert.equal(whole, true, 'so the whole frame is covered');
 });
 
+test('the service is blind to what it does not cover, and the self-test is not', () => {
+    const { raw, dims } = tensor(10, [
+        { at: 2, box: [100, 40, 50, 50], scores: { FACE_FEMALE: 0.95 } },
+        { at: 6, box: [100, 300, 30, 20], scores: { FEET_COVERED: 0.8 } }
+    ]);
+
+    // Production only ever needs to know what to mosaic, so everything else
+    // is dropped before it reaches a caller.
+    assert.deepEqual(decode(raw, dims, FLAT).boxes, [], 'nothing censorable, nothing returned');
+
+    // But those are the two classes whose position is known in advance, which
+    // makes them the only evidence that the mapping is right. The label
+    // self-test would be checking its own assumption without them.
+    const all = decode(raw, dims, FLAT, { all: true }).boxes;
+
+    assert.equal(all.length, 2, 'the self-test sees them');
+
+    const face = all.find((b) => b.label === 'FACE_FEMALE');
+    const feet = all.find((b) => b.label === 'FEET_COVERED');
+
+    assert.ok(face && feet, `both came back, got ${all.map((b) => b.label).join(', ')}`);
+    assert.ok(face.y < feet.y, 'and the face is above the feet');
+
+    // A frame holding only a face is still a frame with nothing to cover.
+    assert.equal(decode(raw, dims, FLAT, { all: true }).whole, false, 'and nothing is covered whole');
+});
+
 test('a wrong-sized model is refused rather than misread', () => {
     const anchors = 10;
     const raw = new Float32Array((4 + CLASSES.length + 3) * anchors);
