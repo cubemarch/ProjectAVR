@@ -66,10 +66,24 @@ async function boot() {
     // Affiliate-only mode renders none of the library, and a catalogue that is
     // fetched but not drawn is still a catalogue handed to anybody who opens
     // the network tab. Hiding it in the DOM is not the same as not sending it.
+    //
+    // The age gate is the fourth here because of what it has to come before,
+    // not because it belongs with the other three. It no longer waits on the
+    // visitor: it resolves as soon as the server says where they stand, draws
+    // a banner if they are not through, and lets the page render with every
+    // piece of adult artwork covered — the trade is written up at the head of
+    // `src/ui/age-gate.js`. What it must still be in front of is the first
+    // render. `adSlotHtml` reads `ageOk()` synchronously and withholds a slot
+    // until the answer is in, and `BrowseUI`'s constructor renders the only
+    // markup that carries `top-skyscraper` and `top-leaderboard`. Resolved
+    // after that constructor, those two slots stay empty for the whole visit —
+    // for a visitor who was verified before they ever arrived. In here it
+    // costs no latency at all: the fetch overlaps three already in flight.
     const [catalog] = await Promise.all([
         AFFILIATES_ONLY ? Promise.resolve({ items: [], rows: [] }) : loadCatalog(),
         detectXr(app, caps),
-        api.restore().catch(() => null)
+        api.restore().catch(() => null),
+        initAgeGate()
     ]);
 
     const video = new VideoSource(app);
@@ -86,20 +100,6 @@ async function boot() {
     const profile = new ProfilePage(document.getElementById('profile-root'));
 
     browse.renderAccount(api.user);
-
-    // Awaited, and before either fetch below — but it no longer waits on the
-    // visitor, only on one same-origin fetch. This used to block the page
-    // until the gate was passed; it now resolves as soon as the server says
-    // where the visitor stands, draws a banner if they are not through, and
-    // lets the page render with every piece of adult artwork covered. The
-    // trade is written up at the head of `src/ui/age-gate.js`.
-    //
-    // Still awaited, for two orderings that matter. `adsEnabled()` reads the
-    // answer synchronously and must have it before a slot is drawn — an ad is
-    // the one thing on this page that cannot be covered, so it is withheld
-    // instead. And the banner should be on the page before the first covered
-    // row appears beneath it rather than dropping in on top of it.
-    await initAgeGate();
 
     // One delegated listener, installed once, that offers the same gate when a
     // covered picture is clicked. After the banner rather than before it only
@@ -130,6 +130,12 @@ async function boot() {
 
         browse.refreshAffiliates();
         browse.refreshCams();
+
+        // And the two slots that neither refresh touches. Every other ad on
+        // the page rides along with one of the calls above; these two are in
+        // the shell `BrowseUI` built once in its constructor, and were
+        // withheld then because the visitor had not passed yet.
+        browse.refreshShellAdSlots();
     });
 
     await syncViewerState();

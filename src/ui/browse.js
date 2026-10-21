@@ -203,7 +203,7 @@ export class BrowseUI extends pc.EventHandler {
                      directly under the header would make the first two
                      things on the page both advertisements. See the note on
                      this placement in \`zones.js\`. -->
-                ${adSlotHtml('top-leaderboard')}
+                <div id="top-leaderboard-slot">${adSlotHtml('top-leaderboard')}</div>
 
                 <section class="affiliates" id="affiliates" hidden>
                     <div class="shelf-head affiliates-head">
@@ -249,8 +249,18 @@ export class BrowseUI extends pc.EventHandler {
                 <!-- Last in the document and first on the screen: it is
                      positioned, so where it paints has nothing to do with
                      where it sits here. This is the reading order, and an
-                     advertisement belongs at the end of it. -->
-                ${skyscraper}
+                     advertisement belongs at the end of it.
+
+                     Both this and the leaderboard above are wrapped in an
+                     empty div that is always emitted, because these are the
+                     only two slots on the page that no later render replaces.
+                     A visitor who passes the gate mid-visit needs somewhere
+                     for \`refreshShellAdSlots\` to put them, and an anchor
+                     that exists whether or not there is an ad in it is the
+                     one thing that cannot be withheld by mistake. The wrapper
+                     is static, so it does not become the containing block for
+                     the positioned slot inside it. -->
+                <div id="top-skyscraper-slot">${skyscraper}</div>
             </main>
             ${AFFILIATES_ONLY ? '' : this._modalHtml()}
 
@@ -458,6 +468,44 @@ export class BrowseUI extends pc.EventHandler {
      */
     async refreshCams() {
         await this.cams?.refresh();
+    }
+
+    /**
+     * Draw the two ad slots that live in the shell, now the visitor is through.
+     *
+     * `top-skyscraper` and `top-leaderboard` are the only slots on this page
+     * emitted by `_render` and by nothing else. Every other one is inside
+     * markup that `_renderAffiliates`, `_renderShelves` or the hover card
+     * rebuilds later, so each of those gets a second chance; these two had
+     * exactly one, in the constructor, and `adSlotHtml` withheld them there if
+     * the gate had not resolved yet. Nothing redrew them afterwards and the
+     * two highest-value placements on the site stayed dark.
+     *
+     * Deliberately not a `_render()`. Redrawing the shell would throw away the
+     * visitor's scroll position, their search, the cam shelf's observers and
+     * every partner row already fetched — for two slots. The anchors exist so
+     * this can be an `innerHTML` on two empty divs instead.
+     *
+     * Safe to call more than once: `adSlotHtml` is pure, and `fillAdSlots`
+     * marks what it has registered, so a second call cannot ask the network to
+     * count the same zone twice.
+     */
+    refreshShellAdSlots() {
+        const main = this.mount.querySelector('#browse-main');
+        const rail = this.mount.querySelector('#top-skyscraper-slot');
+        const leaderboard = this.mount.querySelector('#top-leaderboard-slot');
+        if (!main || !rail || !leaderboard) return;
+
+        // Same two lines as `_render`, and for the same reason: the markup is
+        // the answer to "is there a skyscraper on this page", and the class is
+        // how the stylesheet is told to inset the column for it.
+        const skyscraper = adSlotHtml('top-skyscraper');
+
+        rail.innerHTML = skyscraper;
+        leaderboard.innerHTML = adSlotHtml('top-leaderboard');
+        main.classList.toggle('has-sky-rail', Boolean(skyscraper));
+
+        fillAdSlots(main);
     }
 
     /* ------------------------------------------------------- the market -- */

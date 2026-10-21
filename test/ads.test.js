@@ -390,6 +390,11 @@ const BROWSE = fs.readFileSync(
     'utf8'
 );
 
+const MAIN = fs.readFileSync(
+    path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'src', 'main.js'),
+    'utf8'
+);
+
 /** Every `z-index: <n>` in the sheet, as numbers. */
 function zIndexes() {
     return [...CSS.matchAll(/z-index:\s*(-?\d+)\s*;/g)].map((m) => Number(m[1]));
@@ -593,6 +598,75 @@ test('1129419 came back to the pitch band rather than being left on the floor', 
         (p) => p.desktop.zone === 1129419 || p.mobile.zone === 1129419
     );
     assert.equal(uses.length, 1, 'zone 1129419 is in exactly one placement');
+});
+
+/* ------------------------------------------- the two slots in the shell -- */
+
+/**
+ * `top-skyscraper` and `top-leaderboard` are the only slots emitted by
+ * `_render` and by nothing else, which makes them the only two that can be
+ * withheld permanently by an ordering mistake rather than for the visit.
+ *
+ * They were, for the life of `5a86352`. That commit gave `adSlotHtml` its
+ * `verified` guard — correctly, an ad is the one thing on the page that cannot
+ * be covered — and `BrowseUI`'s constructor ran before the gate had answered,
+ * so both returned `''` for every visitor including a verified one, and the
+ * two highest-value placements on the site were dark. Nothing failed. The
+ * symptom was a page that looked deliberately ad-free, plus the knock-on that
+ * `has-sky-rail` is derived from the skyscraper's markup, so every row below
+ * also ran the width of the missing rail.
+ *
+ * Neither half is visible from `juicyads.js`, so both are pinned against
+ * source the way `image-gate.test.js` pins the overlay it cannot import.
+ */
+test('the age gate resolves before the render that emits the shell slots', () => {
+    const gate = MAIN.indexOf('initAgeGate()');
+    const construct = MAIN.indexOf('new BrowseUI(');
+
+    assert.ok(gate > 0, 'main.js still calls initAgeGate');
+    assert.ok(construct > 0, 'main.js still constructs BrowseUI');
+    assert.ok(
+        gate < construct,
+        'BrowseUI renders before the gate has answered, so adSlotHtml withholds ' +
+            'the skyscraper and the leaderboard and nothing ever draws them'
+    );
+
+    // Resolved, not merely started. Sitting in the `Promise.all` above the
+    // constructor is what makes it free; `void initAgeGate()` on its own line
+    // would satisfy the ordering above and none of the point.
+    const before = MAIN.slice(0, construct);
+    assert.match(
+        before,
+        /await Promise\.all\(\[[\s\S]*initAgeGate\(\)[\s\S]*\]\);/,
+        'initAgeGate is called before the constructor but not awaited before it'
+    );
+});
+
+test('the shell slots have anchors, and something refills them', () => {
+    // The anchors are always emitted, ad or no ad. A visitor who passes the
+    // gate mid-visit has nowhere to put the slots otherwise, and a full
+    // `_render()` would cost them their scroll position and every partner row
+    // already fetched.
+    for (const id of ['top-skyscraper-slot', 'top-leaderboard-slot']) {
+        assert.match(BROWSE, new RegExp(`id="${id}"`), `${id} is the anchor and it is gone`);
+    }
+
+    const start = BROWSE.indexOf('refreshShellAdSlots()');
+    assert.ok(start > 0, 'nothing redraws the shell slots when the gate is passed');
+
+    const body = BROWSE.slice(start, start + 900);
+    assert.match(body, /adSlotHtml\('top-skyscraper'\)/, 'the refresh skips the skyscraper');
+    assert.match(body, /adSlotHtml\('top-leaderboard'\)/, 'the refresh skips the leaderboard');
+    assert.match(body, /has-sky-rail/, 'the refresh draws the rail without reserving room for it');
+    assert.match(body, /fillAdSlots\(/, 'the markup is inserted but never registered with the network');
+
+    // And it is actually wired up. The method existing and being called are
+    // two different claims, and the second is the one that was missing.
+    assert.match(
+        MAIN,
+        /onAgeChange\(\([\s\S]{0,600}refreshShellAdSlots\(\)/,
+        'refreshShellAdSlots is never called when a visitor passes the gate in-session'
+    );
 });
 
 test('the placements are in page order', () => {
