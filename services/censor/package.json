@@ -1,0 +1,20 @@
+{
+    "name": "lustxr-censor",
+    "version": "1.0.0",
+    "private": true,
+    "type": "module",
+    "description": "Detects and pixelates explicit regions in a single image. Stateless, one route, no storage.",
+    "engines": {
+        "node": ">=20"
+    },
+    "scripts": {
+        "start": "node src/server.js",
+        "verify": "node scripts/verify-labels.js",
+        "test": "node --test test/"
+    },
+    "dependencies": {
+        "express": "^4.21.2",
+        "onnxruntime-node": "^1.20.1",
+        "sharp": "^0.33.5"
+    }
+}

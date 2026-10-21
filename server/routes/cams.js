@@ -4,6 +4,7 @@ import { rateLimit } from '../auth/middleware.js';
 import { TtlCache } from '../cache.js';
 import { resolveRegion } from '../identity/jurisdiction.js';
 import { visitorGate } from '../identity/visitor-gate.js';
+import { censor, isConfigured as censorConfigured, PLACEHOLDER } from '../media/censor.js';
 
 /**
  * The live cam row: Chaturbate's affiliate feed, normalised.
@@ -205,6 +206,36 @@ function chaturbateUrl(raw) {
     if (url.hostname !== 'chaturbate.com' && !url.hostname.endsWith('.chaturbate.com')) return null;
 
     return url.toString();
+}
+
+/**
+ * A room as this visitor is allowed to receive it.
+ *
+ * Uncovered, this is the identity function and the row is what it has always
+ * been. Covered, two fields change and both have to:
+ *
+ *   - **`thumb`** points at our proxy instead of the partner's CDN, so the
+ *     browser never holds a URL for the original. Nothing else about the card
+ *     changes — `_swapFrame` in `src/ui/cams.js` reads whatever is in `src`,
+ *     appends its frame counter and swaps on decode, so a proxy that is
+ *     slower than a CDN simply means the card holds its previous frame a
+ *     moment longer. The client needs no change at all.
+ *   - **`embed` is removed.** This is the one that would quietly undo
+ *     everything else. `embed` is the white label player: a real, live,
+ *     entirely uncovered broadcast playing inside our page. Pixelating the
+ *     thumbnail of a card that opens an uncensored stream on click is not a
+ *     gate, it is a decoration.
+ *
+ * `href` stays. It leaves for the partner's own site, which runs its own age
+ * check and is where the revshare is earned — withholding it would cost the
+ * row its only purpose without protecting anything we control.
+ */
+function present(room, covered) {
+    if (!covered) return room;
+
+    const { embed, ...rest } = room;
+
+    return { ...rest, embed: null, thumb: `/api/cams/thumb/${encodeURIComponent(room.username)}` };
 }
 
 /** A thumbnail URL. Theirs live on a CDN host, so only the scheme is pinned. */
@@ -503,11 +534,38 @@ export function mountCams(app) {
         // page draws its own interstitial, but a page that merely declines to
         // render what an open endpoint will hand out is not a gate — and a
         // thumbnail of a live adult broadcast is squarely the material the
-        // twenty-seven statutes are about. Empty rather than 403: this is the
-        // one row on the page the server can withhold, and it withholds it.
+        // twenty-seven statutes are about.
+        //
+        // ## Two answers, because the statutes ask two different things
+        //
+        // `visitor-gate.js` sets out why this file does not apply one rule
+        // everywhere, and the same reasoning decides what an ungated visitor
+        // gets here:
+        //
+        //   - **The twenty-seven.** Withheld, exactly as before. Those
+        //     statutes judge material as a whole and by its appeal, not pixel
+        //     by pixel; a live broadcast with the explicit parts covered is
+        //     still a live broadcast, and nothing in the table says a mosaic
+        //     satisfies it. So this row stays empty until the visitor has
+        //     actually verified.
+        //   - **Everywhere else.** Covered and shown. No statute requires
+        //     anything here, the visitor owes a click rather than a document,
+        //     and a blank row gives them no reason to make it. They see a real
+        //     shelf of real rooms with the explicit regions pixelated, which
+        //     is both what they are owed and the only version of this row that
+        //     has ever persuaded anyone to pass the gate.
+        //
+        // See `server/media/censor.js` and `docs/CENSOR.md`.
         const gate = visitorGate(req);
+        const covered = !gate.ok;
 
-        if (!gate.ok) {
+        // Fail-closed, and the most important branch in this file. If the
+        // inference service is unset or unreachable there is no covered
+        // version to serve, so the answer reverts to the old one — withheld.
+        // Getting this backwards would show every unverified visitor the
+        // uncensored row the moment the censor went down, which is the exact
+        // failure the whole design is arranged to make impossible.
+        if (covered && (gate.owes === 'verification' || !censorConfigured())) {
             res.set('Cache-Control', 'private, no-store');
             res.json({ configured: false, gated: true, owes: gate.owes, rooms: [], total: 0 });
             return;
@@ -566,7 +624,11 @@ export function mountCams(app) {
         // what stops a filter click costing a round trip — and it is why
         // backspacing through a word is nearly free, since each shorter query
         // is one the browser asked a moment ago and still holds.
-        res.set('Cache-Control', 'private, max-age=30');
+        // `no-store` while covered, rather than the usual thirty seconds: the
+        // moment a visitor passes the gate the row has to become the real one,
+        // and a cached covered copy would leave them looking at mosaics for
+        // half a minute after doing what was asked of them.
+        res.set('Cache-Control', covered ? 'private, no-store' : 'private, max-age=30');
 
         res.json({
             configured: true,
@@ -581,11 +643,60 @@ export function mountCams(app) {
 
             tags: tagFacet(pool),
 
+            covered,
+
             rooms: matched
                 .sort(rank)
                 .slice(0, PAGE_MAX)
-                .map(({ blockedStates, blockedCountries, search, ...room }) => room)
+                .map(({ blockedStates, blockedCountries, search, ...room }) => present(room, covered))
         });
+    });
+
+    /**
+     * One room's thumbnail, with anything explicit covered.
+     *
+     * ## It takes a username, not a URL
+     *
+     * The obvious shape for this route is `?url=` and it would be a server
+     * side request forgery hole. `imageUrl` above pins the scheme and
+     * deliberately not the host — their thumbnails move between CDN names —
+     * so there is no allowlist here to lean on, and a proxy that fetches
+     * whatever it is handed is one that will happily read a metadata endpoint
+     * on the instance's behalf.
+     *
+     * Taking the room name instead means the only URLs this can ever fetch
+     * are ones that arrived in the partner's own feed. The parameter is an
+     * index into data we already have rather than an instruction.
+     *
+     * ## It is not gated, and does not need to be
+     *
+     * Everything this route can emit is already covered, so there is nothing
+     * here for the gate to protect. Gating it would also mean a visitor who
+     * has *passed* the gate gets the uncovered URL — which is exactly what
+     * happens, from the feed, in the JSON above.
+     */
+    router.get('/thumb/:username', rateLimit({ windowMs: 60_000, max: 600 }), async (req, res) => {
+        res.set('X-Robots-Tag', 'noindex, nofollow');
+
+        const room = (lastGood ?? []).find((r) => r.username === req.params.username);
+        const covered = room ? await censor(room.thumb).catch(() => null) : null;
+
+        if (!covered) {
+            // Unknown room, dead service, timeout, unreadable image — one
+            // answer for all of them, and it is never the original. Short
+            // cache so a blip does not pin the placeholder onto a card.
+            res.set('Content-Type', 'image/svg+xml');
+            res.set('Cache-Control', 'public, max-age=5');
+            res.send(PLACEHOLDER);
+            return;
+        }
+
+        // Public: the covered image is identical for every viewer, which is
+        // the whole reason this is affordable. The `?f=` the client appends
+        // is what keeps it fresh.
+        res.set('Content-Type', 'image/jpeg');
+        res.set('Cache-Control', 'public, max-age=6');
+        res.send(covered);
     });
 
     app.use('/api/cams', router);
@@ -608,4 +719,13 @@ export function _expireCamsCache() {
     cache.invalidate();
 }
 
-export const _internals = { normalise, visibleTo, rank, embedSrc, chaturbateUrl, codeSet, VR_TAGS };
+export const _internals = {
+    normalise,
+    visibleTo,
+    rank,
+    embedSrc,
+    chaturbateUrl,
+    codeSet,
+    present,
+    VR_TAGS
+};

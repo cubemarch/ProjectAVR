@@ -39,6 +39,7 @@ npm test                                   # server and web, node --test
 | [`docs/DELIVERY.md`](docs/DELIVERY.md) | The bitrate ladder, the burned-in watermark, and which renditions each headset is offered |
 | [`docs/IDENTITY.md`](docs/IDENTITY.md) | Age assurance, creator enrolment, the portal face check, and how the pasteable destination URL is issued |
 | [`docs/STATE-AGE-LAWS.md`](docs/STATE-AGE-LAWS.md) | The twenty-seven states that require a verified adult, the button everywhere else, how a request's state is resolved, and the signed-out gate that needs no account |
+| [`docs/CENSOR.md`](docs/CENSOR.md) | Pixelating partner artwork for visitors who have not verified, the jurisdiction split, and why every failure covers more rather than less |
 | [`docs/MONETISATION.md`](docs/MONETISATION.md) | Credits and the ledger, creator pricing, profiles, the stream setup checks and the 3D gate |
 | [`docs/EMAIL.md`](docs/EMAIL.md) | What the server sends, the three categories, the marketing opt-in and the delivery log |
 | [`docs/SEARCH.md`](docs/SEARCH.md) | The declarations, the crawlable fallback, the sitemap and policy pages, and why paid search is closed to this domain |
