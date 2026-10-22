@@ -642,30 +642,43 @@ test('the age gate resolves before the render that emits the shell slots', () =>
     );
 });
 
-test('the shell slots have anchors, and something refills them', () => {
-    // The anchors are always emitted, ad or no ad. A visitor who passes the
-    // gate mid-visit has nowhere to put the slots otherwise, and a full
-    // `_render()` would cost them their scroll position and every partner row
-    // already fetched.
+test('passing the gate reloads, rather than refilling the slots in place', () => {
+    // The anchors are still emitted, ad or no ad: the stylesheet insets the
+    // column against them whether or not a creative lands there.
     for (const id of ['top-skyscraper-slot', 'top-leaderboard-slot']) {
         assert.match(BROWSE, new RegExp(`id="${id}"`), `${id} is the anchor and it is gone`);
     }
 
-    const start = BROWSE.indexOf('refreshShellAdSlots()');
-    assert.ok(start > 0, 'nothing redraws the shell slots when the gate is passed');
+    assert.match(MAIN, /onAgeChange\(\([\s\S]{0,400}location\.reload\(\)/, 'passing the gate does not reload');
 
-    const body = BROWSE.slice(start, start + 900);
-    assert.match(body, /adSlotHtml\('top-skyscraper'\)/, 'the refresh skips the skyscraper');
-    assert.match(body, /adSlotHtml\('top-leaderboard'\)/, 'the refresh skips the leaderboard');
-    assert.match(body, /has-sky-rail/, 'the refresh draws the rail without reserving room for it');
-    assert.match(body, /fillAdSlots\(/, 'the markup is inserted but never registered with the network');
+    // The reason it has to be a reload and not a refresh. `fillAdSlots`
+    // appends the network's loader, which requests a creative and counts the
+    // impression as it runs; doing that on a document about to be replaced
+    // bills an advertiser for a banner nobody can see. Either one or the
+    // other, never both.
+    const handler = MAIN.slice(MAIN.indexOf('onAgeChange(('));
+    assert.doesNotMatch(
+        handler.slice(0, 400),
+        /refreshShellAdSlots|refreshAffiliates|refreshCams/,
+        'the reload also refreshes, so an impression is filed and then thrown away'
+    );
 
-    // And it is actually wired up. The method existing and being called are
-    // two different claims, and the second is the one that was missing.
+    assert.ok(
+        !BROWSE.includes('refreshShellAdSlots()'),
+        'refreshShellAdSlots survives with no caller, describing a mechanism that is gone'
+    );
+
+    // The guard. An unguarded reload on `ok` reloads forever for every
+    // visitor who was already verified when they arrived.
     assert.match(
         MAIN,
-        /onAgeChange\(\([\s\S]{0,600}refreshShellAdSlots\(\)/,
-        'refreshShellAdSlots is never called when a visitor passes the gate in-session'
+        /wasOk\s*=\s*ageState\(\)\.ok/,
+        'nothing snapshots the age state, so the reload has no edge to trigger on'
+    );
+    assert.match(
+        MAIN,
+        /if \(age\.ok === wasOk\) return;/,
+        'the handler reloads on every `ok`, not only on the transition into one'
     );
 });
 

@@ -19,7 +19,7 @@ import { ProfilePage } from './ui/profile.js';
 import { initAgeGate } from './ui/age-gate.js';
 import { initImageGate } from './ui/image-gate.js';
 import { allowPlayback } from './ui/video-gate.js';
-import { onAgeChange } from './age-state.js';
+import { ageState, onAgeChange } from './age-state.js';
 
 /**
  * Application shell.
@@ -118,24 +118,42 @@ async function boot() {
     // partner rows would make a cold affiliate fetch delay a live shelf.
     browse.refreshCams();
 
-    // Passing the gate changes what every row on the page is allowed to show,
-    // and the rows are already drawn by then. Re-fetching is what uncovers
-    // them: the server picks covered or uncovered per request from the
-    // cookie, so the same two calls now come back with the partner's own
-    // artwork. Deliberately not a `location.reload()` — a visitor who has
-    // just verified should not lose their scroll position and their search as
-    // the reward, and nothing here needs a fresh document.
+    // Passing the gate changes what every row on the page is allowed to show
+    // and what may be drawn into an ad slot, and the page is fully built by
+    // then. This reloads rather than patching the pieces in place.
+    //
+    // That is a reversal, and the reason is `fillAdSlots`. Refreshing a slot
+    // in place does not just draw markup — it appends the network's loader,
+    // which requests a creative and counts the impression there and then.
+    // Doing that on a document we are about to replace bills an advertiser
+    // for a banner nobody can see, which is the one failure `ads/juicyads.js`
+    // says publisher accounts are closed over. So it is reload or refresh,
+    // never both, and reload is the one that also fixes every other slot:
+    // a fresh document reads `ageOk()` as true from its first line, so each
+    // row and each slot is built verified by the ordinary path instead of
+    // needing a second path for "uncovered after the fact". The two shell
+    // slots had no such path at all until recently.
+    //
+    // The cost is the visitor's scroll position and their search, which is
+    // what kept this from being a reload before now.
+    //
+    // Guarded on the edge, not on `ok`, because an unguarded reload here is
+    // an infinite one. `initAgeGate` resolves in the `Promise.all` above, so
+    // today its answer lands before this subscription exists and a verified
+    // arrival never reaches this listener. That is an ordering in another
+    // part of this function, though, and it is one move away from reloading
+    // the page forever for everybody who was already through. Reading the
+    // state at subscribe time costs nothing and does not care where the first
+    // answer came from: at worst a reordering buys one extra reload, after
+    // which the snapshot is `true` and it settles.
+    let wasOk = ageState().ok;
+
     onAgeChange((age) => {
-        if (!age.ok) return;
+        if (age.ok === wasOk) return;
 
-        browse.refreshAffiliates();
-        browse.refreshCams();
+        wasOk = age.ok;
 
-        // And the two slots that neither refresh touches. Every other ad on
-        // the page rides along with one of the calls above; these two are in
-        // the shell `BrowseUI` built once in its constructor, and were
-        // withheld then because the visitor had not passed yet.
-        browse.refreshShellAdSlots();
+        if (age.ok) location.reload();
     });
 
     await syncViewerState();
