@@ -18,6 +18,7 @@ import { CreatorPortal } from './ui/creator/portal.js';
 import { ProfilePage } from './ui/profile.js';
 import { initAgeGate } from './ui/age-gate.js';
 import { initImageGate } from './ui/image-gate.js';
+import { initWelcomeModal } from './ui/welcome-modal.js';
 import { allowPlayback } from './ui/video-gate.js';
 import { ageState, onAgeChange } from './age-state.js';
 
@@ -106,6 +107,13 @@ async function boot() {
     // because it reads the state the banner just settled; it is inert for a
     // visitor who is already through.
     initImageGate();
+
+    // After the gate rather than before it, so that on a first visit the
+    // banner is already on the page behind this and the greeting is plainly
+    // the lighter of the two things. It draws under every age surface — see
+    // the z-index note in `styles/netflix.css` — and remembers itself, so
+    // this is a no-op on every visit after the first.
+    initWelcomeModal();
 
     // Not awaited: these are other people's servers, and a slow partner must
     // not hold up the page. Called here and nowhere else — the partner rows
