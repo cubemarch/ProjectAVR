@@ -21,6 +21,7 @@ import { initImageGate } from './ui/image-gate.js';
 import { initWelcomeModal } from './ui/welcome-modal.js';
 import { allowPlayback } from './ui/video-gate.js';
 import { ageState, onAgeChange } from './age-state.js';
+import { watchFirstInteraction } from './first-interaction.js';
 
 /**
  * Application shell.
@@ -51,6 +52,10 @@ const MODE = { BROWSE: 'browse', FLAT: 'flat', RENDERED: 'rendered' };
 const APP_PATHS = new Set(['/', '/index.html', '/creator', '/profile']);
 
 async function boot() {
+    // First, before anything is awaited: a visitor who clicks while the
+    // catalogue is still loading is the most obviously human one there is.
+    watchFirstInteraction();
+
     const canvas = document.getElementById('render-canvas');
     const browseMount = document.getElementById('browse-root');
     const playerShell = document.getElementById('player-shell');

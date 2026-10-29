@@ -48,6 +48,12 @@
  * custom one, because the standard name is the one its built-in reports read.
  */
 export const EVENTS = Object.freeze({
+    /**
+     * The first trusted press, key or wheel on this load. What separates a
+     * person from a browser that ran the tag and left; see `first-interaction.js`.
+     */
+    FIRST_INTERACTION: 'first_interaction',
+
     /** The gate was drawn. The denominator for everything below it. */
     AGE_GATE_SHOWN: 'age_gate_shown',
 

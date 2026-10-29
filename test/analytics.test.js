@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
 import { EVENTS, regionOf, track } from '../src/analytics.js';
+import { delayBand, inputOf, watchFirstInteraction } from '../src/first-interaction.js';
 
 /**
  * What the site reports, and what it must never report.
@@ -32,8 +33,11 @@ const browseSource = readFileSync(new URL('../src/ui/browse.js', import.meta.url
 const camsSource = readFileSync(new URL('../src/ui/cams.js', import.meta.url), 'utf8');
 const imageGateSource = readFileSync(new URL('../src/ui/image-gate.js', import.meta.url), 'utf8');
 const videoGateSource = readFileSync(new URL('../src/ui/video-gate.js', import.meta.url), 'utf8');
+const interactionSource = readFileSync(new URL('../src/first-interaction.js', import.meta.url), 'utf8');
+const mainSource = readFileSync(new URL('../src/main.js', import.meta.url), 'utf8');
 
 const callSites = [
+    ['first-interaction.js', interactionSource],
     ['age-gate.js', gateSource],
     ['browse.js', browseSource],
     ['cams.js', camsSource],
@@ -333,4 +337,107 @@ test('cams imports the reporter under a name its own locals do not shadow', () =
     // resolve to an element.
     assert.match(camsSource, /import \{ EVENTS, track as report \}/, 'aliased at the import');
     assert.ok(/const track = this\.mount\.querySelector\('\.cam-track'\)/.test(camsSource), 'because of these');
+});
+
+/* ------------------------------------------------------ first interaction -- */
+
+/** An `EventTarget` stand-in that records what is bound and can fire it. */
+function fakeTarget() {
+    const bound = new Map();
+
+    return {
+        bound,
+        addEventListener(type, fn, options) {
+            bound.set(type, { fn, options });
+        },
+        removeEventListener(type, fn) {
+            if (bound.get(type)?.fn === fn) bound.delete(type);
+        },
+        fire(type, extra = {}) {
+            bound.get(type)?.fn({ type, isTrusted: true, ...extra });
+        }
+    };
+}
+
+/** Run `body` with a recording `gtag`, and return what it sent. */
+function recording(body) {
+    const sent = [];
+    globalThis.window = { gtag: (...args) => sent.push(args) };
+
+    try {
+        body();
+    } finally {
+        delete globalThis.window;
+    }
+
+    return sent;
+}
+
+test('the first trusted input is reported once, with what it was and when', () => {
+    const target = fakeTarget();
+
+    const sent = recording(() => {
+        watchFirstInteraction(target, () => 2400);
+        target.fire('pointerdown', { pointerType: 'touch' });
+        target.fire('keydown');
+        target.fire('wheel');
+    });
+
+    assert.deepEqual(sent, [['event', 'first_interaction', { input: 'touch', after: 'b_1_to_5s' }]]);
+    assert.equal(target.bound.size, 0, 'and every listener is gone after it');
+});
+
+test('input a script raised itself is not a person', () => {
+    const target = fakeTarget();
+
+    const sent = recording(() => {
+        watchFirstInteraction(target, () => 100);
+        target.fire('pointerdown', { pointerType: 'mouse', isTrusted: false });
+    });
+
+    assert.deepEqual(sent, [], 'a dispatchEvent from the page is the one input it can fake');
+    assert.equal(target.bound.size, 3, 'and the watch is still waiting for a real one');
+});
+
+test('scrolling is not an interaction, because a page can scroll itself', () => {
+    const target = fakeTarget();
+    watchFirstInteraction(target);
+
+    assert.deepEqual([...target.bound.keys()].sort(), ['keydown', 'pointerdown', 'wheel']);
+});
+
+test('watching never gets in the way of the input it watches', () => {
+    const target = fakeTarget();
+    watchFirstInteraction(target);
+
+    for (const [type, { options }] of target.bound) {
+        assert.equal(options.passive, true, `${type} must not be able to delay a scroll or a click`);
+        assert.equal(options.capture, true, `${type} is heard before anything on the page can stop it`);
+    }
+
+    assert.doesNotMatch(interactionSource, /preventDefault|stopPropagation/);
+});
+
+test('the kind of input and the delay are a fixed handful of strings', () => {
+    assert.equal(inputOf({ type: 'keydown' }), 'key');
+    assert.equal(inputOf({ type: 'wheel' }), 'wheel');
+    assert.equal(inputOf({ type: 'pointerdown', pointerType: 'pen' }), 'pen');
+    assert.equal(inputOf({ type: 'pointerdown', pointerType: 'quest-ray' }), 'pointer', 'an unknown type is not passed through');
+    assert.equal(inputOf({ type: 'pointerdown' }), 'pointer');
+
+    assert.equal(delayBand(0), 'a_under_1s');
+    assert.equal(delayBand(999), 'a_under_1s');
+    assert.equal(delayBand(1000), 'b_1_to_5s');
+    assert.equal(delayBand(29999), 'c_5_to_30s');
+    assert.equal(delayBand(30000), 'd_over_30s');
+});
+
+test('the watch is installed before boot waits on anything', () => {
+    const boot = mainSource.slice(mainSource.indexOf('async function boot() {'));
+
+    assert.ok(boot.indexOf('watchFirstInteraction();') > 0, 'boot installs it');
+    assert.ok(
+        boot.indexOf('watchFirstInteraction();') < boot.indexOf('await '),
+        'and before the first await, so a click during loading still counts'
+    );
 });
