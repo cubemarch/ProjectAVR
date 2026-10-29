@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { icons } from '../src/ui/icons.js';
 
 import {
     AFFILIATE_GROUPS,
@@ -479,12 +480,30 @@ test('every registered storefront is a usable, paid, attributed link', () => {
         // The one id that is actually paid on. `salesToolId` and `campaignId`
         // are the partner's reporting dimensions and are theirs to lose — see
         // the note on AEBN's AVS redirect in `affiliates.js` — but a link with
-        // no referral id on it is unpaid work.
+        // no referral id on it is unpaid work. Each storefront names its own
+        // key, because the partners do not agree on one.
+        assert.ok(s.paidBy, `${s.id}: names no parameter it is paid on`);
         assert.ok(
-            url.searchParams.get('refid') || url.searchParams.get('refId'),
-            `${s.id}: carries no referral id, so a sale through it pays nobody`
+            url.searchParams.get(s.paidBy),
+            `${s.id}: carries no \`${s.paidBy}\`, so a sale through it pays nobody`
         );
     }
+});
+
+test('every storefront icon is one the icon set has', () => {
+    for (const s of AFFILIATE_STOREFRONTS) {
+        if (s.icon) assert.equal(typeof icons[s.icon], 'function', `${s.id}: no icon called ${s.icon}`);
+    }
+});
+
+test('every SexLikeReal link carries the same affiliate code', () => {
+    // One account. A second code here would be a second account's sales,
+    // which is a copy-paste from somebody else's panel rather than a choice.
+    const codes = new Set(
+        AFFILIATE_STOREFRONTS.filter((s) => s.partner === 'SexLikeReal').map((s) => s.query.a)
+    );
+
+    assert.deepEqual([...codes], ['6ae1102714725ced370f8a8a']);
 });
 
 test('storefront ids are unique, so one cannot quietly shadow another', () => {

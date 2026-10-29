@@ -1319,7 +1319,7 @@ export class BrowseUI extends pc.EventHandler {
                        target="_blank" rel="${AFFILIATE_LINK_REL}"
                        data-storefront="${escapeHtml(s.id)}" data-partner="${escapeHtml(s.partner)}"
                        title="${escapeHtml(full)}" aria-label="${escapeHtml(full)}">
-                        <span class="pill-icon">${icons.film({ size: 18 })}</span>
+                        <span class="pill-icon">${(icons[s.icon] || icons.film)({ size: 18 })}</span>
                         <span class="pill-text">${escapeHtml(s.label)}</span>
                     </a>`;
             })

@@ -1368,6 +1368,31 @@ body.is-immersive .player-shell .avr-video {
         min-width: 0;
     }
 
+    /*
+     * The storefronts go two to a row here.
+     *
+     * With SexLikeReal's three beside AEBN's one (2026-10-29) the row is four
+     * pills, and `nowrap` above kept them on one line by clipping every label
+     * — "All Mo", "VR P", "Free" at 390px, worse at 320. A paid link whose
+     * name is cut off is a button nobody can read, beside a disclosure that
+     * still says it is there.
+     *
+     * `auto-fit` against a minimum rather than a fixed two, so one storefront
+     * is one full-width pill and five is three rows, without this rule having
+     * to know the count. 128px is the widest label, "All Movies", with its
+     * icon and the padding below.
+     */
+    .site-header-lite .browse-nav {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(128px, 1fr));
+        gap: 8px;
+    }
+
+    .site-header-lite .browse-nav .pill {
+        justify-content: center;
+        padding: 8px 12px;
+    }
+
     .header-right {
         gap: 10px;
     }
@@ -3444,9 +3469,32 @@ body.is-profile {
  * under a 138px header and the heading ten pixels beneath it, which is
  * exactly the bug this rule exists to fix.
  */
-@media (max-width: 480px) {
+/*
+ * ## Two rows of storefronts, and the reservation that has to match them
+ *
+ * Since four storefronts (2026-10-29) the pills go two to a row below 560px,
+ * which adds a row to the header: measured 165px from 560 down to 359, and
+ * 180 below that, where the disclosure takes its second line. The column
+ * count is set here rather than left to `auto-fit`, so the width at which the
+ * header grows is a number written down beside the padding that answers it,
+ * not one that moves whenever a label does.
+ *
+ * Each tier reserves the measured header plus room for the heading to clear
+ * it, the same margin the 128/123 pairing above leaves.
+ */
+@media (max-width: 560px) {
+    .site-header-lite .browse-nav {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+
     #browse-main.affiliates-only {
-        padding-top: 146px;
+        padding-top: 172px;
+    }
+}
+
+@media (max-width: 360px) {
+    #browse-main.affiliates-only {
+        padding-top: 188px;
     }
 }
 

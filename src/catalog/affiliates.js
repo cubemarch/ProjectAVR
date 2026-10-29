@@ -292,8 +292,19 @@ export const AFFILIATE_LINK_REL = 'sponsored nofollow noopener noreferrer';
  * the `refid`/`refId` note above, which this inherits — their storefront reads
  * the lowercase spelling.
  *
+ * ## Every storefront names the parameter it is paid on
+ *
+ * `paidBy` is the one key in `query` that a commission turns on, and the
+ * test that every storefront is attributed checks that key rather than a
+ * spelling. AEBN pays on `refid`; SexLikeReal pays on `a`. Without it the
+ * check would either have to know every partner's spelling or accept any
+ * query at all, and the second is how a link that pays nobody ships.
+ *
+ * `icon` is a name from `ui/icons.js`, `film` when it is left out.
+ *
  * @typedef {{id: string, partner: string, label: string, base: string,
- *            query: Record<string,string>}} AffiliateStorefront
+ *            query: Record<string,string>, paidBy: string,
+ *            icon?: string}} AffiliateStorefront
  * @type {AffiliateStorefront[]}
  */
 export const AFFILIATE_STOREFRONTS = [
@@ -311,7 +322,50 @@ export const AFFILIATE_STOREFRONTS = [
         // the disclosure beside it already says the link is paid.
         label: 'All Movies',
         base: 'https://straight.aebn.com/straight/',
-        query: { refid: 'AEBN-119817', salesToolId: '4', campaignId: '33970' }
+        query: { refid: 'AEBN-119817', salesToolId: '4', campaignId: '33970' },
+        paidBy: 'refid'
+    },
+
+    // SexLikeReal (David, 2026-10-29). The three of the seven links in their
+    // affiliate panel that describe a destination rather than a slice of one,
+    // on the default 35% revenue-share campaign. VR-native, which is the
+    // half of `docs/SEARCH.md` §2 the AEBN feed cannot supply, and the
+    // storefront is the part of it that needs no feed: a scene row waits on
+    // one they support, not on `api.sexlikereal.com`, which is an internal
+    // database dump that happens to answer.
+    //
+    // **Known: in an age-verification state the code does not survive the
+    // first redirect.** From Florida and from Ohio (2026-10-29) every one of
+    // these answers `302 → /all-age` with `?a=` gone, setting only an
+    // `s_did` device cookie. Whether their side credits the sale against
+    // that device on the way past is not visible from here and has been
+    // asked; until it is answered, treat sales from those states as unpaid.
+    {
+        id: 'slr-tour',
+        partner: 'SexLikeReal',
+        label: 'VR Porn',
+        icon: 'headset',
+        base: 'https://www.sexlikereal.com/',
+        query: { a: '6ae1102714725ced370f8a8a' },
+        paidBy: 'a'
+    },
+    {
+        id: 'slr-free',
+        partner: 'SexLikeReal',
+        label: 'Free VR',
+        icon: 'play',
+        base: 'https://www.sexlikereal.com/free-vr-porn',
+        query: { a: '6ae1102714725ced370f8a8a' },
+        paidBy: 'a'
+    },
+    {
+        id: 'slr-cams',
+        partner: 'SexLikeReal',
+        label: 'VR Cams',
+        icon: 'users',
+        base: 'https://www.sexlikereal.com/vr-cam-girls',
+        query: { a: '6ae1102714725ced370f8a8a' },
+        paidBy: 'a'
     }
 ];
 
