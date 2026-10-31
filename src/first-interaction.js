@@ -35,7 +35,7 @@ import { EVENTS, track } from './analytics.js';
  * Two categorical parameters, under the rule at the head of `analytics.js`:
  * which kind of input it was, and how long after the page started, in four
  * coarse bands. The band is what distinguishes a reflexive click on the
- * welcome box from somebody who read for half a minute first, and it is the
+ * age gate from somebody who read for half a minute first, and it is the
  * same four strings for everybody.
  */
 

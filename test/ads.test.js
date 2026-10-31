@@ -416,21 +416,14 @@ test('the age gate is the top layer, then the interstitial, then the banner, the
     // banner because they offer the same gate and the standing strip should
     // not poke through this one's backdrop; under the dialog for the reason
     // below.
-    //
-    // The welcome greeting joined later the same day, at the bottom of the
-    // group. It is the one overlay here that is not an age surface, which is
-    // exactly why it is pinned: it takes no consent and gates nothing, so
-    // there is no reading on which it belongs over a dialog that does.
     const gate = CSS.match(/\.age-gate\s*\{[^}]*?z-index:\s*(\d+)/)?.[1];
     const image = CSS.match(/\.image-gate\s*\{[^}]*?z-index:\s*(\d+)/)?.[1];
     const banner = CSS.match(/\.age-banner\s*\{[^}]*?z-index:\s*(\d+)/)?.[1];
-    const welcome = CSS.match(/\.welcome-modal\s*\{[^}]*?z-index:\s*(\d+)/)?.[1];
     const card = CSS.match(/\.star-bio\s*\{[^}]*?z-index:\s*(\d+)/)?.[1];
 
     assert.ok(gate, '.age-gate has no z-index at all');
     assert.ok(image, '.image-gate has no z-index at all');
     assert.ok(banner, '.age-banner has no z-index at all');
-    assert.ok(welcome, '.welcome-modal has no z-index at all');
     assert.ok(card, '.star-bio has no z-index at all');
 
     const all = zIndexes();
@@ -444,10 +437,9 @@ test('the age gate is the top layer, then the interstitial, then the banner, the
     // is not a cosmetic defect.
     assert.ok(Number(gate) > Number(image), 'the interstitial can cover the dialog it opens');
     assert.ok(Number(image) > Number(banner), 'the banner can poke through the interstitial');
-    assert.ok(Number(banner) > Number(welcome), 'a greeting can cover an age surface');
-    assert.ok(Number(welcome) > Number(card), 'the profile card can cover the greeting');
+    assert.ok(Number(banner) > Number(card), 'the profile card can cover the age banner');
 
-    const overlays = [Number(gate), Number(image), Number(banner), Number(welcome)];
+    const overlays = [Number(gate), Number(image), Number(banner)];
     const others = all.filter((n) => !overlays.includes(n));
     assert.equal(
         Number(card),
