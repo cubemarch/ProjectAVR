@@ -73,9 +73,26 @@ export const MOBILE_BREAKPOINT_PX = 760;
  * empty — silently, since both would still be valid markup. `test/ads.test.js`
  * pins the uniqueness rather than leaving it to review.
  *
+ * ## `sfw`: the only thing an unverified visitor is ever served
+ *
+ * An unverified visitor may not see genitals, and an ad cannot be run through
+ * the censor — `adsEnabled()` in `juicyads.js` says why. So the adult zones
+ * above are never drawn for them. A placement that also has an `sfw` pair is
+ * drawn for them from that pair instead, with the same floor and the same
+ * viewport split; a placement without one draws nothing, as before.
+ *
+ * What makes a zone SFW is its setting in the JuicyAds dashboard, not anything
+ * in this file. This file's job is the other half: that an unverified visitor
+ * is never handed a zone that is *not* one of these. `juicyads.js` enforces it
+ * twice, once when the markup is built and again when zones are queued.
+ *
+ * An SFW zone id is still a zone id: it may not appear anywhere else in this
+ * file, for the same DOM-id reason as every other.
+ *
  * @typedef {{zone: number|null, width: number, height: number}} AdSize
  * @typedef {{id: string, label: string, desktopMinWidth?: number,
- *            desktop: AdSize, mobile: AdSize}} AdPlacement
+ *            desktop: AdSize, mobile: AdSize,
+ *            sfw?: {desktop: AdSize, mobile: AdSize}}} AdPlacement
  * @type {AdPlacement[]}
  */
 export const AD_PLACEMENTS = [
@@ -129,7 +146,20 @@ export const AD_PLACEMENTS = [
         // still exactly where it is.
         label: 'Above the partner section',
         desktop: { zone: 1129394, width: 728, height: 90 },
-        mobile: { zone: 1129396, width: 300, height: 100 }
+        mobile: { zone: 1129396, width: 300, height: 100 },
+
+        // What an unverified visitor gets here instead, as of 2026-11-02.
+        // 1130677 is a zone created in the dashboard to serve SFW creatives
+        // only — see `sfw` in the typedef above for what that does and does
+        // not guarantee. 728x102, not 728x90: that is the size the dashboard
+        // gave the SFW leaderboard, and the reservation has to match it.
+        //
+        // No mobile id yet, so an unverified visitor on a phone gets nothing
+        // here, exactly as before.
+        sfw: {
+            desktop: { zone: 1130677, width: 728, height: 102 },
+            mobile: { zone: null, width: 300, height: 100 }
+        }
     },
     {
         id: 'pitch-billboard',

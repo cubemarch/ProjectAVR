@@ -149,18 +149,56 @@ export function anyZonesConfigured() {
     );
     return (
         inPlacements ||
+        sfwZones().size > 0 ||
         NATIVE_STRIP.zones.some((z) => cleanZone(z)) ||
         Boolean(cleanZone(BIO_CARD_AD.zone))
     );
 }
 
 /**
- * Whether this page may file impressions.
+ * Every zone an unverified visitor may be served: the `sfw` pairs, and nothing
+ * else. See the `sfw` section of `zones.js`.
  *
- * Three halves now. The host check keeps development out of the account; the
+ * @param {object[]} [placements]
+ * @returns {Set<number>}
+ */
+export function sfwZones(placements = AD_PLACEMENTS) {
+    const zones = new Set();
+    for (const p of placements) {
+        for (const tier of ['desktop', 'mobile']) {
+            const zone = cleanZone(p.sfw?.[tier]?.zone);
+            if (zone) zones.add(zone);
+        }
+    }
+    return zones;
+}
+
+/**
+ * Whether this zone may be queued for this visitor.
+ *
+ * Any configured zone for a verified visitor; an SFW zone and only an SFW zone
+ * for anybody else. This is the second of the two checks — the first is that
+ * {@link adSlotHtml} never builds an adult slot for an unverified visitor — and
+ * it exists so that one mistake in markup is not enough. A slot that reaches the
+ * DOM by a route that forgot `verified` is still never handed to the network.
+ *
+ * @param {number|null} zone
+ * @param {{verified?: boolean, placements?: object[]}} [opts]
+ * @returns {boolean}
+ */
+export function mayServe(zone, { verified = ageOk(), placements = AD_PLACEMENTS } = {}) {
+    if (!cleanZone(zone)) return false;
+    return verified || sfwZones(placements).has(cleanZone(zone));
+}
+
+/**
+ * Whether this page may file impressions at all.
+ *
+ * Two halves. The host check keeps development out of the account, and the
  * configuration check means a production deploy with no zones yet behaves
- * exactly like today's site rather than like a broken one; and the age check
- * is the subject of the section below.
+ * exactly like today's site rather than like a broken one. Who may be served
+ * which zone is decided per zone, by {@link mayServe} — the subject of the
+ * section below.
  *
  * ## An ad cannot be run through the censor, so it is not run at all
  *
@@ -186,20 +224,22 @@ export function anyZonesConfigured() {
  *     of invalid traffic and the category publisher accounts are closed over.
  *
  * So the rule — an unverified visitor does not see genitals — is enforced the
- * only way it can be here: the slots are not drawn and the loader is never
- * fetched. An unverified visitor sees no ads at all. That costs the revenue
- * from unverified traffic, which is the honest price of the rule, and it is
- * the same fail-closed posture as everything else in `docs/CENSOR.md` — the
- * failure covers more rather than less.
+ * only way it can be here: the adult slots are not drawn and their zones are
+ * never queued. Until 2026-11-02 that meant an unverified visitor saw no ads
+ * at all. Since then they are served the zones in each placement's `sfw` pair,
+ * which the dashboard restricts to SFW creatives, and nothing else. That moves
+ * the covering for those slots from our censor to the network's own category
+ * review, which is the one trade in this file that does not fail closed; it
+ * is bounded to the zones `zones.js` names as `sfw`, and a placement without
+ * one still draws nothing.
  *
  * `ageOk()` is false until the server has answered, so the first paint of a
- * page whose gate fetch is still in flight draws no slots either. `main.js`
- * resolves the state before the rows that contain them render, and
- * `onAgeChange` fills them in when a visitor passes the gate without a reload.
+ * page whose gate fetch is still in flight gets the SFW slots too. `main.js`
+ * resolves the state before the rows that contain them render, and a visitor
+ * who passes the gate reloads into the adult ones.
  */
 export function adsEnabled() {
     if (typeof window === 'undefined') return false;
-    if (!ageOk()) return false;
     if (!anyZonesConfigured()) return false;
     return AD_HOSTS.includes(window.location.hostname);
 }
@@ -226,10 +266,11 @@ export function adsEnabled() {
  * property of this module. Passing a synthetic list is how it stays tested.
  *
  * `verified` is the third seam and the reason all three exist as parameters
- * rather than as reads of global state: an unverified visitor gets no slot at
- * all — see {@link adsEnabled} for why an ad cannot be covered the way the
- * artwork around it is — and "draws nothing until verified" is a property
- * worth asserting from a test rather than inferring from a module-level flag.
+ * rather than as reads of global state: an unverified visitor gets the
+ * placement's `sfw` pair or no slot at all — see {@link adsEnabled} for why an
+ * ad cannot be covered the way the artwork around it is — and "never an adult
+ * zone until verified" is a property worth asserting from a test rather than
+ * inferring from a module-level flag.
  *
  * @param {string} placementId
  * @param {{viewportWidth?: number, placements?: object[], verified?: boolean}} [opts]
@@ -239,12 +280,16 @@ export function adSlotHtml(
     placementId,
     { viewportWidth = viewport(), placements = AD_PLACEMENTS, verified = ageOk() } = {}
 ) {
-    if (!verified) return '';
-
     const placement = placements.find((p) => p.id === placementId);
     if (!placement) return '';
 
-    const size = pickSize(placement, viewportWidth);
+    // The SFW pair replaces both tiers rather than being merged with them, so
+    // an unset SFW tier is an empty slot, never a fall-through to the adult
+    // zone at that size. The floor stays the placement's own.
+    if (!verified && !placement.sfw) return '';
+    const tiers = verified ? placement : { ...placement, ...placement.sfw };
+
+    const size = pickSize(tiers, viewportWidth);
     const zone = cleanZone(size.zone);
     if (!zone) return '';
 
@@ -410,6 +455,10 @@ export function fillAdSlots(root = document) {
     for (const ins of slots) {
         const zone = cleanZone(ins.id);
         if (!zone) continue;
+
+        // Left unmarked, not marked and skipped: it was never asked for, and
+        // the reload on passing the gate rebuilds the page anyway.
+        if (!mayServe(zone)) continue;
 
         ins.setAttribute('data-ad-filled', '');
         window[AD_QUEUE].push({ adzone: zone });

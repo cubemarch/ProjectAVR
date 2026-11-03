@@ -10,8 +10,10 @@ import {
     anyZonesConfigured,
     bioCardAdHtml,
     cleanZone,
+    mayServe,
     nativeStripHtml,
-    pickSize
+    pickSize,
+    sfwZones
 } from '../src/ads/juicyads.js';
 import {
     AD_HOSTS,
@@ -37,10 +39,11 @@ import {
  * a phone, where it is clipped rather than scaled and the advertiser is billed
  * for an impression nobody could read.
  *
- * A third arrived on 2026-10-20: an unverified visitor gets no ad at all. The
- * cases below pass `verified: true` because they are about the first two
- * properties and would otherwise all assert the third by accident; the third
- * has a case of its own.
+ * A third arrived on 2026-10-20: an unverified visitor gets no adult zone at
+ * all — since 2026-11-02, only a placement's `sfw` pair or nothing. The cases
+ * below pass `verified: true` because they are about the first two properties
+ * and would otherwise all assert the third by accident; the third has cases of
+ * its own.
  *
  * Nothing here touches a DOM or a network. `adSlotHtml` takes the viewport
  * width as a parameter for exactly that reason.
@@ -95,6 +98,7 @@ test('no zone id is used twice', () => {
     for (const p of AD_PLACEMENTS) {
         for (const tier of ['desktop', 'mobile']) {
             if (p[tier].zone !== null) ids.push(p[tier].zone);
+            if (p.sfw && p.sfw[tier].zone !== null) ids.push(p.sfw[tier].zone);
         }
     }
     ids.push(...NATIVE_STRIP.zones);
@@ -243,7 +247,7 @@ test('one tier configured does not render the other', () => {
     );
 });
 
-test('an unverified visitor is served no ad of any shape', () => {
+test('an unverified visitor is never served an adult zone', () => {
     // The one rule on this site is that an unverified visitor does not see
     // genitals, and every other surface honours it by covering the artwork —
     // `services/censor/` pixelates it and `server/media/proxy.js` is how it
@@ -252,38 +256,101 @@ test('an unverified visitor is served no ad of any shape', () => {
     // loader from the network's own CDN, and frequently is not even an image.
     // There is no URL to sign and no bytes to pixelate.
     //
-    // So the slot is not drawn. This is the assertion that keeps it that way,
-    // and it covers all three entry points rather than the one, because they
-    // are three separate functions and an ad that escapes through any of them
-    // is uncensored adult material in front of somebody who has not verified.
+    // So an adult zone is not drawn. What may be drawn instead is a zone the
+    // dashboard restricts to SFW creatives, named as `sfw` in `zones.js`. This
+    // covers all three entry points rather than the one, because they are
+    // three separate functions and an adult zone that escapes through any of
+    // them is uncensored material in front of somebody who has not verified.
+    const sfw = sfwZones();
+
     for (const viewportWidth of [DESKTOP, TABLET, PHONE]) {
-        for (const id of AD_PLACEMENTS.map((p) => p.id)) {
-            assert.equal(
-                adSlotHtml(id, { viewportWidth, verified: false }),
-                '',
-                `${id} at ${viewportWidth}px is drawn to an unverified visitor`
-            );
+        for (const p of AD_PLACEMENTS) {
+            const html = adSlotHtml(p.id, { viewportWidth, verified: false });
+            const zones = [...html.matchAll(/<ins [^>]*id="(\d+)"/g)].map((m) => Number(m[1]));
+
+            for (const zone of zones) {
+                assert.ok(sfw.has(zone), `${p.id} at ${viewportWidth}px serves ${zone}, which is not an SFW zone`);
+            }
+            if (!p.sfw) assert.equal(html, '', `${p.id} has no SFW pair and still draws at ${viewportWidth}px`);
         }
     }
 
     assert.equal(nativeStripHtml(NATIVE_STRIP, { verified: false }), '', 'the native strip');
     assert.equal(bioCardAdHtml(BIO_CARD_AD, { verified: false }), '', 'the profile card unit');
+});
 
-    // Not merely "no zone id": no reserved space and no label either. A
-    // labelled empty box would tell a visitor an ad failed to load, when what
-    // actually happened is that we declined to ask for one.
-    const any = AD_PLACEMENTS.map((p) => adSlotHtml(p.id, { viewportWidth: DESKTOP, verified: false })).join('');
+test('the SFW leaderboard is 1130677, on desktop, for an unverified visitor only', () => {
+    const unverified = adSlotHtml('top-leaderboard', { viewportWidth: DESKTOP, verified: false });
 
-    assert.doesNotMatch(any, /Advertisement/, 'and it does not say so');
-    assert.doesNotMatch(any, /--ad-[wh]:/, 'and reserves nothing');
+    assert.match(unverified, /id="1130677"/);
+    assert.match(unverified, /data-width="728"/);
+    assert.match(unverified, /data-height="102"/);
+    assert.match(unverified, /--ad-h:102px/, 'the reservation is the SFW size, not the adult 90');
+    assert.doesNotMatch(unverified, /1129394|1129396/, 'the adult leaderboard is in the markup as well');
+
+    // No SFW mobile id, so a phone gets nothing — not the adult mobile zone at
+    // that size. That fall-through is the mistake this placement invites.
+    assert.equal(adSlotHtml('top-leaderboard', { viewportWidth: PHONE, verified: false }), '');
+
+    // A verified visitor keeps the adult zone, and never sees the SFW one.
+    const verified = adSlotHtml('top-leaderboard', { viewportWidth: DESKTOP, verified: true });
+    assert.match(verified, /id="1129394"/);
+    assert.doesNotMatch(verified, /1130677/);
+});
+
+test('an unset SFW tier is empty, never the adult zone at that size', () => {
+    const placements = [
+        {
+            id: 'half-sfw',
+            label: 'An SFW desktop zone and no SFW mobile one',
+            desktop: { zone: 11, width: 728, height: 90 },
+            mobile: { zone: 12, width: 300, height: 100 },
+            sfw: {
+                desktop: { zone: 21, width: 728, height: 102 },
+                mobile: { zone: null, width: 300, height: 100 }
+            }
+        }
+    ];
+
+    assert.match(adSlotHtml('half-sfw', { viewportWidth: DESKTOP, placements, verified: false }), /id="21"/);
+    assert.equal(adSlotHtml('half-sfw', { viewportWidth: PHONE, placements, verified: false }), '');
+});
+
+test('only an SFW zone may be queued for an unverified visitor', () => {
+    // The second lock. `fillAdSlots` pushes whatever `<ins>` it finds, so a
+    // slot built by a route that forgot `verified` would otherwise reach the
+    // network. This is the check it makes per zone before pushing.
+    const adult = [];
+    for (const p of AD_PLACEMENTS) adult.push(p.desktop.zone, p.mobile.zone);
+    adult.push(...NATIVE_STRIP.zones, BIO_CARD_AD.zone);
+
+    for (const zone of adult.filter((z) => z !== null)) {
+        assert.equal(mayServe(zone, { verified: false }), false, `${zone} is queued for an unverified visitor`);
+        assert.equal(mayServe(zone, { verified: true }), true, `${zone} is withheld from a verified one`);
+    }
+
+    assert.equal(mayServe(1130677, { verified: false }), true, 'the SFW leaderboard');
+    assert.equal(mayServe('12"><x', { verified: true }), false, 'junk is not a zone for anybody');
+
+    // And the default is the unverified answer, as everywhere else here.
+    assert.equal(mayServe(1129394), false);
+});
+
+test('every SFW creative fits the floor it is served from', () => {
+    for (const p of AD_PLACEMENTS.filter((p) => p.sfw)) {
+        const floor = p.desktopMinWidth || MOBILE_BREAKPOINT_PX;
+        assert.ok(p.sfw.desktop.width <= floor, `${p.id} SFW serves ${p.sfw.desktop.width}px from ${floor}px up`);
+        assert.ok(p.sfw.mobile.width <= 320, `${p.id} SFW mobile is too wide for 320`);
+    }
 });
 
 test('withholding is the default, not something a caller has to ask for', () => {
     // `verified` defaults to `ageOk()`, which is false until the server has
     // answered. The risk this guards is the ordering one: a slot rendered
     // during the window between first paint and the gate fetch landing. A
-    // default of "shown" would make that window an ad impression.
-    assert.equal(adSlotHtml('top-leaderboard', { viewportWidth: DESKTOP }), '');
+    // default of "verified" would make that window an adult impression.
+    assert.doesNotMatch(adSlotHtml('top-leaderboard', { viewportWidth: DESKTOP }), /1129394/);
+    assert.equal(adSlotHtml('mid-billboard', { viewportWidth: DESKTOP }), '');
     assert.equal(nativeStripHtml(), '');
     assert.equal(bioCardAdHtml(), '');
 });

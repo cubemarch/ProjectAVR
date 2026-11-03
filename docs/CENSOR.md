@@ -19,7 +19,7 @@ on it reaches a signed-out visitor:
 | Our own posters and backdrops | shown uncovered | **covered and shown** |
 | Creator avatars, on profiles and channel pages | shown uncovered | **covered and shown** |
 | Video playback, anywhere | played | **withheld** — see [below](#video-is-withheld-not-covered) |
-| Ad slots | shown | **withheld** — see [below](#ads-cannot-be-covered) |
+| Ad slots | shown | **adult zones withheld**, SFW zones shown — see [below](#ads-cannot-be-covered) |
 
 The cam change is a *relaxation*, and that is the point. A blank row protects
 nobody and persuades nobody: a visitor who is shown nothing has no reason to
@@ -632,11 +632,25 @@ its own sufficient:
   billing event. Filing impressions a network cannot verify is invalid traffic,
   and it is the category publisher accounts in this vertical get closed over.
 
-So the enforceable equivalent is to withhold the slots entirely:
-`adsEnabled()` in `src/ads/juicyads.js` returns false for an unverified
-visitor, and all three markup functions return an empty string. Withholding is
-the default rather than something a caller opts into — `verified` defaults to
-`ageOk()`, so a new call site that forgets the parameter emits no ad.
+So the enforceable equivalent is to withhold the adult zones entirely. For an
+unverified visitor, all three markup functions in `src/ads/juicyads.js` refuse
+to build an adult zone, and `fillAdSlots` refuses to queue one even if it
+reaches the page. Withholding is the default rather than something a caller
+opts into — `verified` defaults to `ageOk()`, so a new call site that forgets
+the parameter emits no adult zone.
+
+### SFW zones, since 2026-11-02
+
+A placement may also name an `sfw` pair in `src/ads/zones.js`: zones created
+in the JuicyAds dashboard to serve SFW creatives only. An unverified visitor is
+served those, and nothing else. The first is the leaderboard, `1130677`
+(728x102, desktop only; phones get nothing).
+
+This is the one place where covering is not ours. What keeps genitals out of
+those slots is the network's category review of its advertisers, not the
+detector, so a miscategorised creative would get through. It is bounded to the
+zones named as `sfw`, and a placement without one draws nothing for an
+unverified visitor, as before.
 
 ## Tuning
 
