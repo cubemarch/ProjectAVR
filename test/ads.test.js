@@ -22,6 +22,10 @@ import {
     MOBILE_BREAKPOINT_PX,
     NATIVE_STRIP
 } from '../src/ads/zones.js';
+import { HOUSE_ADS, houseAdSrc } from '../src/ads/house.js';
+import { AFFILIATE_STOREFRONTS } from '../src/catalog/affiliates.js';
+
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 /**
  * Ad slots.
@@ -279,18 +283,83 @@ test('an unverified visitor is never served an adult zone', () => {
     assert.equal(bioCardAdHtml(BIO_CARD_AD, { verified: false }), '', 'the profile card unit');
 });
 
-test('the SFW leaderboard is off, and an unverified visitor gets an empty slot', () => {
-    // 1130677 served an adult creative on 2026-11-05 and was switched off;
-    // see the comment on `top-leaderboard` in `zones.js`. Until JuicyAds
-    // confirms it, neither lock may let it through.
-    assert.equal(adSlotHtml('top-leaderboard', { viewportWidth: DESKTOP, verified: false }), '');
-    assert.equal(adSlotHtml('top-leaderboard', { viewportWidth: PHONE, verified: false }), '');
+test('the SFW leaderboard is a covered SLR banner, and 1130677 stays off', () => {
+    // 1130677 served an adult creative on 2026-11-05; see `top-leaderboard`
+    // in `zones.js`. Its place is taken by a house banner, which goes through
+    // the censor — so neither lock may let the zone itself through.
     assert.equal(mayServe(1130677, { verified: false }), false);
 
-    // A verified visitor keeps the adult zone, and never sees the SFW one.
+    const desktop = adSlotHtml('top-leaderboard', { viewportWidth: DESKTOP, verified: false });
+    assert.match(desktop, /src="\/api\/house\/slr-premium"/);
+    assert.match(desktop, /--ad-h:90px/);
+    assert.doesNotMatch(desktop, /adsbyjuicy|1130677|1129394/);
+
+    const phone = adSlotHtml('top-leaderboard', { viewportWidth: PHONE, verified: false });
+    assert.match(phone, /src="\/api\/house\/slr-library"/);
+    assert.match(phone, /--ad-w:300px;--ad-h:250px/);
+
+    // A verified visitor keeps the paying zone and is never shown a house banner.
     const verified = adSlotHtml('top-leaderboard', { viewportWidth: DESKTOP, verified: true });
     assert.match(verified, /id="1129394"/);
-    assert.doesNotMatch(verified, /1130677/);
+    assert.doesNotMatch(verified, /api\/house/);
+});
+
+test('a house banner is only ever its covered copy, linked to a paid storefront', () => {
+    for (const p of AD_PLACEMENTS) {
+        for (const tier of ['desktop', 'mobile']) {
+            // The adult tiers never name one: that would show a banner
+            // nothing decided was for this visitor.
+            assert.equal(p[tier].house, undefined, `${p.id} ${tier} names a house banner outside its SFW pair`);
+
+            const id = p.sfw?.[tier]?.house;
+            if (!id) continue;
+
+            const ad = HOUSE_ADS[id];
+            assert.ok(ad, `${p.id} names house banner ${id}, which house.js does not have`);
+            assert.equal(p.sfw[tier].width, ad.width, `${p.id} ${tier} reserves the wrong width for ${id}`);
+            assert.equal(p.sfw[tier].height, ad.height, `${p.id} ${tier} reserves the wrong height for ${id}`);
+        }
+    }
+
+    for (const [id, ad] of Object.entries(HOUSE_ADS)) {
+        const storefront = AFFILIATE_STOREFRONTS.find((s) => s.id === ad.storefront);
+        assert.ok(storefront, `${id} links to ${ad.storefront}, which is not a storefront`);
+        assert.ok(ad.alt, `${id} has no alt text`);
+
+        // The file is in `server/`, not `public/`, so nothing serves it as
+        // shipped — and it is the size it claims to be.
+        const file = path.join(ROOT, 'server', 'house-ads', ad.file);
+        assert.ok(fs.existsSync(file), `${id}: ${ad.file} is missing`);
+        assert.ok(!fs.existsSync(path.join(ROOT, 'public', ad.file)), `${ad.file} is also in public/`);
+        const png = fs.readFileSync(file);
+        assert.equal(png.readUInt32BE(16), ad.width, `${ad.file} is not ${ad.width} wide`);
+        assert.equal(png.readUInt32BE(20), ad.height, `${ad.file} is not ${ad.height} high`);
+
+        assert.equal(houseAdSrc(id), `/api/house/${id}`);
+    }
+
+    const html = adSlotHtml('top-leaderboard', { viewportWidth: DESKTOP, verified: false });
+    assert.match(html, /rel="sponsored noopener"/);
+    assert.match(html, /data-storefront="slr-tour"/);
+    assert.match(html, /data-from="banner"/);
+    assert.match(html, /href="https:\/\/www\.sexlikereal\.com\/\?a=6ae1102714725ced370f8a8a"/);
+});
+
+test('an unknown house banner is an empty slot', () => {
+    const placements = [
+        {
+            id: 'bad-house',
+            label: 'A house banner that does not exist',
+            desktop: { zone: 11, width: 728, height: 90 },
+            mobile: { zone: 12, width: 300, height: 100 },
+            sfw: {
+                desktop: { zone: null, house: 'no-such-banner', width: 728, height: 90 },
+                mobile: { zone: null, house: '__proto__', width: 300, height: 100 }
+            }
+        }
+    ];
+    assert.equal(adSlotHtml('bad-house', { viewportWidth: DESKTOP, placements, verified: false }), '');
+    assert.equal(adSlotHtml('bad-house', { viewportWidth: PHONE, placements, verified: false }), '');
 });
 
 test('an unset SFW tier is empty, never the adult zone at that size', () => {

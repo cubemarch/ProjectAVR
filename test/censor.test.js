@@ -387,6 +387,47 @@ test('the thumbnail proxy takes a username, never a URL', async () => {
     assert.equal(res.status, 404, 'there is no URL-taking form of this route');
 });
 
+/* -------------------------------------------------------- house banners -- */
+
+const PNG = [0x89, 0x50, 0x4e, 0x47];
+const isPng = (buf) => PNG.every((b, i) => buf[i] === b);
+
+test('a house banner is the covered copy or the placeholder, never the file as shipped', async () => {
+    // Unconfigured first: the one state where returning the PNG would be the
+    // easy thing to do, and the one this route must answer with the
+    // placeholder instead.
+    reset();
+    let res = await realFetch(`http://127.0.0.1:${server.address().port}/api/house/slr-premium`);
+    assert.equal(res.headers.get('content-type'), 'image/svg+xml');
+    assert.ok(!isPng(Buffer.from(await res.arrayBuffer())), 'the original went out uncovered');
+
+    reset();
+    configure();
+    const calls = stub({ image: okImage, scan: okScan });
+
+    res = await realFetch(`http://127.0.0.1:${server.address().port}/api/house/slr-premium`);
+    assert.equal(res.headers.get('content-type'), 'image/jpeg');
+    assert.equal(Buffer.from(await res.arrayBuffer()).toString(), 'covered-jpeg-bytes');
+    assert.match(res.headers.get('x-robots-tag') ?? '', /noindex/);
+
+    // The service was handed the banner itself, and nothing was fetched from
+    // anywhere else to get it.
+    const scans = calls.filter((c) => c.url.includes('censor.example'));
+    assert.equal(scans.length, 1);
+    assert.equal(calls.length, 1, 'a house banner is read from disk, not fetched');
+});
+
+test('a house banner id the list does not have is the placeholder', async () => {
+    reset();
+    configure();
+    stub({ image: okImage, scan: okScan });
+
+    for (const id of ['nope', '__proto__', 'constructor', '..%2F..%2Fpackage.json']) {
+        const res = await realFetch(`http://127.0.0.1:${server.address().port}/api/house/${id}`);
+        assert.equal(res.headers.get('content-type'), 'image/svg+xml', id);
+    }
+});
+
 test.after(() => {
     reset();
     server.close();

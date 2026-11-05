@@ -138,9 +138,12 @@ export class BrowseUI extends pc.EventHandler {
                 // survives the wording changing; text scraped out of the page
                 // is also the shape this file is not allowed to send, and only
                 // happens to be harmless while the one label is "All Movies".
+                // `from` is `banner` for a house banner in an ad slot and
+                // absent for the masthead pill, which share an id.
                 track(EVENTS.STOREFRONT_CLICK, {
                     storefront: storefront.dataset.storefront,
-                    partner: storefront.dataset.partner
+                    partner: storefront.dataset.partner,
+                    from: storefront.dataset.from
                 });
                 return;
             }

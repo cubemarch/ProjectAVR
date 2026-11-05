@@ -31,6 +31,7 @@ import { mountCams } from './routes/cams.js';
 import { mountBang } from './routes/bang.js';
 import { mountAebn } from './routes/aebn.js';
 import { mountMedia } from './routes/media.js';
+import { mountHouseAds } from './routes/house.js';
 import { mountCredits } from './credits/index.js';
 import { paymentsBanner } from './credits/providers.js';
 import { mountUnsubscribe } from './mail/unsubscribe.js';
@@ -463,6 +464,7 @@ mountAebn(app);
 // serves images, but what it is is the other half of `mountBang`, `mountAebn`
 // and the star pages - see `server/media/proxy.js`.
 mountMedia(app);
+mountHouseAds(app);
 mountLive(app);
 
 // Claims `/live/hls` and `/live/transcode`, so it has to come before the

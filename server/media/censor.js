@@ -177,7 +177,30 @@ export async function censorStored(key) {
 }
 
 /**
- * The cache, shared by both entry points.
+ * Cover bytes this server already holds, and return the JPEG.
+ *
+ * For the house banners in `server/house-ads.js`: files shipped with the app,
+ * so there is neither a fetch nor a bucket read, only the same sniff and the
+ * same scan. Same contract as {@link censor} — `null` on anything wrong, never
+ * the original.
+ *
+ * @param {string} id Namespaces the cache entry; a house banner's id.
+ * @param {Buffer} body
+ * @returns {Promise<Buffer|null>}
+ */
+export async function censorBytes(id, body) {
+    return through(`house:${id}`, STATIC_TTL_MS, async () => {
+        if (!isConfigured() || !body?.length) return null;
+
+        const type = sniff(body);
+        if (!type) return null;
+
+        return scan({ body, type });
+    });
+}
+
+/**
+ * The cache, shared by every entry point.
  *
  * @param {string} cacheKey Namespaced, so a partner URL and a storage key
  *   cannot collide.

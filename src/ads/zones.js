@@ -89,7 +89,12 @@ export const MOBILE_BREAKPOINT_PX = 760;
  * An SFW zone id is still a zone id: it may not appear anywhere else in this
  * file, for the same DOM-id reason as every other.
  *
- * @typedef {{zone: number|null, width: number, height: number}} AdSize
+ * An SFW tier may name a `house` banner instead of a zone: one of the partner
+ * creatives in `house.js`, which we hold and which goes through the censor on
+ * its way out. When both are set the zone wins. A house banner has no DOM id,
+ * so the same one may appear in more than one placement.
+ *
+ * @typedef {{zone: number|null, width: number, height: number, house?: string}} AdSize
  * @typedef {{id: string, label: string, desktopMinWidth?: number,
  *            desktop: AdSize, mobile: AdSize,
  *            sfw?: {desktop: AdSize, mobile: AdSize}}} AdPlacement
@@ -164,9 +169,16 @@ export const AD_PLACEMENTS = [
         // is nothing this file can fix, so the desktop zone is null and an
         // unverified visitor gets an empty slot. Put the id back only once
         // JuicyAds confirms the zone carries SFW creatives and nothing else.
+        //
+        // In its place, the same day: SexLikeReal's own banners, held here
+        // and covered on the way out — see `house.js`. 728x90 on desktop,
+        // where 1130677 was, and a 300x250 on phones, which this placement
+        // never had for an unverified visitor before. The height is the
+        // banner's, not the leaderboard's 100: the reservation follows the
+        // creative.
         sfw: {
-            desktop: { zone: null, width: 728, height: 102 },
-            mobile: { zone: null, width: 300, height: 100 }
+            desktop: { zone: null, house: 'slr-premium', width: 728, height: 90 },
+            mobile: { zone: null, house: 'slr-library', width: 300, height: 250 }
         }
     },
     {
@@ -214,7 +226,15 @@ export const AD_PLACEMENTS = [
         // instead, which is the right unit for a tablet anyway.
         desktopMinWidth: 940,
         desktop: { zone: 1129400, width: 908, height: 258 },
-        mobile: { zone: 1129401, width: 300, height: 250 }
+        mobile: { zone: 1129401, width: 300, height: 250 },
+
+        // The second of SexLikeReal's 300x250s, for an unverified visitor
+        // below the floor (2026-11-05). Nothing above it: there is no house
+        // banner at 908x258, and the leaderboard already carries the 728x90.
+        sfw: {
+            desktop: { zone: null, width: 908, height: 258 },
+            mobile: { zone: null, house: 'slr-library-4k', width: 300, height: 250 }
+        }
     },
     {
         id: 'footer-leaderboard',

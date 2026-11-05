@@ -5831,6 +5831,21 @@ body.scene-panel-open {
     max-width: 100%;
 }
 
+/* A house banner (`src/ads/house.js`) takes the place of the `<ins>`, at the
+ * same reserved size. `height: auto` under the max-width so a phone narrower
+ * than the banner scales it rather than squashing it. */
+.ad-slot-house > a {
+    display: block;
+    max-width: 100%;
+}
+
+.ad-slot-house img {
+    display: block;
+    width: var(--ad-w);
+    max-width: 100%;
+    height: auto;
+}
+
 /*
  * "Advertisement".
  *

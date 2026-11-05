@@ -75,6 +75,8 @@
 
 import { AD_HOSTS, AD_PLACEMENTS, BIO_CARD_AD, MOBILE_BREAKPOINT_PX, NATIVE_STRIP } from './zones.js';
 import { ageOk } from '../age-state.js';
+import { AFFILIATE_STOREFRONTS, storefrontUrl } from '../catalog/affiliates.js';
+import { HOUSE_ADS, houseAdSrc } from './house.js';
 
 /**
  * The network's loader.
@@ -291,6 +293,12 @@ export function adSlotHtml(
 
     const size = pickSize(tiers, viewportWidth);
     const zone = cleanZone(size.zone);
+
+    // A house banner, only ever from the SFW pair: `placement` itself never
+    // names one, and `tiers` is the SFW pair only when unverified.
+    if (!zone && !verified && size.house) {
+        return houseSlotHtml(size.house, size.width, size.height, `ad-slot-${placementId}`);
+    }
     if (!zone) return '';
 
     return slotHtml(zone, size.width, size.height, `ad-slot-${placementId}`);
@@ -362,6 +370,35 @@ function slotHtml(zone, width, height, className) {
         `</aside>`
     );
 }
+
+/**
+ * A house banner, as HTML: the covered image, linked to its storefront.
+ *
+ * Same box and the same label as a network slot, so the page cannot tell the
+ * two apart by shape. `data-storefront` is what the outbound listener in
+ * `browse.js` counts, and `data-from` says the click came from a banner and
+ * not the masthead pill with the same id. `rel="sponsored"` because it is a
+ * paid link, which is what that value is for.
+ *
+ * An id that `house.js` does not know is `''`, the same as an unset zone.
+ */
+function houseSlotHtml(id, width, height, className) {
+    const ad = Object.hasOwn(HOUSE_ADS, id) ? HOUSE_ADS[id] : null;
+    const storefront = ad && AFFILIATE_STOREFRONTS.find((s) => s.id === ad.storefront);
+    if (!storefront) return '';
+
+    return (
+        `<aside class="ad-slot ad-slot-house ${className}" style="--ad-w:${width}px;--ad-h:${height}px">` +
+        `<span class="ad-label">Advertisement</span>` +
+        `<a href="${escapeAttr(storefrontUrl(storefront))}" target="_blank" rel="sponsored noopener"` +
+        ` data-storefront="${escapeAttr(storefront.id)}" data-partner="${escapeAttr(storefront.partner)}" data-from="banner">` +
+        `<img src="${escapeAttr(houseAdSrc(id))}" width="${width}" height="${height}" alt="${escapeAttr(ad.alt)}" loading="lazy" decoding="async">` +
+        `</a></aside>`
+    );
+}
+
+const escapeAttr = (v) =>
+    String(v).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
 /* --------------------------------------------------------------- fill -- */
 

@@ -19,7 +19,7 @@ on it reaches a signed-out visitor:
 | Our own posters and backdrops | shown uncovered | **covered and shown** |
 | Creator avatars, on profiles and channel pages | shown uncovered | **covered and shown** |
 | Video playback, anywhere | played | **withheld** — see [below](#video-is-withheld-not-covered) |
-| Ad slots | shown | **adult zones withheld**, SFW zones shown (none at present) — see [below](#ads-cannot-be-covered) |
+| Ad slots | shown | **adult zones withheld**; SexLikeReal banners we hold, **covered and shown** — see [below](#ads-cannot-be-covered) |
 
 The cam change is a *relaxation*, and that is the point. A blank row protects
 nobody and persuades nobody: a visitor who is shown nothing has no reason to
@@ -659,6 +659,25 @@ an unverified visitor gets an empty slot everywhere, which is where this was
 before 2026-11-02. It goes back only once JuicyAds confirms the zone is
 restricted to SFW creatives. Even then, check it again from a private
 window, not just in the dashboard.
+
+### House banners, since 2026-11-05
+
+Covering a network ad was never possible because we never hold the image.
+So the slots an unverified visitor sees now carry images we do hold: three
+SexLikeReal banners in `server/house-ads/`, defined in `src/ads/house.js` and
+linked to the `slr-tour` storefront. The leaderboard shows the 728x90 on
+desktop and a 300x250 on phones, and the mid billboard shows the other
+300x250 on phones. A verified visitor still gets the JuicyAds zones.
+
+They were supplied as SFW and are covered anyway, by `/api/house/:id`, which
+answers the way `/api/media` does: the covered copy or the placeholder, never
+the file as shipped. That is not a formality. On the first run the model
+covered the chests on both 300x250s and an explicit scene thumbnail at the
+right-hand end of the 728x90. A dead censor service gives the placeholder.
+Changing the banners does not change this rule.
+
+The SLR skyscraper supplied with them (180x1030) is not used. No slot on the
+page is that shape, and it is the most explicit of the four.
 
 ## Tuning
 
