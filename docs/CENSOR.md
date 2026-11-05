@@ -19,7 +19,7 @@ on it reaches a signed-out visitor:
 | Our own posters and backdrops | shown uncovered | **covered and shown** |
 | Creator avatars, on profiles and channel pages | shown uncovered | **covered and shown** |
 | Video playback, anywhere | played | **withheld** — see [below](#video-is-withheld-not-covered) |
-| Ad slots | shown | **adult zones withheld**, SFW zones shown — see [below](#ads-cannot-be-covered) |
+| Ad slots | shown | **adult zones withheld**, SFW zones shown (none at present) — see [below](#ads-cannot-be-covered) |
 
 The cam change is a *relaxation*, and that is the point. A blank row protects
 nobody and persuades nobody: a visitor who is shown nothing has no reason to
@@ -651,6 +651,14 @@ those slots is the network's category review of its advertisers, not the
 detector, so a miscategorised creative would get through. It is bounded to the
 zones named as `sfw`, and a placement without one draws nothing for an
 unverified visitor, as before.
+
+**That failure happened on 2026-11-05, and `1130677` is switched off.** The
+zone served an AI "flirt partner" creative that was adult to a visitor who had
+not passed the gate. The leaderboard's `sfw.desktop.zone` is now `null`, so
+an unverified visitor gets an empty slot everywhere, which is where this was
+before 2026-11-02. It goes back only once JuicyAds confirms the zone is
+restricted to SFW creatives. Even then, check it again from a private
+window, not just in the dashboard.
 
 ## Tuning
 

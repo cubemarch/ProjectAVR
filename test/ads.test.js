@@ -279,18 +279,13 @@ test('an unverified visitor is never served an adult zone', () => {
     assert.equal(bioCardAdHtml(BIO_CARD_AD, { verified: false }), '', 'the profile card unit');
 });
 
-test('the SFW leaderboard is 1130677, on desktop, for an unverified visitor only', () => {
-    const unverified = adSlotHtml('top-leaderboard', { viewportWidth: DESKTOP, verified: false });
-
-    assert.match(unverified, /id="1130677"/);
-    assert.match(unverified, /data-width="728"/);
-    assert.match(unverified, /data-height="102"/);
-    assert.match(unverified, /--ad-h:102px/, 'the reservation is the SFW size, not the adult 90');
-    assert.doesNotMatch(unverified, /1129394|1129396/, 'the adult leaderboard is in the markup as well');
-
-    // No SFW mobile id, so a phone gets nothing — not the adult mobile zone at
-    // that size. That fall-through is the mistake this placement invites.
+test('the SFW leaderboard is off, and an unverified visitor gets an empty slot', () => {
+    // 1130677 served an adult creative on 2026-11-05 and was switched off;
+    // see the comment on `top-leaderboard` in `zones.js`. Until JuicyAds
+    // confirms it, neither lock may let it through.
+    assert.equal(adSlotHtml('top-leaderboard', { viewportWidth: DESKTOP, verified: false }), '');
     assert.equal(adSlotHtml('top-leaderboard', { viewportWidth: PHONE, verified: false }), '');
+    assert.equal(mayServe(1130677, { verified: false }), false);
 
     // A verified visitor keeps the adult zone, and never sees the SFW one.
     const verified = adSlotHtml('top-leaderboard', { viewportWidth: DESKTOP, verified: true });
@@ -329,7 +324,6 @@ test('only an SFW zone may be queued for an unverified visitor', () => {
         assert.equal(mayServe(zone, { verified: true }), true, `${zone} is withheld from a verified one`);
     }
 
-    assert.equal(mayServe(1130677, { verified: false }), true, 'the SFW leaderboard');
     assert.equal(mayServe('12"><x', { verified: true }), false, 'junk is not a zone for anybody');
 
     // And the default is the unverified answer, as everywhere else here.

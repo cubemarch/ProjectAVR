@@ -156,8 +156,16 @@ export const AD_PLACEMENTS = [
         //
         // No mobile id yet, so an unverified visitor on a phone gets nothing
         // here, exactly as before.
+        //
+        // **Switched off on 2026-11-05.** 1130677 was caught serving an
+        // adult creative (an AI "flirt partner" ad) to a visitor who had not
+        // passed the gate: the zone is not restricted to SFW in the
+        // dashboard, or the network's review let it through. Either way it
+        // is nothing this file can fix, so the desktop zone is null and an
+        // unverified visitor gets an empty slot. Put the id back only once
+        // JuicyAds confirms the zone carries SFW creatives and nothing else.
         sfw: {
-            desktop: { zone: 1130677, width: 728, height: 102 },
+            desktop: { zone: null, width: 728, height: 102 },
             mobile: { zone: null, width: 300, height: 100 }
         }
     },
