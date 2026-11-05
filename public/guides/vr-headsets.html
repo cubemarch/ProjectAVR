@@ -1,0 +1,531 @@
+<!doctype html>
+<!--
+    DRAFT. Three things to do before this is published, and none of them is
+    optional:
+
+    1. Fill in every `.todo` box with first-hand notes, then delete the boxes.
+       They are the part of this page a search engine cannot get anywhere else.
+    2. Re-check every spec marked "reported" or "unknown" against Meta's own
+       page (https://www.meta.com/vr-glasses/). Specs change before launch.
+    3. Swap the robots tag below to "index, follow" and add
+       <link rel="canonical" href="https://lustxr.com/guides/vr-headsets" />.
+       The route already exists, and the sitemap lists this page by itself
+       the moment the noindex is gone (`server/guides.js`).
+
+    Until then it is noindex and nothing links to it. `npm test` fails if the
+    noindex goes while a draft box is still here.
+-->
+<html lang="en">
+    <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <meta name="theme-color" content="#0b0b0f" />
+        <title>Next-gen VR headsets, compared · LustXR</title>
+        <meta
+            name="description"
+            content="A friendly guide to the VR headsets worth buying for VR video, from Meta Quest 3S to Steam Frame, Galaxy XR, Bigscreen Beyond 2 and the Meta VR Glasses coming in spring 2027, with full specs and what they mean."
+        />
+        <meta name="rating" content="adult" />
+        <meta name="rating" content="RTA-5042-1996-1400-1577-RTA" />
+        <meta name="robots" content="noindex, follow" />
+        <link rel="stylesheet" href="/legal/page.css" />
+        <style>
+            /* Only what this page has that the policy pages do not: tables,
+               the spec cards and the draft markers. Same palette, from
+               page.css. */
+            .table-scroll {
+                overflow-x: auto;
+                margin: 0 0 20px;
+                border: 1px solid var(--line);
+                border-radius: 8px;
+            }
+            table {
+                width: 100%;
+                min-width: 640px;
+                border-collapse: collapse;
+                font-size: 14px;
+            }
+            th,
+            td {
+                text-align: left;
+                vertical-align: top;
+                padding: 9px 12px;
+                border-bottom: 1px solid var(--line);
+            }
+            th {
+                color: var(--text);
+                font-weight: 600;
+                background: var(--raised);
+            }
+            tr:last-child td {
+                border-bottom: 0;
+            }
+            td:first-child {
+                color: var(--text);
+                font-weight: 600;
+                white-space: nowrap;
+            }
+            .tag {
+                display: inline-block;
+                font-size: 11px;
+                text-transform: uppercase;
+                letter-spacing: 0.06em;
+                padding: 1px 7px;
+                border-radius: 999px;
+                border: 1px solid var(--line);
+                color: var(--faint);
+                margin-left: 6px;
+                vertical-align: 2px;
+            }
+            .tag.new {
+                color: var(--accent);
+                border-color: rgba(124, 92, 255, 0.4);
+            }
+            .verdict {
+                padding: 12px 16px;
+                margin: 0 0 20px;
+                border-left: 3px solid var(--accent);
+                background: var(--raised);
+                border-radius: 0 8px 8px 0;
+                color: var(--text);
+            }
+            .todo {
+                padding: 12px 16px;
+                margin: 0 0 20px;
+                border: 2px dashed #e0a100;
+                border-radius: 8px;
+                color: #f5c84c;
+                font-size: 14px;
+            }
+            .todo::before {
+                content: 'DRAFT — your notes go here: ';
+                font-weight: 700;
+            }
+        </style>
+    </head>
+    <body>
+        <div class="wrap">
+            <header class="site">
+                <a class="brand" href="/">Lust<span>XR</span></a>
+                <nav><a href="/">Back to the site</a></nav>
+            </header>
+
+            <h1>Next-gen VR headsets, compared</h1>
+            <p class="updated">Last updated 3 November 2026 · prices and specs checked the same day</p>
+
+            <div class="notice">
+                <strong>The short version.</strong> For most people watching VR video, the
+                <strong>Meta Quest 3</strong> is still the easy answer: sharp enough, wide enough,
+                and every major VR video app runs on it. If you want the best picture money can buy
+                and you have a gaming PC, look at the <strong>Bigscreen Beyond 2</strong>. And if
+                you are curious about the new <strong>Meta VR Glasses</strong> arriving in spring
+                2027, they are lighter and have a richer picture than anything Meta has made, but a
+                much narrower view, which matters a lot for 180° video. Details below.
+            </div>
+
+            <h2>First, the five numbers that matter</h2>
+            <p>
+                Spec sheets are long. For watching VR video, only a few lines change what you
+                actually see. Here is what each one means, in plain words.
+            </p>
+
+            <h3>Resolution per eye</h3>
+            <p>
+                How many pixels each eye gets. More pixels means less of the "screen door" grid and
+                finer detail in faces, hair and skin. Always compare the <em>per eye</em> figure;
+                some brands quote both eyes added together to make the number look bigger.
+            </p>
+
+            <h3>Pixels per degree (PPD)</h3>
+            <p>
+                The honest sharpness number. It is the resolution spread across how wide the view
+                is, so a headset with fewer pixels but a narrower view can look sharper than one
+                with more. Around 20 is good, 25 is very good, and the micro-OLED headsets reach
+                the mid-30s, where the picture starts to look like a screen rather than a grid.
+            </p>
+            <p>
+                A useful rule of thumb: an 8K 180° video gives each eye about 23 pixels per degree.
+                A headset sharper than that will show you everything in the file; a softer one
+                throws some of it away. That is why the same 8K file looks crisper on a Quest 3 than
+                on a Quest 3S, and why the high-end headsets reward the highest-resolution versions
+                a site offers.
+            </p>
+
+            <h3>Field of view (FOV)</h3>
+            <p>
+                How much of your vision the picture fills. This is the number people overlook, and
+                it is the one that decides how <em>immersive</em> VR video feels. Most 180° video is
+                shot to wrap well past your peripheral vision, so a headset around 100–110°
+                horizontally feels like being there, while one at 70° feels more like looking
+                through a large window. Neither is wrong, but they are different experiences.
+            </p>
+
+            <h3>Display type: LCD or micro-OLED</h3>
+            <p>
+                LCDs are bright and affordable but their blacks are really dark grey, which shows in
+                dim scenes. Micro-OLED panels switch each pixel fully off, so blacks are truly black
+                and colours pop. They are also tiny and dense, which is how the premium headsets get
+                so sharp. The trade-off is cost, and usually a narrower view.
+            </p>
+
+            <h3>Weight, and where it sits</h3>
+            <p>
+                A film is longer than a game session. A headset that feels fine for twenty minutes
+                can be a chore at ninety. Watch for the battery: some headsets move it to the back
+                strap or into a pack on a cable, which balances the weight better than the headline
+                figure suggests.
+            </p>
+
+            <h2>The full comparison</h2>
+            <p>
+                Prices are US list prices on 3 November 2026. Scroll the table sideways on a phone.
+            </p>
+            <div class="table-scroll">
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Headset</th>
+                            <th>Price</th>
+                            <th>Display, per eye</th>
+                            <th>Field of view</th>
+                            <th>Weight</th>
+                            <th>Runs on</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td>Meta VR Glasses</td>
+                            <td>$1,299 (spring 2027)</td>
+                            <td>Micro-OLED, 2412 × 2288*</td>
+                            <td>~70° horizontal*</td>
+                            <td>~100 g, plus a pocket puck</td>
+                            <td>Standalone (puck)</td>
+                        </tr>
+                        <tr>
+                            <td>Meta Quest 3</td>
+                            <td>$599.99 (512 GB)</td>
+                            <td>LCD, 2064 × 2208</td>
+                            <td>110° horizontal</td>
+                            <td>515 g</td>
+                            <td>Standalone or PC</td>
+                        </tr>
+                        <tr>
+                            <td>Meta Quest 3S</td>
+                            <td>from $299.99 at launch</td>
+                            <td>LCD, 1832 × 1920</td>
+                            <td>96° horizontal</td>
+                            <td>514 g</td>
+                            <td>Standalone or PC</td>
+                        </tr>
+                        <tr>
+                            <td>Valve Steam Frame</td>
+                            <td>$1,059 (256 GB) / $1,299 (1 TB)</td>
+                            <td>LCD, 2160 × 2160</td>
+                            <td>up to 110°</td>
+                            <td>~440 g</td>
+                            <td>Standalone or PC</td>
+                        </tr>
+                        <tr>
+                            <td>Samsung Galaxy XR</td>
+                            <td>$1,799</td>
+                            <td>Micro-OLED, 3552 × 3840</td>
+                            <td>109° horizontal</td>
+                            <td>545 g, plus 302 g battery</td>
+                            <td>Standalone</td>
+                        </tr>
+                        <tr>
+                            <td>Apple Vision Pro (M5)</td>
+                            <td>from $3,499</td>
+                            <td>Micro-OLED, 23 million pixels total</td>
+                            <td>not published</td>
+                            <td>750–800 g, plus 353 g battery</td>
+                            <td>Standalone</td>
+                        </tr>
+                        <tr>
+                            <td>Bigscreen Beyond 2 / 2e</td>
+                            <td>$1,019 / $1,219</td>
+                            <td>Micro-OLED, 2560 × 2560</td>
+                            <td>108° horizontal</td>
+                            <td>107 g</td>
+                            <td>PC only, tethered</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+            <p style="font-size: 13px; color: var(--faint)">
+                * Reported from Meta Connect 2026, not yet on Meta's own spec page. See the Meta VR
+                Glasses section for which details are confirmed.
+            </p>
+
+            <h2>Meta VR Glasses <span class="tag new">Spring 2027</span></h2>
+            <p>
+                The headline new arrival. Shown at Meta Connect in September 2026 (it was known
+                inside Meta as "Project Phoenix"), this is Meta's attempt at a headset you would
+                actually want to wear for a whole film: a slim visor of about 100 grams, with the
+                battery and the computer moved into a puck that sits in your pocket on a cable.
+            </p>
+
+            <h3>Confirmed by Meta</h3>
+            <dl>
+                <dt>Release</dt>
+                <dd>Spring 2027 (no exact date yet)</dd>
+                <dt>Price</dt>
+                <dd>$1,299</dd>
+                <dt>Weight</dt>
+                <dd>About 100 g on your head, in a magnesium alloy frame</dd>
+                <dt>Software</dt>
+                <dd>The same system as Quest, so the Quest app library comes with it</dd>
+            </dl>
+
+            <h3>Reported from hands-on demos at Connect</h3>
+            <dl>
+                <dt>Display</dt>
+                <dd>Micro-OLED, 2412 × 2288 per eye, around 37 pixels per degree, up to 120 Hz</dd>
+                <dt>Field of view</dt>
+                <dd>About 70° horizontally (Quest 3 is about 110°)</dd>
+                <dt>Lenses and fit</dt>
+                <dd>
+                    Pancake lenses, each moving independently (56–70 mm), prescription inserts
+                    available, and two frame sizes, Standard and Large
+                </dd>
+                <dt>Compute and battery</dt>
+                <dd>A new Qualcomm chip and the battery in the puck, rated for up to about three hours</dd>
+                <dt>Controls</dt>
+                <dd>
+                    Built for hand tracking, with sensors that read gestures while your hands rest
+                    in your lap. No controllers in the box, but Quest's Touch Plus controllers pair
+                    with it.
+                </dd>
+                <dt>Extras</dt>
+                <dd>An optional light blocker, to shut out the room around the visor</dd>
+            </dl>
+
+            <h3>Still unknown</h3>
+            <p>
+                Whether it streams from a PC the way Quest does, the exact launch date, and how
+                bright it is with the light blocker off.
+            </p>
+
+            <h3>What it means for VR video</h3>
+            <p>
+                The good news is the picture. Early hands-on reports describe deep, true blacks with
+                no smearing, colours a big step beyond Quest's LCDs, and the sharpest image Meta has
+                shipped. For dark, moody scenes that is a real upgrade. And at 100 grams, a
+                full-length film stops being a neck workout.
+            </p>
+            <p>
+                The catch is the 70° view. A 180° video will look gorgeous but framed, more like a
+                giant window in front of you than a room around you. Meta is openly pitching this
+                as a media and everyday device rather than a gaming one; it is already promoting 3D
+                cinema releases for it. If being <em>surrounded</em> is the point for you, the
+                Quest 3 is still the more immersive headset, at half the price.
+            </p>
+            <div class="verdict">
+                <strong>Who it is for:</strong> people who want comfort and the richest picture
+                for long viewing sessions, and do not mind trading some immersion for it.
+            </div>
+            <div class="todo">
+                If you get a demo before launch, a paragraph on how a 180° scene actually feels at
+                70° would be the most useful thing on this page. Nobody else can write it.
+            </div>
+
+            <h2>Meta Quest 3 <span class="tag">The safe pick</span></h2>
+            <p>
+                Three years on, still the headset most people should buy for VR video. It is wide
+                (110°), sharp enough to do 8K files justice (about 25 pixels per degree), fully
+                wireless, and every major VR video player (DeoVR, HereSphere, SKYBOX and the
+                studios' own apps) runs on it natively. It also streams from a PC if you have one.
+            </p>
+            <dl>
+                <dt>Display</dt>
+                <dd>LCD, 2064 × 2208 per eye, 90–120 Hz, pancake lenses</dd>
+                <dt>Chip and memory</dt>
+                <dd>Snapdragon XR2 Gen 2, 8 GB</dd>
+                <dt>Storage and price</dt>
+                <dd>512 GB, $599.99 on Meta's store today</dd>
+                <dt>Weight</dt>
+                <dd>515 g</dd>
+            </dl>
+            <p>
+                The weak spot is the LCD: blacks are dark grey, so night scenes look flatter than
+                on the micro-OLED headsets. A better head strap is the single best upgrade for long
+                sessions.
+            </p>
+            <div class="todo">
+                Which strap you use, and how long you can comfortably watch with it.
+            </div>
+
+            <h2>Meta Quest 3S <span class="tag">Best on a budget</span></h2>
+            <p>
+                Same chip and the same apps as the Quest 3 for much less money. The savings come
+                from the lenses and screen: older Fresnel lenses with a smaller sweet spot, a lower
+                resolution, and a narrower 96° view. VR video still looks good, and 8K files are
+                already more than it can show, so there is no point paying extra for anything
+                higher.
+            </p>
+            <dl>
+                <dt>Display</dt>
+                <dd>LCD, 1832 × 1920 per eye, 90–120 Hz, Fresnel lenses</dd>
+                <dt>Chip and memory</dt>
+                <dd>Snapdragon XR2 Gen 2, 8 GB</dd>
+                <dt>Storage and price</dt>
+                <dd>128 GB or 256 GB; $299.99 and $399.99 at launch, so check today's price</dd>
+                <dt>Weight</dt>
+                <dd>514 g</dd>
+            </dl>
+
+            <h2>Valve Steam Frame <span class="tag">For PC power users</span></h2>
+            <p>
+                Valve's first standalone headset, released in September 2026. It runs SteamOS and
+                can play some apps on its own, but its real strength is streaming from a gaming PC.
+                It ships with its own Wi-Fi 6E adapter for a dedicated wireless link, and uses eye
+                tracking to send the sharpest part of the stream exactly where you are looking.
+                That makes it one of the best ways to watch very high-bitrate files from a PC
+                without a cable.
+            </p>
+            <dl>
+                <dt>Display</dt>
+                <dd>LCD, 2160 × 2160 per eye, 72–120 Hz (144 Hz experimental), pancake lenses</dd>
+                <dt>Chip and memory</dt>
+                <dd>Snapdragon 8 Gen 3, 16 GB, microSD slot</dd>
+                <dt>Price</dt>
+                <dd>$1,059 (256 GB) or $1,299 (1 TB), controllers included</dd>
+                <dt>Weight and battery</dt>
+                <dd>About 440 g with strap and battery; over two hours per charge</dd>
+                <dt>Availability</dt>
+                <dd>Backordered into 2027 at the time of writing</dd>
+            </dl>
+            <p>
+                Two things to know. The passthrough cameras are black and white (a colour add-on
+                exists), and its list of apps that run on the headset itself is still growing, so
+                check your favourite player is supported before you rely on it standalone.
+            </p>
+
+            <h2>Samsung Galaxy XR</h2>
+            <p>
+                The first headset on Google's Android XR, and the most pixels you can get without
+                paying Apple prices: 3552 × 3840 micro-OLED per eye, with a wide 109° view. On paper
+                that is a superb VR video screen.
+            </p>
+            <dl>
+                <dt>Display</dt>
+                <dd>Micro-OLED, 3552 × 3840 per eye, 60/72/90 Hz</dd>
+                <dt>Field of view</dt>
+                <dd>109° horizontal, 100° vertical</dd>
+                <dt>Chip and memory</dt>
+                <dd>Snapdragon XR2+ Gen 2, 16 GB, 256 GB storage</dd>
+                <dt>Price</dt>
+                <dd>$1,799; controllers are an extra $249</dd>
+                <dt>Weight and battery</dt>
+                <dd>545 g, plus a 302 g battery pack on a cable; about 2.5 hours of video</dd>
+            </dl>
+            <p>
+                The catch is software. Android XR is young, and the selection of VR video players
+                is much smaller than on Quest. Check that the app you use is available before
+                buying.
+            </p>
+
+            <h2>Apple Vision Pro (M5)</h2>
+            <p>
+                Apple's 2025 refresh with the M5 chip. A stunning micro-OLED display (23 million
+                pixels across both eyes, up to 120 Hz) and the best eye and hand tracking around.
+                It is also the heaviest headset here and by far the most expensive, and Apple's
+                store is strict about adult content, so VR video playback depends on third-party
+                players and files you load yourself.
+            </p>
+            <dl>
+                <dt>Chip</dt>
+                <dd>Apple M5 with 16 GB, plus the R1 sensor chip</dd>
+                <dt>Display</dt>
+                <dd>Micro-OLED, 23 million pixels total, 90–120 Hz</dd>
+                <dt>Storage and price</dt>
+                <dd>256 GB, 512 GB or 1 TB, from $3,499</dd>
+                <dt>Weight and battery</dt>
+                <dd>750–800 g, plus a 353 g battery; up to 3 hours of video</dd>
+            </dl>
+
+            <h2>Bigscreen Beyond 2 and 2e <span class="tag">Sharpest picture</span></h2>
+            <p>
+                The opposite of the all-in-one headsets: a 107-gram visor that does nothing but
+                show you a picture, made to fit your face exactly. It needs a capable gaming PC, a
+                cable, and at least one SteamVR base station (sold separately), so it is a project
+                rather than a gadget. In return you get micro-OLED at 2560 × 2560 per eye, a 108°
+                view and roughly 32 pixels per degree: the best VR video picture you can buy today,
+                with almost no weight on your face.
+            </p>
+            <dl>
+                <dt>Display</dt>
+                <dd>Micro-OLED, 2560 × 2560 per eye, 75 or 90 Hz</dd>
+                <dt>Field of view</dt>
+                <dd>108° horizontal, 96° vertical, 116° diagonal</dd>
+                <dt>Price</dt>
+                <dd>$1,019 (Beyond 2) or $1,219 (Beyond 2e, with eye tracking)</dd>
+                <dt>Also needed</dt>
+                <dd>A gaming PC, SteamVR base station(s), and controllers if you want them</dd>
+            </dl>
+
+            <h2>So which one?</h2>
+            <dl>
+                <dt>Most people</dt>
+                <dd>Meta Quest 3. Wide, sharp enough, wireless, and every app.</dd>
+                <dt>Tight budget</dt>
+                <dd>Meta Quest 3S. Same apps, a softer and narrower picture.</dd>
+                <dt>Best picture, have a gaming PC</dt>
+                <dd>Bigscreen Beyond 2. Nothing is sharper or lighter.</dd>
+                <dt>Stream big files from a PC, wirelessly</dt>
+                <dd>Steam Frame, if you can wait for the backorder.</dd>
+                <dt>Comfort and rich blacks, less immersion</dt>
+                <dd>Meta VR Glasses, from spring 2027.</dd>
+                <dt>Money is no object</dt>
+                <dd>
+                    Galaxy XR or Vision Pro have beautiful screens, but check the video app you
+                    want runs on them first.
+                </dd>
+            </dl>
+            <div class="todo">
+                Your own pick, in one or two sentences, and the headset you watch on yourself.
+                A named recommendation from somebody who uses these is worth more than the table.
+            </div>
+
+            <h2>Before you buy</h2>
+            <ul>
+                <li>
+                    <strong>Check the app first.</strong> On a new platform, the headset is only as
+                    good as the VR video player that runs on it.
+                </li>
+                <li>
+                    <strong>Download beats streaming</strong> for the sharpest picture. Streams are
+                    compressed harder than downloads, whatever the headset.
+                </li>
+                <li>
+                    <strong>Glasses wearers:</strong> Quest 3 and Steam Frame have room for your
+                    glasses. The slim visors, Bigscreen Beyond and the Meta VR Glasses, use
+                    prescription lens inserts instead.
+                </li>
+                <li>
+                    <strong>Prices move.</strong> Check the maker's store before you decide; the
+                    figures here are from the date at the top.
+                </li>
+            </ul>
+
+            <h2>Where these numbers come from</h2>
+            <p>
+                Each maker's own specification page, checked on 3 November 2026: Meta (Quest 3,
+                Quest 3S and the Meta VR Glasses page), Valve, Samsung, Apple and Bigscreen. The
+                Meta VR Glasses details marked "reported" come from hands-on coverage at Meta
+                Connect 2026, chiefly Road to VR's, and may change before launch.
+            </p>
+
+            <footer class="site">
+                <nav>
+                    <a href="/">Home</a>
+                    <a href="/terms">Terms</a>
+                    <a href="/support">Support</a>
+                    <a href="/2257">2257 statement</a>
+                    <a href="/dmca">Content removal</a>
+                </nav>
+                <p>LustXR is an adult site. You must be 18 or older to use it.</p>
+            </footer>
+        </div>
+    </body>
+</html>

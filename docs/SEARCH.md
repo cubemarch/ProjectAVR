@@ -334,6 +334,29 @@ mismatch between the result and the landing page, which is both what Google
 demotes for and what a visitor bounces from. **When that flag flips, the head
 block and the `<noscript>` change with it.**
 
+### Guides publish themselves, from the page
+
+Pages under `public/guides/` are written for people choosing a headset or a
+format, not for the catalogue. They are the one kind of page here that answers
+a non-branded search, which nothing else on the site can. Each is routed at
+an extension-less address by [`server/guides.js`](../server/guides.js) from
+the moment it is listed there, and goes into the sitemap only once its own
+robots tag stops saying `noindex`. That way the sitemap and the page can never
+send a crawler opposite instructions.
+
+A guide stays `noindex` until its first-hand notes are written. The dashed
+`.todo` boxes mark where they go, and `npm test` fails if a guide becomes
+indexable with one still on it. Those notes are what makes the page worth
+ranking over the spec sheets it is drawn from.
+
+### "XR" in the title, since 2026-11-05
+
+"xr porn" was the first non-branded query Search Console showed with any
+volume, at position 9.4. The head block now says "VR & XR". The `<noscript>`
+has a sentence on what XR means, because it is the name of the site and the
+term covers what is listed. It is one word, not a keyword list: §5 still
+applies.
+
 ---
 
 ## 4. Paid search does not exist for this domain

@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 
 import { BRAND, DLNA_FRIENDLY_NAME } from '../brand.js';
 import { buildLibrary, localPathFor, MEDIA_DIR } from './library.js';
+import { GUIDES, guidePath, publishedGuides } from './guides.js';
 import { channelSlugs, getDb, sessions } from './db/index.js';
 import { getStorage, assertSafeKey } from './storage/index.js';
 import { attachUser } from './auth/middleware.js';
@@ -561,6 +562,15 @@ if (fs.existsSync(DIST)) {
         });
     }
 
+    // Guides, the same way. Routed while still drafts; see `guides.js` for
+    // what decides when one is listed.
+    for (const [route, file] of Object.entries(GUIDES)) {
+        app.get(route, (_req, res) => {
+            res.set('Cache-Control', 'public, max-age=3600');
+            res.sendFile(guidePath(file));
+        });
+    }
+
     /**
      * The sitemap.
      *
@@ -591,6 +601,10 @@ if (fs.existsSync(DIST)) {
             { loc: '/dmca', priority: '0.4', changefreq: 'yearly' },
             { loc: '/support', priority: '0.5', changefreq: 'monthly' }
         ];
+
+        for (const route of publishedGuides()) {
+            urls.push({ loc: route, priority: '0.7', changefreq: 'monthly' });
+        }
 
         let channels = [];
         try {

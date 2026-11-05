@@ -5,6 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { INDEXNOW_KEY, INDEXNOW_KEY_FILE, sitemapLocs, submitUrls } from '../server/indexnow.js';
+import { GUIDES, guidePath, isPublished, publishedGuides } from '../server/guides.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const read = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8');
@@ -377,4 +378,62 @@ test('the exemption statement says the thing it exists to say', () => {
     // to agree: a directory in its own terms and a host in its markup is
     // the discrepancy that makes the rest of the page not worth believing.
     assert.match(INDEX, /does not host or produce/i);
+});
+
+/* ------------------------------------------------------------- guides -- */
+
+/**
+ * A guide is published by an edit to the page alone, so the page is where it
+ * can go wrong. Two ways matter: a draft box left on an indexable page, which
+ * is a note to the author served to every crawler as content; and a canonical
+ * naming somewhere else, which quietly hands whatever the page earns away.
+ */
+test('every guide is routed to a file that exists and declares itself adult', () => {
+    for (const [route, file] of Object.entries(GUIDES)) {
+        assert.ok(fs.existsSync(guidePath(file)), `${route} is routed to ${file}, which does not exist`);
+        assert.match(read(path.join('public', 'guides', file)), /<meta\s+name="rating"\s+content="adult"/);
+    }
+});
+
+test('a guide cannot be indexable while it is still a draft', () => {
+    for (const [route, file] of Object.entries(GUIDES)) {
+        const html = read(path.join('public', 'guides', file));
+        if (!isPublished(html)) continue;
+
+        assert.doesNotMatch(html, /class="todo"/, `${route} is indexable with a draft box still on it`);
+        assert.match(
+            html,
+            new RegExp(`<link\\s+rel="canonical"\\s+href="https://lustxr\\.com${route}"\\s*/?>`),
+            `${route} is indexable without a canonical naming its own address`
+        );
+    }
+});
+
+test('the sitemap lists a guide only once it stops saying noindex', () => {
+    const files = {
+        'vr-headsets.html': '<meta name="robots" content="noindex, follow" />'
+    };
+    assert.deepEqual(publishedGuides((f) => files[f]), []);
+
+    files['vr-headsets.html'] = '<meta name="robots" content="index, follow" />';
+    assert.deepEqual(publishedGuides((f) => files[f]), ['/guides/vr-headsets']);
+
+    // An unreadable file 404s at its route too, so it must not be listed.
+    assert.deepEqual(
+        publishedGuides(() => {
+            throw new Error('ENOENT');
+        }),
+        []
+    );
+});
+
+test('the guides link only to addresses something serves', () => {
+    const served = new Set(['/', '/terms', '/privacy', '/2257', '/dmca', '/support', ...Object.keys(GUIDES)]);
+
+    for (const file of Object.values(GUIDES)) {
+        for (const [, href] of read(path.join('public', 'guides', file)).matchAll(/href="(\/[^"#]*)"/g)) {
+            if (href.startsWith('/legal/')) continue;
+            assert.ok(served.has(href), `${file} links to ${href}, which nothing serves`);
+        }
+    }
 });
