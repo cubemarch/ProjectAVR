@@ -165,10 +165,13 @@ export class BrowseUI extends pc.EventHandler {
             // which performer they clicked is a record of what one person
             // looked at, which is the thing `src/analytics.js` says we do not
             // collect and the privacy policy says we do not keep.
+            // `from` tells this apart from the panel's "Watch at" link, which
+            // reports the same event from `_bindSceneOutbound`.
             track(EVENTS.AFFILIATE_CLICK, {
                 program: shelf?.dataset.program,
                 partner: shelf?.dataset.partner,
-                card: card.classList.contains('star-card') ? 'performer' : 'title'
+                card: card.classList.contains('star-card') ? 'performer' : 'title',
+                from: 'card'
             });
         });
     }
@@ -1861,6 +1864,7 @@ export class BrowseUI extends pc.EventHandler {
         this.scenePanel = el;
         this.sceneReturnFocusTo = anchor;
         this._bindSceneDismissal(el);
+        this._bindSceneOutbound(el, anchor.closest('.affiliate-shelf'));
 
         el.querySelector('.scene-panel-close')?.focus();
 
@@ -1993,6 +1997,34 @@ export class BrowseUI extends pc.EventHandler {
                         : ''
                 }
             </div>`;
+    }
+
+    /**
+     * "Watch at" in the panel: the visit to the partner that `SCENE_OPEN`
+     * deliberately is not.
+     *
+     * The panel is appended to `body`, outside `this.mount`, so the delegated
+     * handler in `_bindOutbound` never sees this link. Until 2026-11-09 nothing
+     * did, and a scene that left for Bang by way of the panel — every one, in
+     * practice, since a plain click opens the panel — was never counted. That
+     * made Bang the one program whose dashboard could not be checked against
+     * ours.
+     *
+     * Bound on the panel itself, so it survives the contents being replaced
+     * when the detail lands. Same terms as `_bindOutbound`: no
+     * `preventDefault`, nothing awaited.
+     */
+    _bindSceneOutbound(el, shelf) {
+        el.addEventListener('click', (event) => {
+            if (!event.target.closest('.scene-panel-out')) return;
+
+            track(EVENTS.AFFILIATE_CLICK, {
+                program: shelf?.dataset.program,
+                partner: shelf?.dataset.partner,
+                card: 'title',
+                from: 'panel'
+            });
+        });
     }
 
     /**

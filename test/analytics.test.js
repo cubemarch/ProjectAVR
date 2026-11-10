@@ -307,6 +307,21 @@ test('measuring a paid link never interferes with following it', () => {
     assert.doesNotMatch(outbound, /\bawait\b/, 'and nothing is waited on before it happens');
 });
 
+test("a scene's way out of the panel is counted, without holding it up", () => {
+    // The panel lives on `body`, outside the mount `_bindOutbound` delegates
+    // from, so it needs a handler of its own — and every Bang click-out goes
+    // through it, because a plain click on a card opens the panel.
+    assert.match(methodBody('_openScene', browseSource), /this\._bindSceneOutbound\(el,/, 'bound when the panel opens');
+
+    const outbound = methodBody('_bindSceneOutbound', browseSource);
+    assert.match(outbound, /\.scene-panel-out/, 'on the "Watch at" link');
+    assert.match(outbound, /EVENTS\.AFFILIATE_CLICK/, 'as a visit to the partner, not another open');
+    assert.match(outbound, /from: 'panel'/, 'told apart from a click on the card');
+    assert.doesNotMatch(outbound, /preventDefault|\bawait\b/, "and following it is still the browser's job");
+
+    assert.match(browseSource, /class="scene-panel-out"/, 'the link it listens for still exists');
+});
+
 test('a cam opened on the page is not counted as a visit to the partner', () => {
     const fired = calls(camsSource).map((c) => c.event);
 
