@@ -1,19 +1,18 @@
 <!doctype html>
 <!--
-    DRAFT. Three things to do before this is published, and none of them is
-    optional:
+    Published 2026-11-11: indexable, canonical set, and listed in the sitemap
+    by `server/guides.js` because the noindex is gone. Putting `noindex` back
+    unpublishes it the same way.
 
-    1. Fill in every `.todo` box with first-hand notes, then delete the boxes.
-       They are the part of this page a search engine cannot get anywhere else.
-    2. Re-check every spec marked "reported" or "unknown" against Meta's own
-       page (https://www.meta.com/vr-glasses/). Specs change before launch.
-    3. Swap the robots tag below to "index, follow" and add
-       <link rel="canonical" href="https://lustxr.com/guides/vr-headsets" />.
-       The route already exists, and the sitemap lists this page by itself
-       the moment the noindex is gone (`server/guides.js`).
+    The three draft boxes asking for first-hand notes (a Meta VR Glasses demo,
+    a Quest 3 strap, a personal pick) were removed unfilled so it could go out.
+    They are still the part of this page a search engine cannot get anywhere
+    else: add them as ordinary paragraphs when there is something to say, and
+    bump "Last updated". `npm test` fails if a draft box comes back while the
+    page is indexable.
 
-    Until then it is noindex and nothing links to it. `npm test` fails if the
-    noindex goes while a draft box is still here.
+    Specs marked "reported" or "unknown" are from Meta Connect 2026 and want
+    re-checking against https://www.meta.com/vr-glasses/ before launch.
 -->
 <html lang="en">
     <head>
@@ -27,11 +26,12 @@
         />
         <meta name="rating" content="adult" />
         <meta name="rating" content="RTA-5042-1996-1400-1577-RTA" />
-        <meta name="robots" content="noindex, follow" />
+        <meta name="robots" content="index, follow" />
+        <link rel="canonical" href="https://lustxr.com/guides/vr-headsets" />
         <link rel="stylesheet" href="/legal/page.css" />
         <style>
-            /* Only what this page has that the policy pages do not: tables,
-               the spec cards and the draft markers. Same palette, from
+            /* Only what this page has that the policy pages do not: tables
+               and the spec cards. Same palette, from
                page.css. */
             .table-scroll {
                 overflow-x: auto;
@@ -88,18 +88,6 @@
                 background: var(--raised);
                 border-radius: 0 8px 8px 0;
                 color: var(--text);
-            }
-            .todo {
-                padding: 12px 16px;
-                margin: 0 0 20px;
-                border: 2px dashed #e0a100;
-                border-radius: 8px;
-                color: #f5c84c;
-                font-size: 14px;
-            }
-            .todo::before {
-                content: 'DRAFT — your notes go here: ';
-                font-weight: 700;
             }
         </style>
     </head>
@@ -324,10 +312,6 @@
                 <strong>Who it is for:</strong> people who want comfort and the richest picture
                 for long viewing sessions, and do not mind trading some immersion for it.
             </div>
-            <div class="todo">
-                If you get a demo before launch, a paragraph on how a 180° scene actually feels at
-                70° would be the most useful thing on this page. Nobody else can write it.
-            </div>
 
             <h2>Meta Quest 3 <span class="tag">The safe pick</span></h2>
             <p>
@@ -351,9 +335,6 @@
                 on the micro-OLED headsets. A better head strap is the single best upgrade for long
                 sessions.
             </p>
-            <div class="todo">
-                Which strap you use, and how long you can comfortably watch with it.
-            </div>
 
             <h2>Meta Quest 3S <span class="tag">Best on a budget</span></h2>
             <p>
@@ -482,10 +463,6 @@
                     want runs on them first.
                 </dd>
             </dl>
-            <div class="todo">
-                Your own pick, in one or two sentences, and the headset you watch on yourself.
-                A named recommendation from somebody who uses these is worth more than the table.
-            </div>
 
             <h2>Before you buy</h2>
             <ul>

@@ -349,6 +349,11 @@ A guide stays `noindex` until its first-hand notes are written. The dashed
 indexable with one still on it. Those notes are what makes the page worth
 ranking over the spec sheets it is drawn from.
 
+`/guides/vr-headsets` was published on 2026-11-11 with its three boxes removed
+unfilled rather than written, at David's call: a page in the index with no
+first-hand notes beats a page out of it. The notes are still the thing to add,
+as ordinary paragraphs, when there is something first-hand to say.
+
 ### "XR" in the title, since 2026-11-05
 
 "xr porn" was the first non-branded query Search Console showed with any
