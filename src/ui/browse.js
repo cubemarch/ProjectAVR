@@ -13,6 +13,7 @@ import {
     storefrontUrl
 } from '../catalog/affiliates.js';
 import { AFFILIATES_ONLY, COMING_SOON_SHELVES } from '../site-mode.js';
+import { HEADSET_GUIDE } from '../guides.js';
 import { EVENTS, track } from '../analytics.js';
 import { adSlotHtml, bioCardAdHtml, fillAdSlots, nativeStripHtml } from '../ads/juicyads.js';
 import { CamShelf, camSkeletonHtml, camsExpected } from './cams.js';
@@ -81,6 +82,33 @@ function opensInPanel(event, card) {
         event.altKey ||
         (event.button ?? 0) !== 0
     );
+}
+
+/**
+ * A 180° video, and the slice of it a 110° and a 70° headset put in front of
+ * you — the guide's field-of-view section, drawn.
+ *
+ * Geometry, so the angles are true rather than eyeballed: the eye is at
+ * (160, 176) and every arc has radius 148. A half-angle θ from straight
+ * ahead lands at (160 ± 148·sin θ, 176 − 148·cos θ): 55° for the Quest 3,
+ * 35° for the Meta VR Glasses. Colours come from the stylesheet by class, so
+ * the diagram follows the palette.
+ */
+function fovDiagram() {
+    return `
+        <svg class="fov" viewBox="0 0 320 196" width="320" height="196" focusable="false">
+            <path class="fov-video" d="M12 176 A148 148 0 0 1 308 176" />
+            <path class="fov-wide" d="M160 176 L38.8 91.1 A148 148 0 0 1 281.2 91.1 Z" />
+            <path class="fov-narrow" d="M160 176 L75.1 54.8 A148 148 0 0 1 244.9 54.8 Z" />
+            <circle class="fov-eye" cx="160" cy="176" r="5" />
+            <text class="fov-label" x="160" y="16" text-anchor="middle">180° video</text>
+            <text class="fov-num fov-num-narrow" x="160" y="104" text-anchor="middle">70°</text>
+            <text class="fov-num fov-num-wide" x="80" y="106" text-anchor="middle">110°</text>
+        </svg>
+        <ul class="fov-key">
+            <li><i class="fov-swatch fov-swatch-wide"></i>Meta Quest 3</li>
+            <li><i class="fov-swatch fov-swatch-narrow"></i>Meta VR Glasses</li>
+        </ul>`;
 }
 
 /**
@@ -251,6 +279,7 @@ export class BrowseUI extends pc.EventHandler {
                     <div id="affiliate-groups"></div>
                 </section>
                 ${AFFILIATES_ONLY ? this._comingSoonHtml() : this._ownContentHtml()}
+                ${this._guideHtml()}
 
                 <!-- Last in the document and first on the screen: it is
                      positioned, so where it paints has nothing to do with
@@ -270,6 +299,7 @@ export class BrowseUI extends pc.EventHandler {
                 <div id="top-skyscraper-slot">${skyscraper}</div>
             </main>
             ${AFFILIATES_ONLY ? '' : this._modalHtml()}
+            ${this._footerHtml()}
 
             <!-- Outside <main>, and specifically outside .affiliates, which
                  carries \`position: relative; z-index: 2\` and so is a stacking
@@ -398,6 +428,88 @@ export class BrowseUI extends pc.EventHandler {
                     <div class="shelf-track soon-track" aria-hidden="true">${deck}</div>
                 </div>
             </section>`;
+    }
+
+    /**
+     * The headset guide, as the one feature on the page that is ours and
+     * finished.
+     *
+     * Placed straight after "Every format your headset reads", because that
+     * is the shelf that raises the question the guide answers. It is a plain
+     * link to a plain document: no partner, no commission, so it carries the
+     * "Guide" badge and never the paid-link disclosure, and it must not be
+     * mistaken for either of the things around it — the Coming Soon rows
+     * above are dimmed, this is not.
+     *
+     * The three picks are the guide's own "So which one?" answers, so the
+     * card is useful to somebody who never clicks it. The diagram is the
+     * guide's one non-obvious point drawn: a 180° video, and how much of it a
+     * 110° headset and a 70° one actually put in front of you.
+     *
+     * The same link is in the `<noscript>` in `index.html`, which must say
+     * what this page says (`docs/SEARCH.md` §5), and `test/seo.test.js`
+     * holds the date here to the guide's own "Last updated".
+     */
+    _guideHtml() {
+        const { href, title, updated, blurb, picks } = HEADSET_GUIDE;
+
+        const pickRows = picks
+            .map(
+                ([who, what]) => `
+                <div><dt>${escapeHtml(who)}</dt><dd>${escapeHtml(what)}</dd></div>`
+            )
+            .join('');
+
+        return `
+            <section class="guide-feature-wrap" aria-label="Guides">
+                <a class="guide-feature" href="${escapeHtml(href)}"
+                   aria-labelledby="guide-feature-title" aria-describedby="guide-feature-blurb">
+                    <div class="guide-feature-copy">
+                        <p class="guide-feature-meta">
+                            <span class="badge guide">Guide</span>
+                            <span>Updated ${escapeHtml(updated)}</span>
+                        </p>
+                        <h2 id="guide-feature-title">${escapeHtml(title)}</h2>
+                        <p class="guide-feature-blurb" id="guide-feature-blurb">${escapeHtml(blurb)}</p>
+                        <dl class="guide-feature-picks">${pickRows}</dl>
+                        <span class="guide-feature-cta">
+                            Read the guide ${icons.chevronRight({ size: 16 })}
+                        </span>
+                    </div>
+                    <div class="guide-feature-art" aria-hidden="true">${fovDiagram()}</div>
+                </a>
+            </section>`;
+    }
+
+    /**
+     * The page's footer: the guide, the policy pages, and the age line.
+     *
+     * Until 2026-11-11 the rendered page had no footer at all. The policy
+     * links were in the `<noscript>` and in the age gate, and nowhere a
+     * visitor past the gate could find them, which is the wrong way round
+     * for a terms page and left the guide with nothing on the page to point
+     * at it.
+     */
+    _footerHtml() {
+        const links = [
+            [HEADSET_GUIDE.href, 'VR headset guide'],
+            ['/terms', 'Terms'],
+            ['/privacy', 'Privacy'],
+            ['/2257', '2257 statement'],
+            ['/dmca', 'Content removal'],
+            ['/support', 'Support']
+        ];
+
+        return `
+            <footer class="site-footer">
+                <nav class="site-footer-nav" aria-label="Guides and policies">
+                    ${links.map(([href, label]) => `<a href="${href}">${label}</a>`).join('')}
+                </nav>
+                <p>
+                    LustXR is an adult site. You must be 18 or older to use it. We do not
+                    host or produce the video we link to.
+                </p>
+            </footer>`;
     }
 
     /** Our own surfaces: the billboard's neighbours, and the catalogue. */

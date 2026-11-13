@@ -354,6 +354,12 @@ unfilled rather than written, at David's call: a page in the index with no
 first-hand notes beats a page out of it. The notes are still the thing to add,
 as ordinary paragraphs, when there is something first-hand to say.
 
+Since the same day the front page links it twice, from a feature card after
+the format shelf and from a footer the rendered page did not have before, and
+the `<noscript>` links it in both matching places. The card quotes the guide's
+title, date and picks from `src/guides.js`, and `test/seo.test.js` fails if
+any of them stops matching the page, or if the featured guide is a draft.
+
 ### "XR" in the title, since 2026-11-05
 
 "xr porn" was the first non-branded query Search Console showed with any

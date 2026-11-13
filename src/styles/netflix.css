@@ -5979,3 +5979,326 @@ body.scene-panel-open {
         padding: 0 12px;
     }
 }
+
+/* ------------------------------------------------------- guide feature -- */
+
+/*
+ * The headset guide, after the format shelf. See `_guideHtml` in browse.js.
+ *
+ * Full strength on purpose. It sits directly under three dimmed Coming Soon
+ * rows, and the contrast is the message: those are not here yet, this is.
+ * The whole card is one link, so the hover lifts the card and moves the
+ * arrow rather than underlining any one line of it.
+ */
+.guide-feature-wrap {
+    padding: 0 4vw 56px;
+}
+
+.guide-feature {
+    display: grid;
+    grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr);
+    align-items: center;
+    gap: 32px;
+    max-width: 1080px;
+    padding: 32px 36px;
+    border-radius: 18px;
+    border: 1px solid rgba(124, 92, 255, 0.32);
+    background:
+        radial-gradient(120% 140% at 100% 0%, rgba(124, 92, 255, 0.2), transparent 55%),
+        radial-gradient(90% 120% at 0% 100%, rgba(0, 216, 224, 0.08), transparent 60%),
+        var(--bg-raised);
+    color: var(--text);
+    text-decoration: none;
+    transition:
+        transform 0.35s var(--ease),
+        border-color 0.35s var(--ease),
+        box-shadow 0.35s var(--ease);
+}
+
+.guide-feature:hover {
+    transform: translateY(-2px);
+    border-color: rgba(155, 125, 255, 0.6);
+    box-shadow: 0 18px 50px -20px rgba(124, 92, 255, 0.55);
+}
+
+.guide-feature:focus-visible {
+    outline: 2px solid var(--accent-hot);
+    outline-offset: 4px;
+}
+
+.guide-feature-meta {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin: 0 0 12px;
+    color: var(--text-faint);
+    font-size: 12px;
+}
+
+/* Not `.badge.soon`: same pill, but this one is not a promise. */
+.badge.guide {
+    padding: 4px 10px;
+    border-radius: 999px;
+    border-color: rgba(0, 216, 224, 0.45);
+    background: rgba(0, 216, 224, 0.1);
+    backdrop-filter: none;
+    color: var(--vr);
+    font-size: 11px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+}
+
+.guide-feature h2 {
+    margin: 0 0 10px;
+    font-size: clamp(22px, 2.6vw, 30px);
+    line-height: 1.15;
+    letter-spacing: -0.02em;
+}
+
+.guide-feature-blurb {
+    margin: 0 0 20px;
+    max-width: 52ch;
+    color: var(--text-dim);
+    font-size: 15px;
+    line-height: 1.55;
+}
+
+.guide-feature-picks {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 10px;
+    margin: 0 0 22px;
+}
+
+.guide-feature-picks > div {
+    padding: 10px 12px;
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.07);
+}
+
+.guide-feature-picks dt {
+    color: var(--text-faint);
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+}
+
+.guide-feature-picks dd {
+    margin: 3px 0 0;
+    font-size: 14px;
+    font-weight: 600;
+}
+
+.guide-feature-cta {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 10px 18px;
+    border-radius: 999px;
+    background: var(--accent);
+    font-size: 14px;
+    font-weight: 700;
+}
+
+.guide-feature-cta svg {
+    transition: transform 0.3s var(--ease);
+}
+
+.guide-feature:hover .guide-feature-cta {
+    background: var(--accent-hot);
+}
+
+.guide-feature:hover .guide-feature-cta svg {
+    transform: translateX(3px);
+}
+
+/* The diagram. Every colour is here, not in the markup, so it follows the
+   palette above. */
+.guide-feature-art {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 10px;
+}
+
+.guide-feature-art .fov {
+    width: 100%;
+    max-width: 360px;
+    height: auto;
+    overflow: visible;
+}
+
+.fov-video {
+    fill: none;
+    stroke: var(--text-faint);
+    stroke-width: 1.5;
+    stroke-dasharray: 4 5;
+}
+
+.fov-wide {
+    fill: rgba(124, 92, 255, 0.22);
+    stroke: rgba(155, 125, 255, 0.8);
+    stroke-width: 1.5;
+}
+
+.fov-narrow {
+    fill: rgba(0, 216, 224, 0.2);
+    stroke: var(--vr);
+    stroke-width: 1.5;
+}
+
+.fov-eye {
+    fill: var(--text);
+}
+
+.fov-label {
+    fill: var(--text-faint);
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+}
+
+.fov-num {
+    font-size: 15px;
+    font-weight: 800;
+}
+
+.fov-num-wide {
+    fill: var(--accent-hot);
+}
+
+.fov-num-narrow {
+    fill: var(--vr);
+}
+
+.fov-key {
+    display: flex;
+    gap: 16px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    color: var(--text-dim);
+    font-size: 12px;
+}
+
+.fov-key li {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.fov-swatch {
+    width: 10px;
+    height: 10px;
+    border-radius: 3px;
+}
+
+.fov-swatch-wide {
+    background: rgba(124, 92, 255, 0.5);
+    border: 1px solid var(--accent-hot);
+}
+
+.fov-swatch-narrow {
+    background: rgba(0, 216, 224, 0.35);
+    border: 1px solid var(--vr);
+}
+
+@media (max-width: 760px) {
+    .guide-feature {
+        grid-template-columns: 1fr;
+        gap: 22px;
+        padding: 22px 18px;
+        border-radius: 14px;
+    }
+
+    /* The diagram first on a phone: it is what makes somebody stop
+       scrolling, and the copy under it then explains it. */
+    .guide-feature-art {
+        order: -1;
+    }
+
+    .guide-feature-art .fov {
+        max-width: 280px;
+    }
+}
+
+@media (max-width: 480px) {
+    .guide-feature-picks {
+        grid-template-columns: 1fr;
+        gap: 6px;
+    }
+
+    .guide-feature-picks > div {
+        display: flex;
+        justify-content: space-between;
+        align-items: baseline;
+        gap: 12px;
+    }
+
+    .guide-feature-picks dd {
+        margin: 0;
+        text-align: right;
+    }
+
+    .guide-feature-cta {
+        justify-content: center;
+        width: 100%;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .guide-feature,
+    .guide-feature-cta svg {
+        transition: none;
+    }
+
+    .guide-feature:hover,
+    .guide-feature:hover .guide-feature-cta svg {
+        transform: none;
+    }
+}
+
+/* -------------------------------------------------------------- footer -- */
+
+/*
+ * Outside `<main>`, so it spans the page under the foot ads rather than
+ * sharing the content column the skyscraper rail insets.
+ */
+.site-footer {
+    padding: 28px 4vw 40px;
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+    color: var(--text-faint);
+    font-size: 13px;
+}
+
+.site-footer-nav {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 22px;
+    margin-bottom: 12px;
+}
+
+.site-footer-nav a {
+    color: var(--text-dim);
+    text-decoration: none;
+}
+
+.site-footer-nav a:first-child {
+    color: var(--vr);
+    font-weight: 600;
+}
+
+.site-footer-nav a:hover,
+.site-footer-nav a:focus-visible {
+    color: var(--text);
+    text-decoration: underline;
+    text-underline-offset: 3px;
+}
+
+.site-footer p {
+    margin: 0;
+    max-width: 70ch;
+    line-height: 1.5;
+}

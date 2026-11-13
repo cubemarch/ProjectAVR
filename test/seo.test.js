@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 
 import { INDEXNOW_KEY, INDEXNOW_KEY_FILE, sitemapLocs, submitUrls } from '../server/indexnow.js';
 import { GUIDES, guidePath, isPublished, publishedGuides } from '../server/guides.js';
+import { HEADSET_GUIDE } from '../src/guides.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const read = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8');
@@ -436,4 +437,40 @@ test('the guides link only to addresses something serves', () => {
             assert.ok(served.has(href), `${file} links to ${href}, which nothing serves`);
         }
     }
+});
+
+test('the front page features a published guide, and says what the guide says', () => {
+    const file = GUIDES[HEADSET_GUIDE.href];
+    assert.ok(file, `${HEADSET_GUIDE.href} is not a guide`);
+
+    const guide = read(path.join('public', 'guides', file));
+    assert.ok(isPublished(guide), 'featuring a noindex draft on the front page sends people to a page Google is told to drop');
+
+    // The card quotes the guide. A date or a pick that drifts is the front
+    // page making a claim the page behind it no longer makes.
+    assert.match(guide, new RegExp(`<h1>${HEADSET_GUIDE.title}</h1>`), 'the title');
+    assert.ok(guide.includes(`Last updated ${HEADSET_GUIDE.updated}`), 'the date');
+    for (const [who, what] of HEADSET_GUIDE.picks) {
+        assert.ok(guide.includes(`<span class="who">${who}</span>`), `the pick "${who}"`);
+        assert.ok(guide.includes(`<span class="what">${what}</span>`), `the headset "${what}"`);
+    }
+
+    // And the date is the same one the structured data gives Google.
+    const months = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August',
+        'September', 'October', 'November', 'December'];
+    const [day, month, year] = HEADSET_GUIDE.updated.split(' ');
+    const iso = `${year}-${String(months.indexOf(month) + 1).padStart(2, '0')}-${day.padStart(2, '0')}`;
+    assert.ok(guide.includes(`"dateModified": "${iso}"`), `dateModified is ${iso}`);
+});
+
+test('the guide is linked from the front page with JavaScript and without it', () => {
+    // The `<noscript>` must say what the rendered page says (SEARCH.md §5),
+    // and the rendered page links the guide from its card and its footer.
+    const noscript = read('index.html').match(/<noscript>([\s\S]*?)<\/noscript>/)[1];
+    assert.ok(noscript.includes(`href="${HEADSET_GUIDE.href}"`), 'the crawlable copy links it');
+
+    const browse = read('src/ui/browse.js');
+    assert.match(browse, /\$\{this\._guideHtml\(\)\}/, 'the card is rendered');
+    assert.match(browse, /\$\{this\._footerHtml\(\)\}/, 'and so is the footer');
+    assert.match(browse, /\[HEADSET_GUIDE\.href, 'VR headset guide'\]/, 'which links it too');
 });
