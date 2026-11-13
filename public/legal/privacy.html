@@ -14,6 +14,26 @@
         <meta name="rating" content="RTA-5042-1996-1400-1577-RTA" />
         <meta name="robots" content="index, follow" />
         <link rel="stylesheet" href="/legal/page.css" />
+        <!-- Analytics, the same as the app's: GA4 behind the production-host
+             guard (see `index.html` for why), and Contentsquare, which the
+             app loads from `src/main.js`. Both are disclosed in the privacy
+             policy. -->
+        <script>
+            window.dataLayer = window.dataLayer || [];
+            function gtag() {
+                window.dataLayer.push(arguments);
+            }
+            gtag('js', new Date());
+            gtag('config', 'G-HK6Q0JBGTC');
+
+            if (location.hostname === 'lustxr.com' || location.hostname === 'www.lustxr.com') {
+                const tag = document.createElement('script');
+                tag.async = true;
+                tag.src = 'https://www.googletagmanager.com/gtag/js?id=G-HK6Q0JBGTC';
+                document.head.appendChild(tag);
+            }
+        </script>
+        <script src="https://t.contentsquare.net/uxa/2e3ccfd49a95d.js" defer></script>
     </head>
     <body>
         <div class="wrap">
@@ -23,7 +43,7 @@
             </header>
 
             <h1>Privacy policy</h1>
-            <p class="updated">Last updated 18 October 2026</p>
+            <p class="updated">Last updated 12 November 2026</p>
 
             <div class="notice">
                 <strong>The short version.</strong> Browsing this site needs no account and we
@@ -116,6 +136,14 @@
                 used. It sets cookies and sends Google an identifier for your browser. It is
                 configured for aggregate measurement — we read it as totals, not as a record of
                 what any one person watched.
+            </p>
+            <p>
+                We also use Contentsquare to see how the site's pages are used, so we can find
+                what is confusing or broken. Unlike the counts above, it records individual visits:
+                which of our pages you open, and how you scroll, move, click and tap on them. It
+                sets its own cookies. We use it to improve the site, not to build a profile of
+                you, and we do not pass it your email address, your account or your verification
+                status.
             </p>
 
             <h3>Advertising</h3>

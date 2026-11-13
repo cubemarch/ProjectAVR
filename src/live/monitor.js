@@ -10,6 +10,10 @@ import { formatSummary } from '../catalog/media-format.js';
 import { dollars as formatCredits } from '../ui/money.js';
 import { Talkback, TALKBACK_STATE } from './talkback.js';
 import { ViewerRecorder } from './recorder.js';
+import { injectContentsquareScript } from '@contentsquare/tag-sdk';
+
+// The same Contentsquare tag as `src/main.js` — this is the other entry point.
+injectContentsquareScript({ clientId: '2e3ccfd49a95d' });
 import { TRACK, trackName } from './protocol.js';
 
 /**

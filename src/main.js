@@ -21,6 +21,11 @@ import { initImageGate } from './ui/image-gate.js';
 import { allowPlayback } from './ui/video-gate.js';
 import { ageState, onAgeChange } from './age-state.js';
 import { watchFirstInteraction } from './first-interaction.js';
+import { injectContentsquareScript } from '@contentsquare/tag-sdk';
+
+// Contentsquare: how pages are used, not just counted. Disclosed in the
+// privacy policy under "Analytics" — keep the two in step.
+injectContentsquareScript({ clientId: '2e3ccfd49a95d' });
 
 /**
  * Application shell.
