@@ -4207,15 +4207,43 @@ body.is-profile {
     color: #fff;
 }
 
+/* The fine print under the sentence a press confirms. Its own line, smaller,
+   so the sentence reads first and the terms read as terms. */
+.age-banner-terms {
+    display: block;
+    margin-top: 2px;
+    font-size: 12px;
+    color: var(--text-faint, #8d8b9c);
+}
+
+.age-banner-text a,
+.age-banner-details {
+    color: inherit;
+    text-decoration: underline;
+    text-underline-offset: 2px;
+}
+
+/* A link in looks, a button in kind: it opens the dialog rather than going
+   anywhere. */
+.age-banner-details {
+    padding: 0;
+    border: 0;
+    background: none;
+    font: inherit;
+    cursor: pointer;
+}
+
 .age-banner-cta {
     flex: none;
     white-space: nowrap;
 }
 
 /* The banner is fixed, so without this the last row of cards sits under it
-   for the whole visit and the final shelf can never be fully scrolled to. */
+   for the whole visit and the final shelf can never be fully scrolled to.
+   `--age-banner-h` is the banner's measured height, set by `ui/age-gate.js`;
+   the figures after it only hold until the first measurement lands. */
 body.has-age-banner {
-    padding-bottom: 76px;
+    padding-bottom: var(--age-banner-h, 76px);
 }
 
 @media (max-width: 640px) {
@@ -4225,7 +4253,7 @@ body.has-age-banner {
     }
 
     body.has-age-banner {
-        padding-bottom: 116px;
+        padding-bottom: var(--age-banner-h, 160px);
     }
 }
 
@@ -4280,6 +4308,12 @@ body.has-age-banner {
     font-size: 14px;
     line-height: 1.5;
     color: var(--text-dim, #c9c8d4);
+}
+
+.image-gate-text a {
+    color: #fff;
+    text-decoration: underline;
+    text-underline-offset: 2px;
 }
 
 .image-gate-actions {

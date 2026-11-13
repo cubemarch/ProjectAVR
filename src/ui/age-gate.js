@@ -77,6 +77,9 @@ const POLL_CEILING_MS = 15 * 60_000;
  */
 const SELFIE_METHOD = 'anonymous';
 
+/** Keeps the page's bottom padding equal to the banner while it is up. */
+let bannerFit = null;
+
 /**
  * Find out where this visitor stands and, if they are not through, say so.
  *
@@ -162,8 +165,12 @@ export async function openAgeGate() {
 function markVerified(state) {
     setAgeState({ ...state, ok: true });
 
+    bannerFit?.disconnect();
+    bannerFit = null;
+
     document.getElementById(BANNER_ID)?.remove();
     document.body.classList.remove('has-age-banner');
+    document.body.style.removeProperty('--age-banner-h');
 }
 
 /* ----------------------------------------------------------------- banner -- */
@@ -187,6 +194,15 @@ function markVerified(state) {
  * ignoring it one strip of screen; a close control on it would mean an
  * unverified visitor browsing a fully covered catalogue with no standing
  * explanation of why every image is a mosaic.
+ *
+ * Where a button is the law, the banner *is* the button (2026-11-13). It used
+ * to open the dialog, which asked the same question again: two clicks for one
+ * answer. Pressing it now attests, sending the version of the server's wording
+ * like the dialog does. That wording is three paragraphs, too long for a strip
+ * along the foot of a phone, so the banner says what the press means in one
+ * line and "Details" opens the dialog with the full text and the same button.
+ * In the twenty-seven it still opens the dialog, because there the answer is a
+ * document and the dialog is where the check runs.
  */
 function renderBanner(state) {
     document.getElementById(BANNER_ID)?.remove();
@@ -209,7 +225,10 @@ function renderBanner(state) {
                     verification
                         ? `${escapeHtml(where || 'Your state')} requires us to confirm you are
                            18 or older before showing explicit material.`
-                        : 'Confirm you are 18 or older to see them uncovered.'
+                        : `Confirm you are 18 or older to see them uncovered.
+                           <span class="age-banner-terms">Pressing the button confirms it and agrees to our
+                           <a href="/terms">terms</a> and <a href="/privacy">privacy policy</a> ·
+                           <button type="button" class="age-banner-details" data-details>Details</button></span>`
                 }
             </p>
             <button type="button" class="btn btn-primary age-banner-cta" data-verify>
@@ -217,21 +236,76 @@ function renderBanner(state) {
             </button>
         </div>`;
 
-    root.querySelector('[data-verify]')?.addEventListener('click', () => {
+    root.querySelector('[data-details]')?.addEventListener('click', () => {
         void openAgeGate();
+    });
+
+    const cta = root.querySelector('[data-verify]');
+
+    cta?.addEventListener('click', async () => {
+        if (verification) {
+            void openAgeGate();
+            return;
+        }
+
+        cta.disabled = true;
+        if (!(await attestHere(state))) cta.disabled = false;
     });
 
     document.body.append(root);
 
     // The class is what gives the page bottom padding, so the banner does not
-    // sit on top of the last row of cards for the whole visit.
+    // sit on top of the last row of cards for the whole visit. How much is
+    // measured rather than guessed: the strip wraps to a different height for
+    // every wording and width, and a fixed figure was already short of the
+    // verification wording on a phone.
     document.body.classList.add('has-age-banner');
+
+    const fit = () => document.body.style.setProperty('--age-banner-h', `${root.offsetHeight}px`);
+    fit();
+
+    if (typeof ResizeObserver === 'function') {
+        bannerFit = new ResizeObserver(fit);
+        bannerFit.observe(root);
+    }
 
     track(EVENTS.AGE_GATE_SHOWN, {
         region: regionOf(policy),
         asks: verification ? 'verification' : 'attestation',
         surface: 'banner'
     });
+}
+
+/**
+ * Attest in one press, from a surface that has already shown the sentence.
+ *
+ * The banner and the covered-image overlay both print the server's wording
+ * beside their button, so the press is the attestation and there is nothing
+ * left for the dialog to ask. If the server refuses — the visitor has moved
+ * into one of the twenty-seven since the page loaded, or the wording changed
+ * under them — the dialog opens instead, because it re-asks and draws
+ * whatever this request actually owes.
+ *
+ * @param {import('../age-state.js').AgeState} state what the surface was drawn from
+ * @returns {Promise<boolean>} true if they came out of it verified
+ */
+export async function attestHere(state) {
+    const policy = state.jurisdiction;
+
+    if (!(await attest(policy?.attestation?.version))) return openAgeGate();
+
+    markVerified(state);
+    track(EVENTS.AGE_GATE_PASSED, { region: regionOf(policy), asks: 'attestation', method: 'attestation' });
+
+    return true;
+}
+
+/** The sentence a button press confirms, as the server words it. */
+export function attestationText(policy) {
+    return (
+        policy?.attestation?.text ||
+        'I confirm that I am 18 years of age or older and that I wish to view sexually explicit material.'
+    );
 }
 
 async function ask() {
@@ -259,8 +333,10 @@ function render(state, resolve) {
     const where = { region: regionOf(policy), asks: verified ? 'verification' : 'attestation' };
 
     // Fired per drawing, not per load: `again` re-renders when the answer
-    // changed underneath us, and that genuinely is a second showing.
-    track(EVENTS.AGE_GATE_SHOWN, where);
+    // changed underneath us, and that genuinely is a second showing. Named as
+    // the dialog, so it can be told apart from the banner and the other
+    // invitations that report the same event.
+    track(EVENTS.AGE_GATE_SHOWN, { ...where, surface: 'dialog' });
 
     const root = document.createElement('div');
     root.id = ROOT_ID;
@@ -379,9 +455,7 @@ function render(state, resolve) {
 
 /** Twenty-three states and everywhere outside the US: one click is the law. */
 function attestHtml(policy) {
-    const text =
-        policy?.attestation?.text ||
-        'I confirm that I am 18 years of age or older and that I wish to view sexually explicit material.';
+    const text = attestationText(policy);
 
     return `
         <h1>Adults only</h1>
@@ -615,6 +689,8 @@ function wireVerification(root, state, done, again) {
 
     async function openCamera() {
         if (!cameraAvailable() || !preview) {
+            // Mostly a headset: its browser gives a page no camera at all.
+            track(EVENTS.AGE_GATE_FAILED, { region, via: 'selfie', outcome: 'no_camera' });
             say('This browser will not let the page use a camera. Choose one of the other methods above.');
             return;
         }
@@ -625,10 +701,13 @@ function wireVerification(root, state, done, again) {
         try {
             stream = await openSelfieCamera(preview);
         } catch (err) {
+            track(EVENTS.AGE_GATE_FAILED, { region, via: 'selfie', outcome: 'camera_error' });
             button.disabled = false;
             say(cameraProblem(err));
             return;
         }
+
+        track(EVENTS.AGE_CHECK_STARTED, { region, via: 'selfie', outcome: 'camera' });
 
         if (camera) camera.hidden = false;
 
@@ -712,6 +791,8 @@ function wireVerification(root, state, done, again) {
             say(started.message);
             return;
         }
+
+        track(EVENTS.AGE_CHECK_STARTED, { region, via: 'document', outcome: popup ? 'window' : 'link' });
 
         if (popup) {
             popup.location.href = started.clientUrl;

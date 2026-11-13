@@ -243,10 +243,13 @@ test('passing the age gate is reported once, with how it was passed', () => {
     // who passed the gate in another tab and then clicked the banner here is
     // a pass that happens without the dialog ever being shown — distinct from
     // `again`'s recheck, which happens with it already on screen.
+    //
+    // Five since 2026-11-13: `attestHere`, the one-press attestation from the
+    // banner and the covered-image overlay, passes without the dialog at all.
     assert.equal(
         passes.length,
-        4,
-        'already through, through the dialog, rechecked on opening, and rechecked while open'
+        5,
+        'already through, through the dialog, rechecked on opening, rechecked while open, and in one press'
     );
 
     for (const { params } of passes) {
@@ -269,6 +272,48 @@ test('the gate reports being shown and being walked away from', () => {
     assert.ok(fired.includes('AGE_GATE_SHOWN'), 'without it there is no denominator');
     assert.ok(fired.includes('AGE_GATE_LEFT'), 'and no way to tell a bounce from a pass');
     assert.ok(fired.includes('AGE_GATE_FAILED'), 'nor a provider outage from a run of minors');
+});
+
+test('the dialog says it is the dialog, so an invitation is not counted as an opening', () => {
+    // The banner, the image overlay and the play buttons all report
+    // AGE_GATE_SHOWN with a `surface`. Until 2026-11-13 the dialog sent none,
+    // and a visitor who scrolled past the banner was indistinguishable from
+    // one who opened the dialog and walked away.
+    const shown = calls(gateSource).filter((c) => c.event === 'AGE_GATE_SHOWN');
+
+    assert.ok(shown.some(({ params }) => /surface: 'dialog'/.test(params)), 'the dialog no longer names itself');
+    assert.ok(shown.some(({ params }) => /surface: 'banner'/.test(params)), 'the banner no longer names itself');
+});
+
+test('where a button is the law, the banner is the button and says what it confirms', () => {
+    // One press, not two. The server's wording is three paragraphs, so the
+    // banner says what the press means in one line and "Details" opens the
+    // dialog with all of it. The twenty-seven still open the dialog.
+    const banner = gateSource.slice(gateSource.indexOf('function renderBanner('), gateSource.indexOf('async function ask('));
+
+    assert.match(banner, /Confirm you are 18 or older/, 'the banner no longer says what pressing it means');
+    assert.match(banner, /data-details[\s\S]*?openAgeGate\(\)/, 'the full wording is no longer one press away');
+    assert.match(banner, /attestHere\(state\)/, 'the banner no longer attests');
+    assert.match(banner, /if \(verification\) \{\s*void openAgeGate\(\);/, 'the twenty-seven lost the dialog');
+
+    // The one-press route sends the version it showed, so a reworded sentence
+    // can never be recorded against a press of the old one.
+    assert.match(gateSource, /attest\(policy\?\.attestation\?\.version\)/);
+});
+
+test('a check that starts is counted, whichever kind it is', () => {
+    // The step between opening the dialog and a verdict. Without it a
+    // document check that loses everybody looks exactly like a dialog that
+    // nobody reads.
+    const started = calls(gateSource).filter((c) => c.event === 'AGE_CHECK_STARTED');
+
+    assert.ok(started.some(({ params }) => /via: 'document'/.test(params)), 'the document route');
+    assert.ok(started.some(({ params }) => /via: 'selfie'/.test(params)), 'the camera');
+
+    // A camera that never comes on is a failure worth seeing — it is what a
+    // headset does — and not a silent return.
+    const failed = calls(gateSource).filter((c) => c.event === 'AGE_GATE_FAILED');
+    assert.ok(failed.some(({ params }) => /'no_camera'/.test(params)));
 });
 
 test('a gate event carries the jurisdiction, because that is the only question', () => {

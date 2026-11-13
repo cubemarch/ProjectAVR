@@ -219,6 +219,28 @@ test('the replayed click does not re-open the overlay', () => {
     assert.match(SRC, /replaying = true;[\s\S]{0,200}?replaying = false;/);
 });
 
+test('a decline is remembered, so the overlay is not a toll on every paid link', () => {
+    // Every exit that declines records it, and the click handler honours it
+    // before drawing anything. Verifying is not a decline.
+    assert.match(SRC, /if \(declined\(\)\) return;/, 'the handler no longer checks for a decline');
+
+    const remembered = (SRC.match(/rememberDecline\(\);/g) || []).length;
+    assert.equal(remembered, 2, 'Escape and [data-continue] each record the decline, and nothing else does');
+
+    // Per tab and per visit, and never fatal: a private window that refuses
+    // storage still asks only once per load.
+    assert.match(SRC, /sessionStorage/);
+    assert.doesNotMatch(SRC, /localStorage/, 'a decline must not outlive the visit');
+    assert.match(SRC, /try \{\s*return sessionStorage\.getItem/);
+});
+
+test('where a button is the law, the overlay is the button', () => {
+    // The sentence is printed in the overlay, so pressing it attests; the
+    // twenty-seven still go to the dialog, where the real check runs.
+    assert.match(SRC, /attestationText\(policy\)/, 'the sentence being confirmed is not on screen');
+    assert.match(SRC, /if \(asks === 'attestation'\) await attestHere\(state\);\s*else await openAgeGate\(\);/);
+});
+
 test('a visitor already through the gate never sees it', () => {
     assert.match(SRC, /ageOk\(\)/, 'the overlay no longer checks whether the visitor is verified');
 });

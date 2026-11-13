@@ -1,7 +1,7 @@
 import { EVENTS, regionOf, track } from '../analytics.js';
 import { ageOk, ageState } from '../age-state.js';
 import { coveredPicture, isPlainLeftClick } from './covered-image.js';
-import { openAgeGate } from './age-gate.js';
+import { attestHere, attestationText, openAgeGate } from './age-gate.js';
 
 /**
  * The overlay a visitor meets when they click a covered picture.
@@ -29,6 +29,14 @@ import { openAgeGate } from './age-gate.js';
  * overlay — the button, Escape, the backdrop — either verifies or continues,
  * and continuing is not punished.
  *
+ * ## It asks once
+ *
+ * A visitor who has said "continue without verifying" has answered, and asking
+ * again on every card turned the answer into a toll on the way to every paid
+ * link (2026-11-13). The decline is remembered for the tab's session, and
+ * covered clicks after it go straight through. The banner stays, so the gate
+ * is still one press away; a new visit asks again.
+ *
  * ## What counts as "an image"
  *
  * Whatever the server covered, and nothing else — `ui/covered-image.js` has
@@ -50,6 +58,35 @@ const ROOT_ID = 'image-gate-root';
  */
 let replaying = false;
 
+/** Where a decline is remembered. Per tab, gone when the visit ends. */
+const DECLINED_KEY = 'avr:image-gate-declined';
+
+/** Set by a decline, so a browser that refuses storage still asks only once a load. */
+let declinedHere = false;
+
+/** Whether this visitor has already chosen to browse covered. */
+function declined() {
+    if (declinedHere) return true;
+
+    // Storage can be blocked, absent or throw on read in a private window.
+    // Any of those is "not declined", which only costs one more question.
+    try {
+        return sessionStorage.getItem(DECLINED_KEY) === '1';
+    } catch {
+        return false;
+    }
+}
+
+function rememberDecline() {
+    declinedHere = true;
+
+    try {
+        sessionStorage.setItem(DECLINED_KEY, '1');
+    } catch {
+        // The in-memory flag still holds for this load.
+    }
+}
+
 /**
  * Start watching for clicks on covered artwork.
  *
@@ -65,6 +102,7 @@ export function initImageGate() {
         'click',
         (event) => {
             if (replaying || ageOk()) return;
+            if (declined()) return;
             if (!isPlainLeftClick(event)) return;
             if (document.getElementById(ROOT_ID)) return;
 
@@ -112,7 +150,8 @@ function open(origin) {
                     asks === 'verification'
                         ? `${escapeHtml(where || 'Your state')} requires us to confirm you are 18
                            or older before showing explicit material.`
-                        : 'Confirm you are 18 or older to see this and the rest of the page uncovered.'
+                        : `${escapeHtml(attestationText(policy))} By continuing you agree to our
+                           <a href="/terms">terms</a> and <a href="/privacy">privacy policy</a>.`
                 }
             </p>
             <div class="image-gate-actions">
@@ -168,6 +207,7 @@ function open(origin) {
         if (event.key === 'Escape') {
             event.preventDefault();
             event.stopPropagation();
+            rememberDecline();
             go();
         }
     };
@@ -176,7 +216,10 @@ function open(origin) {
         el.addEventListener('click', (event) => {
             // The backdrop is the whole screen; a click that started on the
             // panel and drifted onto it is not a dismissal.
-            if (event.target === el) go();
+            if (event.target !== el) return;
+
+            rememberDecline();
+            go();
         });
     }
 
@@ -186,7 +229,10 @@ function open(origin) {
         root.remove();
         document.removeEventListener('keydown', onKey, true);
 
-        await openAgeGate();
+        // Where a button is the law the sentence is already on screen above
+        // this one, so the press is the attestation and no dialog follows.
+        if (asks === 'attestation') await attestHere(state);
+        else await openAgeGate();
 
         // Either way. Verified, the replay opens an uncovered card; declined,
         // it opens a covered one. Nothing here is a dead end.

@@ -54,13 +54,36 @@ export const EVENTS = Object.freeze({
      */
     FIRST_INTERACTION: 'first_interaction',
 
-    /** The gate was drawn. The denominator for everything below it. */
+    /**
+     * The gate was put in front of somebody. The denominator for everything
+     * below it, and only readable split by `surface`: `banner`, `image`,
+     * `title`/`recording`/`cam` are invitations, and `dialog` is the dialog
+     * itself opening. Before 2026-11-13 the dialog sent no surface, so a
+     * visitor who saw the banner and kept browsing and one who opened the
+     * dialog and walked away were the same row — which is what made "the gate
+     * loses most visitors" unanswerable. `surface` has to be registered as a
+     * custom dimension before any of this shows in a report.
+     */
     AGE_GATE_SHOWN: 'age_gate_shown',
+
+    /**
+     * A real check began: the provider's window opened (`outcome: 'window'`),
+     * or the browser blocked it and the link was offered instead (`'link'`),
+     * or the selfie camera came on (`'camera'`). The step between opening the
+     * dialog and a verdict, and the one a document check had never been seen
+     * to get past.
+     */
+    AGE_CHECK_STARTED: 'age_check_started',
 
     /** The visitor is through, by whichever route. Always exactly one per load. */
     AGE_GATE_PASSED: 'age_gate_passed',
 
-    /** A check came back saying no. Rare, and the thing to watch after a provider change. */
+    /**
+     * A check came back saying no, or could not run. `outcome` keeps the two
+     * apart: `rejected` is a verdict; `error`, `abandoned`, `no_camera` and
+     * `camera_error` are a check that never got one. The camera pair is mostly
+     * headsets, whose browsers give a page no camera at all.
+     */
     AGE_GATE_FAILED: 'age_gate_failed',
 
     /** The visitor took the way out instead. */
