@@ -46,6 +46,43 @@ function liveMonitorRoutes() {
 const CHUNK_INFIX = BRAND.toLowerCase().replace(/[^a-z0-9]/g, '');
 
 /**
+ * Chunks with a reason to carry their own name: the two vendored engines
+ * below, which are long-lived on purpose and worth recognising in a network
+ * tab.
+ */
+const NAMED_CHUNKS = new Set(['playcanvas', 'hls']);
+
+/**
+ * A shared chunk is called `shared`, whatever Rolldown would have called it.
+ *
+ * Left alone, a chunk that both entries import is named after the first module
+ * Rolldown meets in it, and on 2026-11-12 that was the Contentsquare SDK: the
+ * code common to both pages, and the main stylesheet with it, shipped as
+ * `injectContentsquareScript-*.js` and `.css`. Those are first-party files, but
+ * a content blocker that filters on the vendor's name cannot tell, and a
+ * blocked shared chunk is a site that never starts. A tracker is the likeliest
+ * thing to be filtered and the likeliest thing to be imported from both
+ * entries, so the name has to come from here rather than from the import
+ * graph. Dynamic imports keep theirs; nothing third-party is loaded that way.
+ *
+ * @param {{name: string, isDynamicEntry?: boolean}} chunk
+ */
+const chunkName = (chunk) => (chunk.isDynamicEntry || NAMED_CHUNKS.has(chunk.name) ? '[name]' : 'shared');
+
+/**
+ * The stylesheet a shared chunk pulls in is named after that chunk, so it gets
+ * the same treatment. The entries' own sheets keep `main` and `live`.
+ *
+ * @param {{names?: string[], name?: string}} asset
+ */
+const assetName = (asset) => {
+    const name = asset.names?.[0] ?? asset.name ?? '';
+    return name.endsWith('.css') && !/^(main|live)\.css$/.test(name)
+        ? 'assets/shared-[hash][extname]'
+        : 'assets/[name]-[hash][extname]';
+};
+
+/**
  * WebXR requires a secure context. `localhost` counts, but a headset on the
  * same LAN reaches this machine by IP - which does not - so dev serves over
  * HTTPS with a self-signed certificate. Accept the browser warning once on the
@@ -103,7 +140,8 @@ export default defineConfig({
                 live: resolve(import.meta.dirname, 'live.html')
             },
             output: {
-                chunkFileNames: `assets/[name]-${CHUNK_INFIX}-[hash].js`,
+                chunkFileNames: (chunk) => `assets/${chunkName(chunk)}-${CHUNK_INFIX}-[hash].js`,
+                assetFileNames: assetName,
                 // The engine is large and changes far less often than app code,
                 // so it gets its own long-lived chunk.
                 manualChunks(id) {
