@@ -311,10 +311,8 @@ export async function render(strips, seed, style = DEFAULT_STYLE, enhance = true
  * holding the exact prompt and seed to reproduce it.
  */
 export function customPrompt(prompt) {
-    // The same floor as every other prompt, minus `original`, which a test
-    // image of something else entirely has no reason to carry.
     const [count, , rating, ...rest] = safePrompt(prompt).split(', ');
-    return [rating, count, ...rest].join(', ');
+    return [rating, count, ...rest].filter(Boolean).join(', ');
 }
 
 export function renderCustom(prompt, { seed, style = DEFAULT_STYLE, count = 1 }) {
