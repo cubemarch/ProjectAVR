@@ -47,8 +47,7 @@ const CAST = {
 const STYLE = [
     'High-fashion manga-influenced comic art: clean confident ink linework, expressive faces, adult proportions, flat colour with soft shading on a warm cream paper texture. Teal and copper accents.',
     'Night and interior scenes use thriller lighting: deep ink shadows, humid dark windows, reflected city light. Daylight scenes stay ordinary daylight.',
-    'Everyone is an adult. Fully clothed, non-explicit, never sexualised in distress.'
-].join(' ');
+    'Adults throughout, 18 and over. Nudity and sexual framing allowed. Every character is an adult.',].join(' ');
 
 const pad = (n) => String(n).padStart(2, '0');
 
