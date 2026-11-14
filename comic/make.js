@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 
 import { STRIPS } from './strips.js';
 import { DEFAULT_STYLE, MODEL, MONO_STYLES, NEGATIVE, PANELS, QUALITY, STYLES } from './panels.js';
+import { enhancePrompts, safePrompt } from './openai.js';
 
 /**
  * Draft comic pages: panel art from the generator, lettering from the script.
@@ -14,6 +15,7 @@ import { DEFAULT_STYLE, MODEL, MONO_STYLES, NEGATIVE, PANELS, QUALITY, STYLES } 
  *   node comic/make.js 7 --seed 4242     the same, reproducibly
  *   node comic/make.js 7-8 --compose     re-letter from the panels already rendered
  *   node comic/make.js 7 --style ink     another drawing style from panels.js
+ *   node comic/make.js 7 --no-enhance    draw the panels.js prompts as written, without OpenAI
  *   node comic/make.js --prompt "1girl, original, red hair, rooftop, night" --style ink --count 4
  *                                        a prompt of your own, into drafts/custom/
  *
@@ -129,7 +131,10 @@ function resumeIdle() {
  */
 /** "count, original, rating" + style + the rest of the panel + quality. */
 export function panelPrompt(prompt, style) {
-    const tags = prompt.split(', ');
+    // Every prompt passes here on its way to the GPU, whoever wrote it: a
+    // script, OpenAI, or a person editing tags in the web page. So this is
+    // where the floor is enforced, not left to anyone's instructions.
+    const tags = safePrompt(prompt).split(', ');
     return [...tags.slice(0, 3), STYLES[style], ...tags.slice(3), QUALITY].join(', ');
 }
 
@@ -217,8 +222,19 @@ function txt2img(prompts, seed, count = 1) {
     return made.map((m) => ({ ...m, local: path.join(tmp, path.basename(m.path)) }));
 }
 
-export function render(strips, seed, style = DEFAULT_STYLE) {
-    const jobs = strips.flatMap((s) => PANELS[s.n].map((p, i) => ({ n: s.n, panel: i + 1, prompt: panelPrompt(p.prompt, style) })));
+/**
+ * Draw strips from `strips.js`. With `enhance`, OpenAI rewrites each panel's
+ * prompt from its art direction first, using the `panels.js` prompt as a
+ * draft; without it, the `panels.js` prompts are drawn as written.
+ */
+export async function render(strips, seed, style = DEFAULT_STYLE, enhance = true) {
+    const prompts = new Map();
+    for (const s of strips) {
+        const drafts = PANELS[s.n].map((p) => p.prompt);
+        prompts.set(s.n, enhance ? await enhancePrompts(s, drafts) : drafts);
+        if (enhance) console.error(`enhanced strip ${pad(s.n)}:\n${prompts.get(s.n).map((p, i) => `  ${i + 1}. ${p}`).join('\n')}`);
+    }
+    const jobs = strips.flatMap((s) => prompts.get(s.n).map((p, i) => ({ n: s.n, panel: i + 1, prompt: panelPrompt(p, style) })));
     const made = txt2img(jobs.map((j) => j.prompt), seed);
 
     fs.mkdirSync(RAW, { recursive: true });
@@ -242,11 +258,10 @@ export function render(strips, seed, style = DEFAULT_STYLE) {
  * holding the exact prompt and seed to reproduce it.
  */
 export function customPrompt(prompt) {
-    const tags = prompt
-        .split(',')
-        .map((t) => t.trim())
-        .filter((t) => t && !/^(rating:\s*)?(general|safe|sensitive|questionable|nsfw|explicit)$/i.test(t));
-    return ['safe', ...tags].join(', ');
+    // The same floor as every other prompt, minus `original`, which a test
+    // image of something else entirely has no reason to carry.
+    const [count, , rating, ...rest] = safePrompt(prompt).split(', ');
+    return [rating, count, ...rest].join(', ');
 }
 
 export function renderCustom(prompt, { seed, style = DEFAULT_STYLE, count = 1 }) {
@@ -520,13 +535,13 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.a
             console.error(
                 strips.length
                     ? `no panel prompts for strip ${missing.map((s) => s.n).join(', ')}: add them to comic/panels.js`
-                    : 'usage: node comic/make.js <n>|<from>-<to> [--seed N] [--style S] [--compose]\n' +
+                    : 'usage: node comic/make.js <n>|<from>-<to> [--seed N] [--style S] [--compose] [--no-enhance]\n' +
                           '       node comic/make.js --prompt "<tags>" [--style S] [--count 1-8] [--seed N]'
             );
             process.exit(1);
         }
 
-        if (!args.includes('--compose')) render(strips, seed, style);
+        if (!args.includes('--compose')) await render(strips, seed, style, !args.includes('--no-enhance'));
         await compose(strips, style);
     }
 }

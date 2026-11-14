@@ -167,3 +167,22 @@ test('the saved art prompts are the ones the script would print today', async ()
     const range = /node comic\/prompts\.js (\S+) --write/.exec(saved)[1];
     assert.equal(saved, promptsDocument(range), `comic/PROMPTS.md is stale: run node comic/prompts.js ${range} --write`);
 });
+
+test('no prompt reaches the image model without the safety floor, whoever wrote it', async () => {
+    const { safePrompt } = await import('../comic/openai.js');
+    const { panelPrompt, customPrompt } = await import('../comic/make.js');
+
+    // A prompt that asks for everything the comic must not draw.
+    const hostile = 'nsfw, rating:explicit, 1girl, nude, lustyx, lingerie, young, cleavage, rooftop, night';
+    for (const out of [safePrompt(hostile), panelPrompt(hostile, 'ink'), customPrompt(hostile)]) {
+        assert.match(out, /(^|, )safe(, |$)/, `"safe" is forced: ${out}`);
+        for (const banned of ['nsfw', 'explicit', 'nude', 'lingerie', 'young', 'cleavage']) {
+            assert.ok(!out.split(', ').some((t) => t.includes(banned)), `"${banned}" survived: ${out}`);
+        }
+        assert.ok(out.includes('rooftop'), 'the scene survives');
+    }
+
+    // The order panelPrompt depends on: count, original, safe.
+    assert.deepEqual(safePrompt('office, 2girls, original').split(', ').slice(0, 3), ['2girls', 'original', 'safe']);
+    assert.deepEqual(safePrompt('office').split(', ').slice(0, 3), ['1girl', 'original', 'safe']);
+});

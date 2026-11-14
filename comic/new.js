@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 
 import { DEFAULT_STYLE, STYLES, TAGS } from './panels.js';
 import { makePage, runOnBox } from './make.js';
+import { OPENAI_MODEL, chatJSON, enhancePrompts } from './openai.js';
 
 /**
  * A Lusty X page from one line of story.
@@ -22,8 +23,13 @@ import { makePage, runOnBox } from './make.js';
  * XL 4.0 and Lusty's LoRA) and lettered by `make.js`. No language model
  * draws anything.
  *
- * Two writers, chosen with `--writer`:
- *   local   (default) Qwen2.5-14B-Instruct on the GPU box, via
+ * Then, unless `--no-enhance`, OpenAI rewrites each panel's drawing prompt
+ * from its art direction (see `openai.js`), and those are what the A100 draws.
+ *
+ * Three writers, chosen with `--writer`:
+ *   openai  (default) the OpenAI model the site already uses for performer
+ *           biographies, `AVR_OPENAI_MODEL` (gpt-4o unless set).
+ *   local   Qwen2.5-14B-Instruct on the GPU box, via
  *           `server/write.py`. Apache-2.0, billed as GPU time like the GIF
  *           service. Added on 2026-11-14, when Vertex refused Claude calls
  *           over an unpaid balance on the project's billing account.
@@ -166,6 +172,21 @@ export async function writeScript(idea) {
     return check(JSON.parse(text));
 }
 
+/** The OpenAI writer: the same prompt and schema as the others, checked the same way. */
+export async function writeScriptOpenAI(idea, attempts = 2) {
+    const system =
+        `${SYSTEM}\n\nOUTPUT\nReply with one JSON object matching this JSON Schema exactly, with exactly four panels:\n` +
+        JSON.stringify(SCHEMA);
+    for (let attempt = 1; ; attempt++) {
+        try {
+            return check(await chatJSON(system, `Write a strip from this idea:\n\n${idea}`, { temperature: 0.8 }));
+        } catch (err) {
+            if (attempt >= attempts) throw err;
+            console.error(`OpenAI's script did not validate (${err.message}); asking again`);
+        }
+    }
+}
+
 /**
  * The local model, on the box. It has no structured output, so the schema is
  * written into the prompt, the reply is searched for its JSON object, and
@@ -248,7 +269,7 @@ function shapes(script) {
             panels: script.panels.map((p) => ({ art: p.art, lines: p.lines.map((l) => [l.speaker, l.text]) })),
             after: script.after
         },
-        spec: script.panels.map((p) => ({ prompt: p.prompt, inserts: p.inserts }))
+        spec: script.panels.map((p) => ({ prompt: p.prompt, ...(p.draft ? { draft: p.draft } : {}), inserts: p.inserts }))
     };
 }
 
@@ -276,8 +297,8 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.a
 
     if (!idea && !from) {
         console.error(
-            'usage: node comic/new.js "<one line of story>" [--writer local|claude] [--style fashion|ink|inkmono|illustration]\n' +
-                '                         [--seed N] [--yes] [--script-only] [--out <path without extension>]\n' +
+            'usage: node comic/new.js "<one line of story>" [--writer openai|local|claude] [--style fashion|ink|inkmono|illustration]\n' +
+                '                         [--seed N] [--yes] [--script-only] [--no-enhance] [--out <path without extension>]\n' +
                 '       node comic/new.js --from <script.json> [--style S] [--seed N]'
         );
         process.exit(1);
@@ -286,9 +307,9 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.a
     let saved = {};
     if (from) saved = JSON.parse(fs.readFileSync(from, 'utf8'));
 
-    const writer = flag('--writer') ?? saved.writer ?? 'local';
-    if (!['local', 'claude'].includes(writer)) {
-        console.error(`unknown writer ${writer}; choose local or claude`);
+    const writer = flag('--writer') ?? saved.writer ?? 'openai';
+    if (!['openai', 'local', 'claude'].includes(writer)) {
+        console.error(`unknown writer ${writer}; choose openai, local or claude`);
         process.exit(1);
     }
     const style = flag('--style') ?? saved.style ?? DEFAULT_STYLE;
@@ -305,8 +326,27 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.a
         ({ strip, panels: spec } = saved);
         fs.writeFileSync(`${base}.json`, JSON.stringify({ ...saved, style, seed }, null, 2));
     } else {
-        console.error(writer === 'claude' ? `writing the strip with ${MODEL} on Vertex…` : `writing the strip with ${LOCAL_MODEL} on the GPU box…`);
-        const script = writer === 'claude' ? await writeScript(idea) : await writeScriptLocal(idea);
+        const writers = {
+            openai: [`${OPENAI_MODEL} on OpenAI`, writeScriptOpenAI],
+            local: [`${LOCAL_MODEL} on the GPU box`, writeScriptLocal],
+            claude: [`${MODEL} on Vertex`, writeScript]
+        };
+        console.error(`writing the strip with ${writers[writer][0]}…`);
+        const script = await writers[writer][1](idea);
+
+        // The writer's tags are a draft; OpenAI rewrites them from the art
+        // direction, and the draft is kept beside each one for comparison.
+        if (!args.includes('--no-enhance')) {
+            console.error(`enhancing the drawing prompts with ${OPENAI_MODEL}…`);
+            const enhanced = await enhancePrompts(
+                { setting: script.setting, look: script.look, panels: script.panels },
+                script.panels.map((p) => p.prompt)
+            );
+            script.panels.forEach((p, i) => {
+                p.draft = p.prompt;
+                p.prompt = enhanced[i];
+            });
+        }
         printScript(script);
 
         fs.mkdirSync(OUT_DIR, { recursive: true });

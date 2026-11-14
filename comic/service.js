@@ -15,7 +15,8 @@ import { touchBusy } from './make.js';
  *
  *   COMIC_ON_BOX=1 node comic/service.js     (systemd runs it; see deploy.sh)
  *
- * Type an idea, get a script from the local writer, edit any of it, draw it.
+ * Type an idea, get a script (OpenAI writes it and sharpens each panel's
+ * drawing tags, see `openai.js`), edit any of it, draw it on the A100.
  * Each step is `new.js` run as a child process, so a job that takes three
  * minutes never stalls the page, and jobs run one at a time because there is
  * one GPU. The idle reaper is kept off while a job runs, and left to power the
@@ -206,6 +207,7 @@ const PAGE = `<!doctype html>
       <label for="seed">Seed (blank for random)<input id="seed" inputmode="numeric" /></label>
     </div>
     <div class="row"><button id="write">Write script</button></div>
+    <p style="color:var(--dim);margin:0;font-size:13px">OpenAI writes the script and sharpens each panel's drawing tags; the A100 draws them. Tags you edit are checked again before drawing: the comic stays non-explicit.</p>
     <h2>2 · Script</h2>
     <div id="script"><p style="color:var(--dim);margin:0">The script appears here to edit before drawing. Lines are <code>Speaker: text</code>, one per line; use Caption or Screen as the speaker for boxes and screens. Inserts are <code>type: text</code> with type chyron, doc, label, note or badge.</p></div>
     <div class="row"><button id="draw" disabled>Draw page</button></div>

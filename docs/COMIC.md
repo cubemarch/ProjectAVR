@@ -161,3 +161,34 @@ in particular:
 - Fictional names (Velura Live, Saltglass VR, Rowan Pryor, Priya Nand and the
   rest) need a quick trademark and name search, because a real company that
   shares a name with this season's villain is a problem.
+
+## The generator
+
+Two ways in, one pipeline:
+
+- **The web page on the GPU box**, `http://136.113.138.0:8011/` while the box
+  is running: type an idea, edit the script, draw the page. Shipped and
+  updated with `bash comic/deploy.sh`.
+- **The command line on a Mac:** `node comic/new.js "<idea>"` for a page from
+  one line of story, `node comic/make.js 7` for a strip in `strips.js`.
+
+What runs where:
+
+| Step | What does it | Where |
+| --- | --- | --- |
+| Script | OpenAI (`AVR_OPENAI_MODEL`, gpt-4o unless set), `comic/openai.js`. `--writer local` uses Qwen2.5-14B on the box; `--writer claude` uses Claude on Vertex | OpenAI's API |
+| Drawing prompts | OpenAI rewrites each panel's tags from its art direction: one described character, framing, setting, light, under the 77-token limit. `--no-enhance` skips it | OpenAI's API |
+| Panels | Animagine XL 4.0 and the `lustyx` LoRA, `comic/server/render.py` | the A100 |
+| Lettering | Playwright, from the script's exact words | the box, or the Mac running the command |
+
+The key is `AVR_OPENAI_KEY`, the one the performer biographies use. On a Mac
+it comes from `.env`; on the box `deploy.sh` writes it to `/etc/comic.env`,
+readable by root only.
+
+**The safety floor is code, not instructions.** Every prompt passes through
+`panelPrompt` in `make.js` on its way to the GPU, and that runs `safePrompt`
+in `openai.js`: the `safe` rating is forced, other rating tags are dropped,
+and explicit or youth-related tags are removed, whether the prompt came from
+OpenAI, a script, or tags edited by hand in the web page. The negative prompt
+in `panels.js` excludes the same things on the model's side.
+`test/comic.test.js` holds both.

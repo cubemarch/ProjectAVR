@@ -13,10 +13,14 @@
 #     pages lettered on the box match pages lettered on a Mac
 #   - runs comic/service.js as the `comic` systemd unit on port 8011
 #   - opens 8011 to David's addresses only, like allow-animatediff-ui does 8010
+#   - copies AVR_OPENAI_KEY (and AVR_OPENAI_MODEL, if set) from the repo's .env
+#     into /etc/comic.env, root-only, for the OpenAI writer and enhancer. The
+#     key travels on the SSH session's stdin, never on a command line.
 #
-# The service runs the writer (Qwen2.5-14B-Instruct) and the renderer
-# (Animagine XL 4.0 + the lustyx LoRA) from the GIF service's virtualenv and
-# Hugging Face cache, and never touches either.
+# Scripts and enhanced drawing prompts come from OpenAI (comic/openai.js); the
+# local writer (Qwen2.5-14B-Instruct) is still there as --writer local. The
+# renderer (Animagine XL 4.0 + the lustyx LoRA) and the local writer run from
+# the GIF service's virtualenv and Hugging Face cache, and never touch either.
 set -euo pipefail
 
 VM=cubemarch-hyworld
@@ -31,7 +35,14 @@ tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 
 mkdir -p "$tmp/comic/server"
-cp "$here"/{strips.js,panels.js,make.js,new.js,service.js} "$tmp/comic/"
+cp "$here"/{strips.js,panels.js,make.js,new.js,openai.js,service.js} "$tmp/comic/"
+
+# A missing name is an empty value, not a failure: AVR_OPENAI_MODEL is
+# optional, and under pipefail a grep that finds nothing ends the script.
+envval() { { grep -E "^$1=" "$here/../.env" 2>/dev/null || true; } | head -1 | cut -d= -f2- | sed -E "s/^[\"']|[\"']\$//g"; }
+OPENAI_KEY=$(envval AVR_OPENAI_KEY)
+OPENAI_MODEL=$(envval AVR_OPENAI_MODEL)
+[ -n "$OPENAI_KEY" ] || echo "warning: no AVR_OPENAI_KEY in .env; the OpenAI writer and enhancer will fail on the box"
 cp "$here"/server/{render.py,write.py} "$tmp/comic/server/"
 cat > "$tmp/package.json" <<'JSON'
 { "name": "lustyx-comic", "private": true, "type": "module", "dependencies": { "playwright": "1.62.1" } }
@@ -51,6 +62,14 @@ gcloud compute ssh "$VM" --zone "$ZONE" --quiet --command "bash -s" <<REMOTE
 set -euo pipefail
 sudo mkdir -p /opt/comic/app
 sudo tar xzf /tmp/comic-app.tgz -C /opt/comic/app
+
+if [ -n "$OPENAI_KEY" ]; then
+  sudo install -m 600 -o root -g root /dev/null /etc/comic.env
+  sudo tee /etc/comic.env >/dev/null <<ENV
+AVR_OPENAI_KEY=$OPENAI_KEY
+${OPENAI_MODEL:+AVR_OPENAI_MODEL=$OPENAI_MODEL}
+ENV
+fi
 
 if [ ! -x /opt/node/bin/node ]; then
   curl -fsSL https://nodejs.org/dist/$NODE/node-$NODE-linux-x64.tar.xz | sudo tar -xJ -C /opt
@@ -75,6 +94,7 @@ Environment=COMIC_ON_BOX=1
 Environment=COMIC_PORT=$PORT
 Environment=PATH=/opt/node/bin:/usr/local/bin:/usr/bin:/bin
 Environment=PLAYWRIGHT_BROWSERS_PATH=/opt/comic/ms-playwright
+EnvironmentFile=-/etc/comic.env
 ExecStart=/opt/node/bin/node comic/service.js
 Restart=on-failure
 
