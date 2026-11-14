@@ -9,7 +9,10 @@ file carries everything, so `make.js` decides the settings and this only
 draws:
 
     {"model", "lora", "lora_scale", "prompts", "negative", "seed", "count",
-     "width", "height", "steps", "guidance", "out"}
+     "width", "height", "sizes"?, "steps", "guidance", "out"}
+
+`sizes`, when present, is one {"width", "height"} per prompt, for pages whose
+panels are not all the same shape; otherwise every image is width x height.
 
 One JSON line per image on stdout, in order: {"prompt", "seed", "seconds",
 "path"}. Image k of the run is seed + k, so a run is reproducible.
@@ -41,7 +44,8 @@ def main():
 
     os.makedirs(job["out"], exist_ok=True)
     k = 0
-    for prompt in job["prompts"]:
+    sizes = job.get("sizes") or [{"width": job["width"], "height": job["height"]}] * len(job["prompts"])
+    for prompt, size in zip(job["prompts"], sizes):
         for _ in range(job.get("count", 1)):
             seed = job["seed"] + k
             t = time.time()
@@ -50,8 +54,8 @@ def main():
                 negative_prompt=job["negative"],
                 num_inference_steps=job["steps"],
                 guidance_scale=job["guidance"],
-                width=job["width"],
-                height=job["height"],
+                width=size["width"],
+                height=size["height"],
                 generator=torch.Generator(device="cpu").manual_seed(seed),
             ).images[0]
             path = os.path.join(job["out"], f"{k:03d}.png")

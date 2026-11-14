@@ -167,12 +167,62 @@ export function runOnBox(files, command) {
     }
 }
 
+/* ----------------------------------------------------------- layouts -- */
+
+/** A page holds one to six panels. More than six stops reading as a strip. */
+export const MAX_PANELS = 6;
+
+/**
+ * Where each panel sits on the page, for `n` panels, as CSS grid placements.
+ * The page stays the series' tall shape; panels change size instead. An odd
+ * count opens with a wide establishing panel across the top.
+ *
+ *   1: one splash          2: two stacked        3: wide, then two
+ *   4: two by two          5: wide, then 2x2     6: two by three
+ */
+export function layout(n) {
+    if (!Number.isInteger(n) || n < 1 || n > MAX_PANELS) throw new Error(`a page holds 1 to ${MAX_PANELS} panels, not ${n}`);
+    const cell = (col, colSpan, row, rowSpan = 1) => ({ col, colSpan, row, rowSpan });
+    switch (n) {
+        case 1: return { cols: 1, rows: 1, cells: [cell(1, 1, 1)] };
+        case 2: return { cols: 1, rows: 2, cells: [cell(1, 1, 1), cell(1, 1, 2)] };
+        case 3: return { cols: 2, rows: 2, cells: [cell(1, 2, 1), cell(1, 1, 2), cell(2, 1, 2)] };
+        case 4: return { cols: 2, rows: 2, cells: [cell(1, 1, 1), cell(2, 1, 1), cell(1, 1, 2), cell(2, 1, 2)] };
+        case 5: return { cols: 2, rows: 3, cells: [cell(1, 2, 1), cell(1, 1, 2), cell(2, 1, 2), cell(1, 1, 3), cell(2, 1, 3)] };
+        case 6: return { cols: 2, rows: 3, cells: [cell(1, 1, 1), cell(2, 1, 1), cell(1, 1, 2), cell(2, 1, 2), cell(1, 1, 3), cell(2, 1, 3)] };
+    }
+}
+
+/** The panel area of a 1086x1448 page, measured from `pageHtml`'s layout. */
+const GRID = { width: 1054, height: 1270, gap: 10 };
+
+/**
+ * Animagine XL 4.0's trained sizes, from its model card. Drawing a panel at
+ * the one nearest its shape means a wide panel is composed wide, rather than
+ * drawn tall and then cropped to a strip of its middle.
+ */
+const BUCKETS = [[1024, 1024], [896, 1152], [1152, 896], [832, 1216], [1216, 832], [768, 1344], [1344, 768], [640, 1536], [1536, 640]];
+
+/** The render size for each panel of an `n`-panel page. */
+export function panelSizes(n) {
+    const { cols, rows, cells } = layout(n);
+    const colW = (GRID.width - GRID.gap * (cols - 1)) / cols;
+    const rowH = (GRID.height - GRID.gap * (rows - 1)) / rows;
+    return cells.map(({ colSpan, rowSpan }) => {
+        const aspect = (colW * colSpan + GRID.gap * (colSpan - 1)) / (rowH * rowSpan + GRID.gap * (rowSpan - 1));
+        const [width, height] = BUCKETS.reduce((best, b) =>
+            Math.abs(Math.log(b[0] / b[1] / aspect)) < Math.abs(Math.log(best[0] / best[1] / aspect)) ? b : best
+        );
+        return { width, height };
+    });
+}
+
 /**
  * One `render.py` run on the box: every prompt, `count` images each, the
  * model loaded once. With `--seed S`, image k of the run is always seed S + k.
  * Returns each image's metadata and a local path to it, in order.
  */
-function txt2img(prompts, seed, count = 1) {
+function txt2img(prompts, seed, count = 1, sizes = null) {
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'comic-'));
 
     // The job file is the whole contract with `server/render.py`, which loads
@@ -188,6 +238,8 @@ function txt2img(prompts, seed, count = 1) {
         count,
         width: MODEL.width,
         height: MODEL.height,
+        // One size per prompt when the panels differ in shape; see `panelSizes`.
+        ...(sizes ? { sizes } : {}),
         steps: MODEL.steps,
         guidance: MODEL.guidance,
         out: 'out'
@@ -235,7 +287,8 @@ export async function render(strips, seed, style = DEFAULT_STYLE, enhance = true
         if (enhance) console.error(`enhanced strip ${pad(s.n)}:\n${prompts.get(s.n).map((p, i) => `  ${i + 1}. ${p}`).join('\n')}`);
     }
     const jobs = strips.flatMap((s) => prompts.get(s.n).map((p, i) => ({ n: s.n, panel: i + 1, prompt: panelPrompt(p, style) })));
-    const made = txt2img(jobs.map((j) => j.prompt), seed);
+    const sizes = strips.flatMap((s) => panelSizes(prompts.get(s.n).length));
+    const made = txt2img(jobs.map((j) => j.prompt), seed, 1, sizes);
 
     fs.mkdirSync(RAW, { recursive: true });
     jobs.forEach((job, i) => {
@@ -304,13 +357,14 @@ function insertHtml(ins) {
     }
 }
 
-function panelHtml(panel, spec, art) {
+function panelHtml(panel, spec, art, cell) {
+    const place = `grid-column: ${cell.col} / span ${cell.colSpan}; grid-row: ${cell.row} / span ${cell.rowSpan};`;
     const captions = panel.lines.filter(([who]) => who === 'Caption');
     const speech = panel.lines.filter(([who]) => who !== 'Caption' && who !== 'Screen');
     const screens = panel.lines.filter(([who]) => who === 'Screen');
 
     return `
-        <section class="panel">
+        <section class="panel" style="${place}">
             <img class="art" src="${art}" alt="" />
             <div class="top">
                 ${captions.map(([, text]) => `<div class="caption">${escapeHtml(text)}</div>`).join('')}
@@ -322,6 +376,7 @@ function panelHtml(panel, spec, art) {
 }
 
 export function pageHtml(strip, arts, style = DEFAULT_STYLE, spec = PANELS[strip.n]) {
+    const grid = layout(strip.panels.length);
     return `<!doctype html>
 <html><head><meta charset="utf-8" />
 <style>
@@ -342,8 +397,8 @@ export function pageHtml(strip, arts, style = DEFAULT_STYLE, spec = PANELS[strip
     .sub { margin: 6px 0 12px; font-size: 19px; letter-spacing: 0.32em; }
     .grid {
         display: grid;
-        grid-template-columns: 1fr 1fr;
-        grid-template-rows: 1fr 1fr;
+        grid-template-columns: repeat(${grid.cols}, minmax(0, 1fr));
+        grid-template-rows: repeat(${grid.rows}, minmax(0, 1fr));
         gap: 10px;
         min-height: 0;
     }
@@ -457,7 +512,7 @@ export function pageHtml(strip, arts, style = DEFAULT_STYLE, spec = PANELS[strip
         <p class="sub">${strip.n ? `${pad(strip.n)}&nbsp;&nbsp;` : ''}${escapeHtml(strip.title.toUpperCase())}</p>
     </header>
     <main class="grid">
-        ${strip.panels.map((p, i) => panelHtml(p, spec[i], arts[i])).join('')}
+        ${strip.panels.map((p, i) => panelHtml(p, spec[i], arts[i], grid.cells[i])).join('')}
     </main>
     <footer>${escapeHtml(strip.arc.toUpperCase())}</footer>
 </body></html>`;
@@ -470,7 +525,7 @@ export async function compose(strips, style = DEFAULT_STYLE) {
     try {
         const page = await browser.newPage({ viewport: { width: 1086, height: 1448 }, deviceScaleFactor: 1 });
         for (const s of strips) {
-            const arts = [1, 2, 3, 4].map((k) => {
+            const arts = s.panels.map((_, i) => i + 1).map((k) => {
                 const file = path.join(RAW, `${stem(s.n, style)}-${k}.png`);
                 return `data:image/png;base64,${fs.readFileSync(file).toString('base64')}`;
             });
@@ -493,7 +548,8 @@ export async function compose(strips, style = DEFAULT_STYLE) {
  * `panels[].lines`), `spec` like a `panels.js` entry (`prompt`, `inserts`).
  */
 export async function makePage({ strip, spec, seed, style = DEFAULT_STYLE, out }) {
-    const made = txt2img(spec.map((p) => panelPrompt(p.prompt, style)), seed);
+    if (strip.panels.length !== spec.length) throw new Error(`the script has ${strip.panels.length} panels but ${spec.length} prompts`);
+    const made = txt2img(spec.map((p) => panelPrompt(p.prompt, style)), seed, 1, panelSizes(spec.length));
     const arts = made.map((m) => `data:image/png;base64,${fs.readFileSync(m.local).toString('base64')}`);
 
     const { chromium } = await import('playwright');

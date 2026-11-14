@@ -6,7 +6,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { DEFAULT_STYLE, STYLES } from './panels.js';
-import { touchBusy } from './make.js';
+import { MAX_PANELS, touchBusy } from './make.js';
+import { enhancePrompts } from './openai.js';
 
 /**
  * The comic generator as a service on the GPU box, the way the GIF generator
@@ -141,7 +142,10 @@ async function handle(req, res) {
         const { name, strip, panels, style = DEFAULT_STYLE, seed } = await readBody(req);
         if (!NAME.test(name ?? '') || !fs.existsSync(path.join(DIR, `${name}.json`))) return send(res, 400, { error: 'Unknown script.' });
         if (!Object.hasOwn(STYLES, style)) return send(res, 400, { error: `Unknown style ${style}.` });
-        if (!strip || !Array.isArray(panels) || panels.length !== 4) return send(res, 400, { error: 'A script needs four panels.' });
+        if (!strip || !Array.isArray(panels) || !Array.isArray(strip.panels) || panels.length !== strip.panels.length) {
+            return send(res, 400, { error: 'Every panel needs its lines and its tags.' });
+        }
+        if (panels.length < 1 || panels.length > MAX_PANELS) return send(res, 400, { error: `A page holds 1 to ${MAX_PANELS} panels.` });
 
         const file = path.join(DIR, `${name}.json`);
         const saved = JSON.parse(fs.readFileSync(file, 'utf8'));
@@ -150,6 +154,17 @@ async function handle(req, res) {
         const args = ['--from', file, '--style', style];
         if (Number.isFinite(Number(seed)) && seed !== '' && seed !== null) args.push('--seed', String(Number(seed)));
         return send(res, 202, startJob('draw', name, args));
+    }
+
+    // Tags for panels a person added or rewrote: OpenAI drafts them from the
+    // art direction and lines, the same way it does for a new script. Run in
+    // this process, not queued: it is one short API call and uses no GPU.
+    if (req.method === 'POST' && url.pathname === '/api/enhance') {
+        const { setting = '', look = '', panels } = await readBody(req);
+        if (!Array.isArray(panels) || panels.length < 1 || panels.length > MAX_PANELS) return send(res, 400, { error: `Send 1 to ${MAX_PANELS} panels.` });
+        const strip = { setting, look, panels: panels.map((p) => ({ art: String(p.art ?? ''), lines: Array.isArray(p.lines) ? p.lines : [] })) };
+        const prompts = await enhancePrompts(strip, panels.map((p) => String(p.prompt ?? '')));
+        return send(res, 200, { prompts });
     }
 
     return send(res, 404, { error: 'not found' });
@@ -188,6 +203,11 @@ const PAGE = `<!doctype html>
   button:focus-visible, textarea:focus-visible, input:focus-visible, select:focus-visible { outline: 2px solid var(--copper); outline-offset: 2px; }
   .panel { border: 1px solid var(--rule); border-radius: 8px; padding: 12px; display: grid; gap: 8px; background: var(--sheet); }
   .panel b { color: var(--copper); font-size: 13px; letter-spacing: .06em; }
+  .panel-head { display: flex; align-items: center; gap: 8px; }
+  .panel-head b { flex: 1; }
+  button.small { padding: 5px 11px; font-size: 12px; background: none; color: var(--ink); border: 1px solid var(--rule); }
+  button.small:hover:not(:disabled) { border-color: var(--copper); }
+  #count { color: var(--dim); font-size: 13px; }
   #status { color: var(--dim); white-space: pre-wrap; font: 12px/1.4 ui-monospace, monospace; max-height: 160px; overflow: auto; }
   #status.failed { color: var(--bad); }
   #page img { width: 100%; height: auto; border: 1px solid var(--rule); border-radius: 6px; }
@@ -209,7 +229,8 @@ const PAGE = `<!doctype html>
     <div class="row"><button id="write">Write script</button></div>
     <p style="color:var(--dim);margin:0;font-size:13px">OpenAI writes the script and sharpens each panel's drawing tags; the A100 draws them. Tags you edit are checked again before drawing: the comic stays non-explicit.</p>
     <h2>2 · Script</h2>
-    <div id="script"><p style="color:var(--dim);margin:0">The script appears here to edit before drawing. Lines are <code>Speaker: text</code>, one per line; use Caption or Screen as the speaker for boxes and screens. Inserts are <code>type: text</code> with type chyron, doc, label, note or badge.</p></div>
+    <div id="script"><p style="color:var(--dim);margin:0">The script appears here to edit before drawing. Add or remove panels (1 to ${MAX_PANELS}); a new panel needs art direction and lines, then Improve tags writes its drawing tags. Lines are <code>Speaker: text</code>, one per line; use Caption or Screen as the speaker for boxes and screens. Inserts are <code>type: text</code> with type chyron, doc, label, note or badge.</p></div>
+    <div class="row"><button id="improve" class="small" disabled>Improve tags with OpenAI</button><span id="count"></span></div>
     <div class="row"><button id="draw" disabled>Draw page</button></div>
     <div id="status" role="status"></div>
   </section>
@@ -226,22 +247,48 @@ let current = null;
 
 function esc(s) { return String(s).replace(/[&<>"]/g, (c) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' })[c]); }
 
+const MAX_PANELS = ${MAX_PANELS};
+
 function showScript(name, saved) {
   current = { name, saved };
   const { strip, panels } = saved;
+  const n = strip.panels.length;
+  const layouts = { 1: 'one splash panel', 2: 'two stacked', 3: 'a wide panel over two', 4: 'two by two', 5: 'a wide panel over two by two', 6: 'two by three' };
   $('script').innerHTML =
     '<div class="row"><label for="t">Title<input id="t" value="' + esc(strip.title) + '"></label>' +
     '<label for="a">Arc (footer)<input id="a" value="' + esc(strip.arc) + '"></label></div>' +
     strip.panels.map((p, i) =>
-      '<div class="panel"><b>PANEL ' + (i + 1) + '</b>' +
+      '<div class="panel"><div class="panel-head"><b>PANEL ' + (i + 1) + '</b>' +
+      '<button class="small" data-act="add" data-i="' + i + '"' + (n >= MAX_PANELS ? ' disabled' : '') + '>Add panel after</button>' +
+      '<button class="small" data-act="remove" data-i="' + i + '"' + (n <= 1 ? ' disabled' : '') + '>Remove</button></div>' +
       '<label for="l' + i + '">Lines<textarea id="l' + i + '" rows="3">' + esc(p.lines.map(([w, t]) => w + ': ' + t).join('\\n')) + '</textarea></label>' +
       '<label for="i' + i + '">Inserts<textarea id="i' + i + '" rows="1">' + esc((panels[i].inserts || []).map((x) => x.type + ': ' + x.text).join('\\n')) + '</textarea></label>' +
       '<label for="p' + i + '">Drawing tags<textarea id="p' + i + '" rows="3">' + esc(panels[i].prompt) + '</textarea></label>' +
       '<label for="r' + i + '">Art direction (for you)<textarea id="r' + i + '" rows="2">' + esc(p.art || '') + '</textarea></label></div>'
     ).join('');
   if (saved.style) $('style').value = saved.style;
-  $('draw').disabled = false;
+  $('count').textContent = n + (n === 1 ? ' panel: ' : ' panels: ') + layouts[n];
+  $('draw').disabled = $('improve').disabled = false;
 }
+
+// Keep what has been typed, then change the panel list and redraw the editor.
+function sync() { const { strip, panels } = collect(); current.saved.strip = strip; current.saved.panels = panels; }
+
+$('script').addEventListener('click', (e) => {
+  const b = e.target.closest('button[data-act]');
+  if (!b || !current) return;
+  sync();
+  const i = Number(b.dataset.i);
+  const { strip, panels } = current.saved;
+  if (b.dataset.act === 'add' && strip.panels.length < MAX_PANELS) {
+    strip.panels.splice(i + 1, 0, { art: '', lines: [] });
+    panels.splice(i + 1, 0, { prompt: '', inserts: [] });
+  } else if (b.dataset.act === 'remove' && strip.panels.length > 1) {
+    strip.panels.splice(i, 1);
+    panels.splice(i, 1);
+  }
+  showScript(current.name, current.saved);
+});
 
 function collect() {
   const split = (line) => { const k = line.indexOf(':'); return k < 0 ? null : [line.slice(0, k).trim(), line.slice(k + 1).trim()]; };
@@ -294,6 +341,21 @@ $('write').addEventListener('click', async () => {
     const job = await api('/api/write', { idea: $('idea').value, style: $('style').value });
     await follow(job, () => openDraft(job.name));
   } catch (err) { $('status').className = 'failed'; $('status').textContent = err.message; }
+});
+
+$('improve').addEventListener('click', async () => {
+  sync();
+  const { strip, panels } = current.saved;
+  $('improve').disabled = $('draw').disabled = true;
+  $('status').className = ''; $('status').textContent = 'OpenAI is writing drawing tags for ' + panels.length + ' panels…';
+  try {
+    const { prompts } = await api('/api/enhance', { setting: strip.setting, look: strip.look,
+      panels: strip.panels.map((p, i) => ({ art: p.art, lines: p.lines, prompt: panels[i].prompt })) });
+    prompts.forEach((t, i) => { panels[i].prompt = t; });
+    showScript(current.name, current.saved);
+    $('status').textContent = 'Tags improved. Review them, then draw.';
+  } catch (err) { $('status').className = 'failed'; $('status').textContent = err.message; }
+  $('improve').disabled = $('draw').disabled = false;
 });
 
 $('draw').addEventListener('click', async () => {

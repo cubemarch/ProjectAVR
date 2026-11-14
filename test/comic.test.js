@@ -186,3 +186,38 @@ test('no prompt reaches the image model without the safety floor, whoever wrote 
     assert.deepEqual(safePrompt('office, 2girls, original').split(', ').slice(0, 3), ['2girls', 'original', 'safe']);
     assert.deepEqual(safePrompt('office').split(', ').slice(0, 3), ['1girl', 'original', 'safe']);
 });
+
+test('every page from one to six panels fills its grid exactly once', async () => {
+    const { layout, panelSizes, pageHtml, MAX_PANELS } = await import('../comic/make.js');
+
+    for (let n = 1; n <= MAX_PANELS; n++) {
+        const { cols, rows, cells } = layout(n);
+        assert.equal(cells.length, n, `${n} panels, ${cells.length} cells`);
+
+        // Each grid square is covered by exactly one panel: no gaps, no overlaps.
+        const covered = new Map();
+        for (const [i, c] of cells.entries()) {
+            for (let r = c.row; r < c.row + c.rowSpan; r++) {
+                for (let k = c.col; k < c.col + c.colSpan; k++) {
+                    assert.ok(r <= rows && k <= cols, `${n} panels: panel ${i + 1} runs off the grid`);
+                    assert.ok(!covered.has(`${r},${k}`), `${n} panels: panels ${covered.get(`${r},${k}`)} and ${i + 1} overlap`);
+                    covered.set(`${r},${k}`, i + 1);
+                }
+            }
+        }
+        assert.equal(covered.size, rows * cols, `${n} panels leave part of the grid empty`);
+
+        // One trained render size per panel, and the page letters all of them.
+        assert.equal(panelSizes(n).length, n);
+        const strip = { title: 'Test', arc: 'Test', panels: Array.from({ length: n }, (_, i) => ({ lines: [['Lusty', `line ${i + 1}`]] })) };
+        const spec = Array.from({ length: n }, () => ({ prompt: '1girl, original, safe' }));
+        const html = pageHtml(strip, spec.map(() => 'data:,'), 'fashion', spec);
+        assert.equal(html.match(/<section class="panel"/g).length, n);
+        assert.ok(html.includes(`line ${n}`));
+    }
+
+    assert.throws(() => layout(0));
+    assert.throws(() => layout(MAX_PANELS + 1));
+    // The season's four-panel strips draw exactly as before.
+    assert.deepEqual(panelSizes(4), Array(4).fill({ width: 896, height: 1152 }));
+});
