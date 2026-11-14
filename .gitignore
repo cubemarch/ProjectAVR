@@ -27,3 +27,6 @@ data/
 
 # Contentsquare wizard (generated)
 .cs-wizard/
+
+# Draft comic pages from `node comic/make.js`. Copied into comic/art/ by hand once approved.
+comic/drafts/

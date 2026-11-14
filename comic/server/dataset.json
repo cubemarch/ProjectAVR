@@ -1,0 +1,186 @@
+{
+    "_about": "Training images for the lustyx character LoRA. `src` names a file uploaded by comic/train.js; `box` is [left, top, right, bottom] in that file's pixels, or absent for the whole image. Captions start with the trigger word and describe only what varies (pose, outfit, setting, style), so the constant traits - copper hair, freckles, green eyes, face - are learned as `lustyx` itself. Only the creator's own art: the LX VIS 001 sheet and the pilot pages. Generated drafts were tried and left out, because their brighter red hair and generic faces would teach the drift this exists to remove.",
+    "trigger": "lustyx",
+    "images": [
+        {
+            "src": "sheet.png",
+            "box": [
+                20,
+                130,
+                330,
+                1010
+            ],
+            "caption": "lustyx, 1girl, full body, standing, side braid, denim jacket, white shirt, jeans, brown cowboy boots, holding vr headset"
+        },
+        {
+            "src": "sheet.png",
+            "box": [
+                530,
+                130,
+                840,
+                1010
+            ],
+            "caption": "lustyx, 1girl, full body, standing, wavy hair, white blouse, teal skirt, long skirt, red cowboy boots, holding vr headset"
+        },
+        {
+            "src": "sheet.png",
+            "box": [
+                1040,
+                130,
+                1350,
+                1010
+            ],
+            "caption": "lustyx, 1girl, full body, standing, high ponytail, black sleeveless turtleneck, black jeans, red cowboy boots, holding vr headset"
+        },
+        {
+            "src": "sheet.png",
+            "box": [
+                330,
+                158,
+                510,
+                370
+            ],
+            "caption": "lustyx, 1girl, portrait, smile, side braid, denim jacket"
+        },
+        {
+            "src": "sheet.png",
+            "box": [
+                820,
+                158,
+                1015,
+                370
+            ],
+            "caption": "lustyx, 1girl, portrait, surprised, open mouth, wavy hair, hoop earrings"
+        },
+        {
+            "src": "sheet.png",
+            "box": [
+                1330,
+                158,
+                1530,
+                370
+            ],
+            "caption": "lustyx, 1girl, portrait, high ponytail, black turtleneck, x earrings"
+        },
+        {
+            "src": "p01.png",
+            "box": [
+                14,
+                96,
+                320,
+                764
+            ],
+            "caption": "lustyx, 1girl, standing, side braid, denim jacket, jeans, cowboy boots, apartment, speech bubble"
+        },
+        {
+            "src": "p01.png",
+            "box": [
+                760,
+                96,
+                1072,
+                764
+            ],
+            "caption": "lustyx, 1girl, upper body, side braid, denim jacket, speech bubble"
+        },
+        {
+            "src": "p01.png",
+            "box": [
+                14,
+                776,
+                536,
+                1404
+            ],
+            "caption": "lustyx, 1girl, side braid, denim jacket, holding curtain, teal curtain, smile, camera, speech bubble"
+        },
+        {
+            "src": "p01.png",
+            "box": [
+                790,
+                776,
+                1072,
+                1404
+            ],
+            "caption": "lustyx, 1girl, wavy hair, denim jacket, smile, closed eyes, speech bubble"
+        },
+        {
+            "src": "p03.png",
+            "box": [
+                290,
+                96,
+                536,
+                764
+            ],
+            "caption": "lustyx, 1girl, standing, high ponytail, black sleeveless turtleneck, black jeans, red cowboy boots, holding book, speech bubble"
+        },
+        {
+            "src": "p03.png",
+            "box": [
+                800,
+                96,
+                1072,
+                764
+            ],
+            "caption": "lustyx, 1girl, close-up, high ponytail, hand on own chin"
+        },
+        {
+            "src": "p03.png",
+            "box": [
+                14,
+                776,
+                440,
+                1404
+            ],
+            "caption": "lustyx, 1girl, sitting, high ponytail, black sleeveless turtleneck, speech bubble"
+        },
+        {
+            "src": "p03.png",
+            "box": [
+                800,
+                776,
+                1072,
+                1404
+            ],
+            "caption": "lustyx, 1girl, high ponytail, smile, writing, speech bubble"
+        },
+        {
+            "src": "p04.png",
+            "box": [
+                290,
+                96,
+                536,
+                764
+            ],
+            "caption": "lustyx, 1girl, high ponytail, black sleeveless turtleneck, hand on own chin, night, speech bubble"
+        },
+        {
+            "src": "p04.png",
+            "box": [
+                548,
+                96,
+                1072,
+                764
+            ],
+            "caption": "lustyx, 1girl, profile, close-up, holding papers, night, speech bubble"
+        },
+        {
+            "src": "p04.png",
+            "box": [
+                200,
+                776,
+                536,
+                1404
+            ],
+            "caption": "lustyx, 1girl, high ponytail, laptop, night, speech bubble"
+        },
+        {
+            "src": "p04.png",
+            "box": [
+                548,
+                776,
+                1072,
+                1404
+            ],
+            "caption": "lustyx, 1girl, high ponytail, black turtleneck, night, rain, window, speech bubble"
+        }
+    ]
+}
