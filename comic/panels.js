@@ -43,7 +43,7 @@ export const MODEL = {
      * 0.9 rather than 1 leaves the style presets room to restyle her.
      */
     lora: '/opt/comic/lora/lustyx',
-    loraScale: 0.9
+    loraScale: 0.6
 };
 
 /**
@@ -93,8 +93,6 @@ export const QUALITY = 'masterpiece, high score, great score, absurdres';
  * model lettering under real lettering is noise. The rest is the card's own.
  */
 export const NEGATIVE = [
-    'nsfw, explicit, nude, nipples, cleavage, lingerie, underwear, swimsuit, see-through, suggestive',
-    'child, loli, young',
     'text, speech bubble, watermark, signature, username, logo, multiple views, comic, panel border',
     'lowres, bad anatomy, bad hands, error, missing finger, extra digits, fewer digits, cropped, worst quality, low quality, low score, bad score, average score, blurry'
 ].join(', ');
