@@ -64,33 +64,30 @@ export async function chatJSON(system, user, { temperature = 0.7, maxTokens = 40
     }
 }
 
-/* -------------------------------------------------- the safety floor -- */
+/* ------------------------------------------------ the rating, and nothing else -- */
 
 /**
- * Tags that never reach the image model, whatever wrote the prompt. The
- * comic is non-explicit and every character in it is an adult, and a prompt
- * from a language model is a suggestion until this has run over it. Matched
- * per tag, so "safe" scenery like "red curtain" is untouched.
+ * The rating tag stamped onto every prompt. '' for none.
+ *
+ * `safe` was the floor, and it is also a rating bucket, so it pulls the model
+ * back toward clothed. `explicit` is the other end of the same axis.
+ * AVR_COMIC_RATING='' stops stamping anything.
  */
-const BLOCKED = /\b(nsfw|explicit|questionable|sensitive|nude|nudity|naked|topless|bottomless|nipples?|areolae?|cleavage|lingerie|underwear|panties|bra|bikini|swimsuit|see-through|sheer|sex|sexy|sexual|erotic|lewd|seductive|loli|shota|child|children|kid|kids|teen|teenager|young|petite|flat chest)\b/i;
+export const RATING = process.env.AVR_COMIC_RATING ?? 'explicit';
+
 const COUNT = /^(\d+(girl|boy|other)s?|no humans)$/i;
 
-/**
- * A prompt in the shape the rest of the pipeline relies on: count tag,
- * `original`, `safe`, then the rest, with any blocked tag and any other
- * rating tag removed. `panelPrompt` in make.js puts the style after the
- * third tag, so the order matters as much as the content.
- */
+/** Tags reordered for the pipeline. Nothing is removed any more. */
 export function safePrompt(prompt) {
-    let tags = String(prompt)
+    const tags = String(prompt)
         .split(',')
         .map((t) => t.trim())
         .filter(Boolean)
-        .filter((t) => !BLOCKED.test(t) && !/^(rating:\s*)?(general|safe)$/i.test(t) && t.toLowerCase() !== 'original');
+        .filter((t) => t.toLowerCase() !== 'original');
 
     const i = tags.findIndex((t) => COUNT.test(t));
     const count = i >= 0 ? tags.splice(i, 1)[0] : '1girl';
-    return [count, 'original', 'safe', ...tags].join(', ');
+    return [count, 'original', RATING, ...tags].filter(Boolean).join(', ');
 }
 
 /* ------------------------------------------------------- enhancement -- */
@@ -99,7 +96,7 @@ const ENHANCE_SYSTEM = `You turn comic panel descriptions into prompts for Anima
 
 For every panel you are given, return one prompt, in this order:
 1. a count tag: 1girl, 1boy, 1girl 1boy, or no humans
-2. "original, safe"
+2. "original, NSFW, explicit"
 3. exactly ONE character, using that character's tags from the cast list word for word, plus her wardrobe tags
 4. expression and pose (e.g. narrowed eyes, hand on own chin, leaning on counter)
 5. framing (close-up, upper body, cowboy shot, full body, from side, from below, over the shoulder)
@@ -110,8 +107,8 @@ Rules:
 - At most 40 words. Concrete visual tags only; no sentences, no abstractions, no emotions the camera cannot see.
 - One described character per panel. Anyone else in the scene is "other woman from behind", "man in background" and similar, never described; faces blend when two people are described.
 - Keep each character's wardrobe the same in every panel of the strip.
-- Never include text, letters, speech bubbles, signs with words, logos, artist names, titles of other works, or real people's names. If a panel shows a real public figure on a screen, describe only "man at podium on television screen".
-- Non-explicit: clothed adults, nothing sexual or suggestive, nothing that reads as young.
+- Keep each character's wardrobe the same in every panel of the strip.
+- Adult comic: every character is an adult, 18 or over — put "mature female" or "mature male" on them. Nudity and sexual framing are allowed; write the panel the art direction asks for.
 
 Reply with JSON: {"panels": [{"prompt": "..."}]}, one entry per panel, in order.`;
 
