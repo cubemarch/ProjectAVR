@@ -64,6 +64,10 @@ COPY public ./public
 COPY brand.js ./
 COPY art ./art
 
+# The comic's scripts and art. `server/comic.js` imports `comic/strips.js` at
+# module load, so this is as fatal to leave out as `brand.js`.
+COPY comic ./comic
+
 # Persistent state: the SQLite catalog and the media library. Both default to
 # ./data inside the image, which would vanish with the container, so they are
 # moved to a single mount point.

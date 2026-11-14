@@ -42,4 +42,5 @@ npm test                                   # server and web, node --test
 | [`docs/CENSOR.md`](docs/CENSOR.md) | Pixelating partner artwork for visitors who have not verified, the jurisdiction split, and why every failure covers more rather than less |
 | [`docs/MONETISATION.md`](docs/MONETISATION.md) | Credits and the ledger, creator pricing, profiles, the stream setup checks and the 3D gate |
 | [`docs/EMAIL.md`](docs/EMAIL.md) | What the server sends, the three categories, the marketing opt-in and the delivery log |
+| [`docs/COMIC.md`](docs/COMIC.md) | Lusty X: how a strip publishes itself from its date and its art, where it appears, and the season's canon calls and real-figure rules |
 | [`docs/SEARCH.md`](docs/SEARCH.md) | The declarations, the crawlable fallback, the sitemap and policy pages, and why paid search is closed to this domain |

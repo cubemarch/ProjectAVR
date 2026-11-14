@@ -6294,6 +6294,143 @@ body.scene-panel-open {
     }
 }
 
+/* --------------------------------------------------------------- comic -- */
+
+/*
+ * The latest Lusty X strip, under the guide. See `_renderComic` in browse.js.
+ *
+ * Deliberately a step down from the guide card: no gradient, no button, half
+ * the padding. It is a thing to find at the end of the page, not a thing that
+ * competes with the shelves or the ad slots for the eye.
+ *
+ * The thumbnail is the strip's first panel. The image is drawn at twice the
+ * box's width and pulled up and left past the lettered header, so the box
+ * frames the top-left quarter of the page. The two offsets are fractions of
+ * the box's width (margins resolve against width), measured on the 1086x1448
+ * pilots; a strip drawn to a different grid only needs these two numbers.
+ */
+.comic-feature-wrap {
+    padding: 0 4vw 56px;
+}
+
+.comic-feature {
+    --panel-x: -2.2%;
+    --panel-y: -17.5%;
+
+    display: grid;
+    grid-template-columns: 96px minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 18px;
+    max-width: 720px;
+    padding: 14px 18px 14px 14px;
+    border-radius: 14px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    background: var(--bg-raised);
+    color: var(--text);
+    text-decoration: none;
+    transition: border-color 0.3s var(--ease);
+}
+
+.comic-feature:hover {
+    border-color: rgba(155, 125, 255, 0.5);
+}
+
+.comic-feature:focus-visible {
+    outline: 2px solid var(--accent-hot);
+    outline-offset: 4px;
+}
+
+.comic-feature-art {
+    display: block;
+    aspect-ratio: 4 / 5;
+    overflow: hidden;
+    border-radius: 8px;
+    background: #efe6d6;
+}
+
+.comic-feature-art img {
+    display: block;
+    width: 200%;
+    max-width: none;
+    height: auto;
+    margin: var(--panel-y) 0 0 var(--panel-x);
+}
+
+.comic-feature-copy {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+}
+
+.comic-feature-meta {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    color: var(--text-faint);
+    font-size: 12px;
+}
+
+/* The guide's pill in copper, the colour of the lead's hair. */
+.badge.comic {
+    padding: 3px 9px;
+    border-radius: 999px;
+    border-color: rgba(214, 120, 64, 0.5);
+    background: rgba(214, 120, 64, 0.12);
+    backdrop-filter: none;
+    color: #e8935e;
+    font-size: 11px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+}
+
+.comic-feature-title {
+    font-size: 17px;
+    font-weight: 700;
+    line-height: 1.25;
+}
+
+.comic-feature-blurb {
+    color: var(--text-dim);
+    font-size: 13px;
+    line-height: 1.5;
+}
+
+.comic-feature-go {
+    display: flex;
+    color: var(--text-faint);
+    transition:
+        transform 0.3s var(--ease),
+        color 0.3s var(--ease);
+}
+
+.comic-feature:hover .comic-feature-go {
+    color: var(--text);
+    transform: translateX(3px);
+}
+
+@media (max-width: 480px) {
+    .comic-feature {
+        grid-template-columns: 76px minmax(0, 1fr);
+        gap: 14px;
+    }
+
+    .comic-feature-go {
+        display: none;
+    }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .comic-feature,
+    .comic-feature-go {
+        transition: none;
+    }
+
+    .comic-feature:hover .comic-feature-go {
+        transform: none;
+    }
+}
+
 /* -------------------------------------------------------------- footer -- */
 
 /*

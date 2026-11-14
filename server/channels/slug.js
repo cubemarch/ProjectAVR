@@ -118,7 +118,8 @@ const RESERVED_GROUPS = {
         'dlna', 'identity', 'live', 'media', 'pair', 'playlist', 'portal',
         'profile', 'stream', 'studio', 'transcode', 'unsubscribe', 'watch',
         'broadcast', 'recordings', 'rooms', 'health', 'auth', 'credits',
-        'uploads', 'hls', 'ws', 'static', 'public', 'dist', 'files'
+        'uploads', 'hls', 'ws', 'static', 'public', 'dist', 'files', 'comic',
+        'comics'
     ],
 
     /**
@@ -265,7 +266,7 @@ const RESERVED_GROUPS = {
         'lustxr', 'carnal3d', 'avr', 'projectavr', 'vrecord', 'avrcapture',
         'questjam', 'deo', 'deovr', 'skybox', 'pigasus', 'heresphere',
         'quest', 'oculus', 'vive', 'pico', 'valve', 'index', 'vision',
-        'visionpro', 'steamvr', 'openxr', 'webxr'
+        'visionpro', 'steamvr', 'openxr', 'webxr', 'lustyx', 'lusty-x'
     ]
 };
 

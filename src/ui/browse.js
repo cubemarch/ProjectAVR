@@ -280,6 +280,9 @@ export class BrowseUI extends pc.EventHandler {
                 </section>
                 ${AFFILIATES_ONLY ? this._comingSoonHtml() : this._ownContentHtml()}
                 ${this._guideHtml()}
+                <!-- The comic's card. Empty until \`_renderComic\` has a strip
+                     to put in it, so a server with none out yet shows nothing. -->
+                <div id="comic-feature-slot"></div>
 
                 <!-- Last in the document and first on the screen: it is
                      positioned, so where it paints has nothing to do with
@@ -337,6 +340,7 @@ export class BrowseUI extends pc.EventHandler {
         this.cams = this.camShelfEl ? new CamShelf(this.camShelfEl) : null;
 
         this._renderAffiliates();
+        this._renderComic();
 
         // Again here, because `_renderAffiliates` returns immediately when
         // there is no affiliate section at all — and the top leaderboard is a
@@ -482,6 +486,62 @@ export class BrowseUI extends pc.EventHandler {
     }
 
     /**
+     * The latest Lusty X strip, as a small card under the guide.
+     *
+     * Quieter than the guide on purpose: a teaser of the strip's first panel,
+     * one line of copy and no button. It is the last thing in the column, after
+     * every shelf and every ad slot, so it is found by somebody who scrolled to
+     * the end rather than put in the way of the things they came for. The
+     * footer links it too.
+     *
+     * Filled from `/api/comic/latest` because the server decides what is out:
+     * strips are dated, and the list of future ones never reaches the bundle.
+     * Asked once per load; a re-render reuses the answer.
+     */
+    _renderComic() {
+        const slot = this.mount.querySelector('#comic-feature-slot');
+        if (!slot) return;
+
+        this._comicLatest ??= fetch('/api/comic/latest', { headers: { Accept: 'application/json' } })
+            .then((res) => (res.ok ? res.json() : null))
+            .catch(() => null);
+
+        this._comicLatest.then((strip) => {
+            if (!strip || !slot.isConnected) return;
+
+            const n = String(strip.n).padStart(2, '0');
+            const day = new Date(`${strip.date}T12:00:00Z`).toLocaleDateString('en-GB', {
+                weekday: 'short',
+                day: 'numeric',
+                month: 'short',
+                timeZone: 'UTC'
+            });
+
+            slot.innerHTML = `
+                <section class="comic-feature-wrap" aria-label="Comic">
+                    <a class="comic-feature" href="${escapeHtml(strip.href)}">
+                        <span class="comic-feature-art" aria-hidden="true">
+                            <img src="${escapeHtml(strip.image)}" alt="" loading="lazy" decoding="async" />
+                        </span>
+                        <span class="comic-feature-copy">
+                            <span class="comic-feature-meta">
+                                <span class="badge comic">Comic</span>
+                                <span>${n} · ${escapeHtml(day)}</span>
+                            </span>
+                            <span class="comic-feature-title">Lusty X: ${escapeHtml(strip.title)}</span>
+                            <span class="comic-feature-blurb">
+                                A VR cam model in Miami, a payout that changed after the fact,
+                                and someone who wants the first statement gone. New strips
+                                Tuesday, Thursday and Saturday.
+                            </span>
+                        </span>
+                        <span class="comic-feature-go">${icons.chevronRight({ size: 18 })}</span>
+                    </a>
+                </section>`;
+        });
+    }
+
+    /**
      * The page's footer: the guide, the policy pages, and the age line.
      *
      * Until 2026-11-11 the rendered page had no footer at all. The policy
@@ -493,6 +553,7 @@ export class BrowseUI extends pc.EventHandler {
     _footerHtml() {
         const links = [
             [HEADSET_GUIDE.href, 'VR headset guide'],
+            ['/comic', 'Lusty X comic'],
             ['/terms', 'Terms'],
             ['/privacy', 'Privacy'],
             ['/2257', '2257 statement'],

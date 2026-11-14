@@ -111,6 +111,10 @@ export default defineConfig({
             '/identity/return': 'http://localhost:8080',
             '/unsubscribe': 'http://localhost:8080',
 
+            // The comic, which is server-rendered and dated: Vite would
+            // otherwise answer it with the SPA.
+            '/comic': 'http://localhost:8080',
+
             // The live relay. Only the `/live/ws/` prefix is proxied - `/live`
             // itself is the monitor page and is served by Vite above.
             '/live/ws': { target: 'ws://localhost:8080', ws: true }

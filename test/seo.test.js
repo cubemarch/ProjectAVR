@@ -429,7 +429,7 @@ test('the sitemap lists a guide only once it stops saying noindex', () => {
 });
 
 test('the guides link only to addresses something serves', () => {
-    const served = new Set(['/', '/terms', '/privacy', '/2257', '/dmca', '/support', ...Object.keys(GUIDES)]);
+    const served = new Set(['/', '/terms', '/privacy', '/2257', '/dmca', '/support', '/comic', ...Object.keys(GUIDES)]);
 
     for (const file of Object.values(GUIDES)) {
         for (const [, href] of read(path.join('public', 'guides', file)).matchAll(/href="(\/[^"#]*)"/g)) {

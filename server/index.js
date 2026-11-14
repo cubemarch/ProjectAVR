@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { BRAND, DLNA_FRIENDLY_NAME } from '../brand.js';
 import { buildLibrary, localPathFor, MEDIA_DIR } from './library.js';
 import { GUIDES, guidePath, publishedGuides } from './guides.js';
+import { comicSitemapUrls, mountComic } from './comic.js';
 import { channelSlugs, getDb, sessions } from './db/index.js';
 import { getStorage, assertSafeKey } from './storage/index.js';
 import { attachUser } from './auth/middleware.js';
@@ -465,6 +466,11 @@ mountAebn(app);
 // and the star pages - see `server/media/proxy.js`.
 mountMedia(app);
 mountHouseAds(app);
+
+// The comic's pages and art. Here rather than with the guides, which are only
+// routed when there is a build: the art goes through the censor like the
+// house banners above, and the page should work on a dev server too.
+mountComic(app);
 mountLive(app);
 
 // Claims `/live/hls` and `/live/transcode`, so it has to come before the
@@ -607,6 +613,9 @@ if (fs.existsSync(DIST)) {
         for (const route of publishedGuides()) {
             urls.push({ loc: route, priority: '0.7', changefreq: 'monthly' });
         }
+
+        // Published strips only; one that is not out yet has no page.
+        urls.push(...comicSitemapUrls());
 
         let channels = [];
         try {
