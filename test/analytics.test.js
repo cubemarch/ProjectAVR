@@ -501,3 +501,59 @@ test('the watch is installed before boot waits on anything', () => {
         'and before the first await, so a click during loading still counts'
     );
 });
+
+/**
+ * Our own browsers are marked `traffic_type: internal`, and GA's Internal
+ * Traffic data filter drops them. On 2026-11-14 one Mac was 41% of every
+ * session the property had ever recorded and every Florida age-gate pass, so
+ * without this the reports describe the person building the site.
+ */
+const PAGES = ['index.html', 'live.html', 'public/guides/vr-headsets.html',
+    ...['terms', 'support', 'privacy', 'dmca', '2257'].map((page) => `public/legal/${page}.html`)];
+
+const tagOf = (page) => {
+    const html = readFileSync(new URL(`../${page}`, import.meta.url), 'utf8');
+    const start = html.lastIndexOf('<script>', html.indexOf("gtag('config', 'G-HK6Q0JBGTC')"));
+    return html.slice(start + '<script>'.length, html.indexOf('</script>', start));
+};
+
+/** Load the tag once at `search`, against `stored`, and return what it queued. */
+function loadTag(search, stored) {
+    const window = { dataLayer: undefined };
+    const localStorage = {
+        getItem: (key) => stored.get(key) ?? null,
+        setItem: (key, value) => stored.set(key, String(value))
+    };
+    new Function('window', 'location', 'localStorage', 'document', tagOf('index.html'))(
+        window, { search, hostname: 'localhost' }, localStorage, {});
+    return window.dataLayer.map((args) => [...args]);
+}
+
+test('every page carries the same tag, internal mark included', () => {
+    for (const page of PAGES) {
+        assert.equal(tagOf(page).trim(), tagOf('index.html').trim(), `${page} differs from index.html`);
+    }
+});
+
+test('?internal=1 marks this browser until ?internal=0 clears it', () => {
+    const stored = new Map();
+    const marked = (queued) => queued.some(([command, params]) => command === 'set' && params?.traffic_type === 'internal');
+
+    assert.equal(marked(loadTag('', stored)), false, 'nobody is internal by default');
+
+    const first = loadTag('?internal=1', stored);
+    assert.ok(marked(first));
+    assert.ok(
+        first.findIndex(([command]) => command === 'set') < first.findIndex(([command]) => command === 'config'),
+        'set before config, so the page view carries it too'
+    );
+
+    assert.ok(marked(loadTag('?q=vr', stored)), 'and it sticks without the parameter');
+    assert.equal(marked(loadTag('?internal=0', stored)), false);
+    assert.equal(marked(loadTag('', stored)), false);
+});
+
+test('a browser with storage blocked still loads the tag', () => {
+    const queued = loadTag('?internal=1', { get: () => { throw new Error('denied'); }, set: () => { throw new Error('denied'); } });
+    assert.ok(queued.some(([command]) => command === 'config'));
+});

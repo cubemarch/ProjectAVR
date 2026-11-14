@@ -24,6 +24,15 @@
                 window.dataLayer.push(arguments);
             }
             gtag('js', new Date());
+            // Our own browsers. Opening any page once with `?internal=1` marks
+            // this browser and `?internal=0` clears it; GA's Internal Traffic
+            // data filter drops every hit that carries the mark. It goes by
+            // browser rather than IP so it holds on a VPN and on a phone.
+            try {
+                const internal = new URLSearchParams(location.search).get('internal');
+                if (internal === '1' || internal === '0') localStorage.setItem('avr:internal', internal);
+                if (localStorage.getItem('avr:internal') === '1') gtag('set', { traffic_type: 'internal' });
+            } catch {}
             gtag('config', 'G-HK6Q0JBGTC');
 
             if (location.hostname === 'lustxr.com' || location.hostname === 'www.lustxr.com') {
