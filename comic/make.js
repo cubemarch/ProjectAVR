@@ -34,6 +34,24 @@ const RAW = path.join(DRAFTS, 'raw');
 
 const VM = { name: 'cubemarch-hyworld', zone: 'us-central1-b' };
 
+/**
+ * True when this code runs on the box itself, as the comic service does
+ * (`service.js`, started with COMIC_ON_BOX=1). Jobs then run in place instead
+ * of over `gcloud compute ssh`, and the box's busy marker is touched directly.
+ */
+const ON_BOX = process.env.COMIC_ON_BOX === '1';
+const BUSY_MARKER = '/var/run/animatediff/busy';
+
+/** Refresh the idle reaper's busy marker, as `txt2img.py` does while it works. */
+export function touchBusy() {
+    try {
+        fs.mkdirSync(path.dirname(BUSY_MARKER), { recursive: true });
+        fs.writeFileSync(BUSY_MARKER, `${Date.now()}\n`);
+    } catch {
+        // Not on the box, or no permission: nothing to keep awake.
+    }
+}
+
 
 const pad = (n) => String(n).padStart(2, '0');
 const sq = (s) => `'${String(s).replace(/'/g, `'\\''`)}'`;
@@ -56,6 +74,11 @@ function gcloud(args, opts = {}) {
  * leave an A100 running all night.
  */
 function ensureUp() {
+    if (ON_BOX) {
+        touchBusy();
+        return;
+    }
+
     const status = () =>
         execFileSync('gcloud', ['compute', 'instances', 'describe', VM.name, '--zone', VM.zone, '--format=value(status)'], {
             encoding: 'utf8'
@@ -89,6 +112,8 @@ function ensureUp() {
 
 /** Hand the box back to its idle reaper. */
 function resumeIdle() {
+    if (ON_BOX) return;
+
     try {
         gcloud(['compute', 'ssh', VM.name, '--command', 'sudo systemctl start gpu-idle.timer; sudo systemctl stop comic-rearm-idle.timer 2>/dev/null; true'], {
             stdio: 'ignore'
@@ -112,16 +137,42 @@ export function panelPrompt(prompt, style) {
 const stem = (n, style) => (style === DEFAULT_STYLE ? pad(n) : `${pad(n)}-${style}`);
 
 /**
- * One `txt2img` run on the box: every prompt, `count` images each, the model
- * loaded once. With `--seed S`, image k of the run is always seed S + k.
- * Returns each image's metadata and where it was copied to locally, in order.
+ * Run a job on the box: copy `files` into a fresh directory there, run the
+ * command `command(dir)` returns, and give back its stdout and the directory.
+ * From a Mac that is `gcloud compute ssh`, with the box started and its idle
+ * reaper paused for the duration; on the box it is a local shell.
+ */
+export function runOnBox(files, command) {
+    if (ON_BOX) {
+        touchBusy();
+        const dir = fs.mkdtempSync('/tmp/comic-');
+        for (const f of files) fs.copyFileSync(f, path.join(dir, path.basename(f)));
+        const out = execFileSync('bash', ['-c', command(dir)], { encoding: 'utf8', maxBuffer: 64 << 20, stdio: ['ignore', 'pipe', 'inherit'] });
+        return { out, dir };
+    }
+
+    const dir = `/tmp/comic-${Date.now()}`;
+    ensureUp();
+    gcloud(['compute', 'ssh', VM.name, '--command', `mkdir -p ${dir}`]);
+    gcloud(['compute', 'scp', ...files, `${VM.name}:${dir}/`]);
+    try {
+        return { out: gcloud(['compute', 'ssh', VM.name, '--command', command(dir)], { stdio: ['ignore', 'pipe', 'inherit'] }), dir };
+    } finally {
+        resumeIdle();
+    }
+}
+
+/**
+ * One `render.py` run on the box: every prompt, `count` images each, the
+ * model loaded once. With `--seed S`, image k of the run is always seed S + k.
+ * Returns each image's metadata and a local path to it, in order.
  */
 function txt2img(prompts, seed, count = 1) {
-    const run = `comic-${Date.now()}`;
     const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'comic-'));
 
     // The job file is the whole contract with `server/render.py`, which loads
-    // the character LoRA that the service's own `txt2img.py` cannot.
+    // the character LoRA that the service's own `txt2img.py` cannot. Paths
+    // in it are relative to the job's directory, wherever that ends up.
     const job = {
         model: MODEL.id,
         lora: MODEL.lora ?? null,
@@ -134,7 +185,7 @@ function txt2img(prompts, seed, count = 1) {
         height: MODEL.height,
         steps: MODEL.steps,
         guidance: MODEL.guidance,
-        out: `/tmp/${run}/out`
+        out: 'out'
     };
     fs.writeFileSync(path.join(tmp, 'job.json'), JSON.stringify(job, null, 2));
     fs.copyFileSync(path.join(HERE, 'server', 'render.py'), path.join(tmp, 'render.py'));
@@ -142,23 +193,17 @@ function txt2img(prompts, seed, count = 1) {
         path.join(tmp, 'run.sh'),
         [
             'set -euo pipefail',
+            'cd "$(dirname "$0")"',
             // The service's .env for HF_HOME, so the model comes from its warm
             // cache. Root, because a first run downloads into that cache.
             'set -a; . /opt/animatediff/.env; set +a',
-            `/opt/animatediff-venv/bin/python /tmp/${run}/render.py /tmp/${run}/job.json`
+            '/opt/animatediff-venv/bin/python render.py job.json'
         ].join('\n') + '\n'
     );
 
-    ensureUp();
     console.error(`rendering ${prompts.length * count} image(s) on ${VM.name}, seed ${seed}`);
-    gcloud(['compute', 'ssh', VM.name, '--command', `mkdir -p /tmp/${run}`]);
-    gcloud(['compute', 'scp', path.join(tmp, 'job.json'), path.join(tmp, 'render.py'), path.join(tmp, 'run.sh'), `${VM.name}:/tmp/${run}/`]);
-    let out;
-    try {
-        out = gcloud(['compute', 'ssh', VM.name, '--command', `sudo bash /tmp/${run}/run.sh`], { stdio: ['ignore', 'pipe', 'inherit'] });
-    } finally {
-        resumeIdle();
-    }
+    const files = ['job.json', 'render.py', 'run.sh'].map((f) => path.join(tmp, f));
+    const { out, dir } = runOnBox(files, (d) => `sudo bash ${d}/run.sh`);
 
     const made = out
         .split('\n')
@@ -166,7 +211,9 @@ function txt2img(prompts, seed, count = 1) {
         .map((l) => JSON.parse(l));
     if (made.length !== prompts.length * count) throw new Error(`asked for ${prompts.length * count} images, got ${made.length}`);
 
-    gcloud(['compute', 'scp', ...made.map((m) => `${VM.name}:${m.path}`), tmp]);
+    if (ON_BOX) return made.map((m) => ({ ...m, local: path.join(dir, m.path) }));
+
+    gcloud(['compute', 'scp', ...made.map((m) => `${VM.name}:${dir}/${m.path}`), tmp]);
     return made.map((m) => ({ ...m, local: path.join(tmp, path.basename(m.path)) }));
 }
 
@@ -259,8 +306,7 @@ function panelHtml(panel, spec, art) {
         </section>`;
 }
 
-export function pageHtml(strip, arts, style = DEFAULT_STYLE) {
-    const spec = PANELS[strip.n];
+export function pageHtml(strip, arts, style = DEFAULT_STYLE, spec = PANELS[strip.n]) {
     return `<!doctype html>
 <html><head><meta charset="utf-8" />
 <style>
@@ -272,12 +318,12 @@ export function pageHtml(strip, arts, style = DEFAULT_STYLE) {
         padding: 18px 16px 14px;
         background: #f2eadb;
         color: #141414;
-        font-family: Georgia, 'Times New Roman', serif;
+        font-family: Georgia, 'Times New Roman', 'P052', 'Nimbus Roman', serif;
     }
     header { text-align: center; }
     .title { display: flex; align-items: center; gap: 22px; }
     .title::before, .title::after { content: ''; flex: 1; border-top: 3px double #141414; }
-    h1 { font: italic 900 64px/0.95 'Bodoni 72', Didot, Georgia, serif; letter-spacing: 0.02em; }
+    h1 { font: italic 900 64px/0.95 'Bodoni 72', Didot, 'C059', Georgia, serif; letter-spacing: 0.02em; }
     .sub { margin: 6px 0 12px; font-size: 19px; letter-spacing: 0.32em; }
     .grid {
         display: grid;
@@ -337,13 +383,13 @@ export function pageHtml(strip, arts, style = DEFAULT_STYLE) {
         background: rgba(12, 14, 20, 0.92);
         border: 2px solid #141414;
         color: #f2f4f8;
-        font: 500 16px/1.35 -apple-system, 'Helvetica Neue', Arial, sans-serif;
+        font: 500 16px/1.35 -apple-system, 'Helvetica Neue', Arial, 'Nimbus Sans', 'DejaVu Sans', sans-serif;
     }
     .chyron {
         position: absolute; left: 8%; right: 8%; top: 54%;
         display: flex;
         border: 2px solid #141414;
-        font: 800 15px/1.2 -apple-system, 'Helvetica Neue', Arial, sans-serif;
+        font: 800 15px/1.2 -apple-system, 'Helvetica Neue', Arial, 'Nimbus Sans', 'DejaVu Sans', sans-serif;
         letter-spacing: 0.04em;
     }
     .chyron-tag { padding: 7px 9px; background: #b3121b; color: #fff; }
@@ -364,7 +410,7 @@ export function pageHtml(strip, arts, style = DEFAULT_STYLE) {
         padding: 5px 8px;
         background: #fff;
         border: 1px solid #141414;
-        font: 700 12px/1.25 -apple-system, 'Helvetica Neue', Arial, sans-serif;
+        font: 700 12px/1.25 -apple-system, 'Helvetica Neue', Arial, 'Nimbus Sans', 'DejaVu Sans', sans-serif;
         letter-spacing: 0.04em;
     }
     .note {
@@ -374,7 +420,7 @@ export function pageHtml(strip, arts, style = DEFAULT_STYLE) {
         border: 1px solid #8f8a78;
         box-shadow: 0 4px 10px rgba(0,0,0,0.3);
         transform: rotate(-6deg);
-        font: 22px/1 'Bradley Hand', 'Noteworthy', cursive;
+        font: 22px/1 'Bradley Hand', 'Noteworthy', 'Z003', cursive;
     }
     .badge {
         position: absolute; left: 14px; bottom: 14px;
@@ -383,7 +429,7 @@ export function pageHtml(strip, arts, style = DEFAULT_STYLE) {
         border-radius: 999px;
         background: #b3121b;
         color: #fff;
-        font: 800 13px/1.2 -apple-system, 'Helvetica Neue', Arial, sans-serif;
+        font: 800 13px/1.2 -apple-system, 'Helvetica Neue', Arial, 'Nimbus Sans', 'DejaVu Sans', sans-serif;
         letter-spacing: 0.05em;
     }
     .badge i { width: 8px; height: 8px; border-radius: 50%; background: #fff; }
@@ -393,7 +439,7 @@ export function pageHtml(strip, arts, style = DEFAULT_STYLE) {
 <body class="${MONO_STYLES.has(style) ? 'mono' : ''}">
     <header>
         <div class="title"><h1>LUSTY X</h1></div>
-        <p class="sub">${pad(strip.n)}&nbsp;&nbsp;${escapeHtml(strip.title.toUpperCase())}</p>
+        <p class="sub">${strip.n ? `${pad(strip.n)}&nbsp;&nbsp;` : ''}${escapeHtml(strip.title.toUpperCase())}</p>
     </header>
     <main class="grid">
         ${strip.panels.map((p, i) => panelHtml(p, spec[i], arts[i])).join('')}
@@ -422,6 +468,30 @@ export async function compose(strips, style = DEFAULT_STYLE) {
     } finally {
         await browser.close();
     }
+}
+
+/**
+ * One page from any script: render its four panels, letter them, save it.
+ *
+ * For scripts that are not in `strips.js` yet, such as the ones `new.js`
+ * writes. `strip` is shaped like a `strips.js` entry (`title`, `arc`,
+ * `panels[].lines`), `spec` like a `panels.js` entry (`prompt`, `inserts`).
+ */
+export async function makePage({ strip, spec, seed, style = DEFAULT_STYLE, out }) {
+    const made = txt2img(spec.map((p) => panelPrompt(p.prompt, style)), seed);
+    const arts = made.map((m) => `data:image/png;base64,${fs.readFileSync(m.local).toString('base64')}`);
+
+    const { chromium } = await import('playwright');
+    const browser = await chromium.launch();
+    try {
+        const page = await browser.newPage({ viewport: { width: 1086, height: 1448 }, deviceScaleFactor: 1 });
+        await page.setContent(pageHtml(strip, arts, style, spec), { waitUntil: 'load' });
+        await page.evaluate(() => document.fonts.ready);
+        await page.screenshot({ path: out });
+    } finally {
+        await browser.close();
+    }
+    return made;
 }
 
 /* --------------------------------------------------------------- cli -- */
